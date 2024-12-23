@@ -19,7 +19,7 @@ entries <- rbind(
   c(format.Date(class_date[1],format="%a %b %d"),
     "Class 1. Chapter 1. Introduction"),
   c(format.Date(class_date[1]+4,format="%a %b %d"),
-    "Homework 0, due 11:59pm, ungraded"),    
+    "Homework 0, due 11:59pm"),    
   c(format.Date(class_date[2],format="%a %b %d"),
     "Class 2. Chapter 2. Trend and covariance"),
   c(format.Date(class_date[3],format="%a %b %d"),
