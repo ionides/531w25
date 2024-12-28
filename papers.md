@@ -46,9 +46,9 @@ Particle filtering facilitates time series analysis for many nonlinear systems. 
 <br>
 Perhaps the main alternative to likelihood-based inference for POMP models is the locally Gaussian approximation used in the integrated nested Laplace approximation method. A popular implemention is Template Model Builder. 
 
-1. Week starting Mar 24: [__shuert22__](https://doi.org/10.1073/pnas.2121092119)
+1. Week starting Mar 24: [__stock21__](https://doi.org/10.1016/j.fishres.2021.105967)
 <br>
-A recent analysis of ecological response to global climate change.
+Fishery management is a major economic and environmental task that is based on POMP models for time series data. Template Model Builder is widely used in this context.
 
 1. Week starting Mar 31: [__wheeler24__](https://doi.org/10.1371/journal.pcbi.1012032)
 <br>
@@ -91,8 +91,8 @@ Lau, M. S., Becker, A., Madden, W., Waller, L. A., Metcalf, C. J. E., & Grenfell
 [__lim21__](https://doi.org/10.1098/rsta.2020.0209).
 Lim, B., & Zohren, S. (2021). Time-series forecasting with deep learning: a survey. _Philosophical Transactions of the Royal Society A_, 379(2194), 20200209. 
 
-[__shuert22__](https://doi.org/10.1073/pnas.2121092119).
-Shuert, C. R., Marcoux, M., Hussey, N. E., Heide-Jørgensen, M. P., Dietz, R., & Auger-Méthé, M. (2022). Decadal migration phenology of a long-lived Arctic icon keeps pace with climate change. Proceedings of the National Academy of Sciences, 119(45), e2121092119.
+[__stock21__](https://doi.org/10.1016/j.fishres.2021.105967).
+Stock, B. C., & Miller, T. J. (2021). The Woods Hole Assessment Model (WHAM): a general state-space assessment framework that incorporates time-and age-varying processes via random effects and links to environmental covariates. _Fisheries Research_, 240, 105967.
 
 [__subramanian21__](https://doi.org/10.1073/pnas.2019716118).
 Subramanian, R., He, Q., & Pascual, M. (2021). Quantifying asymptomatic infection and transmission of COVID-19 in New York City using observed cases, serology, and testing capacity. _Proceedings of the National Academy of Sciences_, 118(9), e2019716118.
