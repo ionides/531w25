@@ -19,6 +19,9 @@ Examples will be drawn from ecology, economics, epidemiology, finance and elsewh
 
 The course outline, course information and grading policies are described in the [syllabus](syllabus.html).
 
+631 has an additional [reading group](631.html) where we discuss a research paper each week.
+Students registering for 631 are expected to have taken at least one core PhD-level class such as STATS 600.
+
 --------------
 
 ## Class notes
