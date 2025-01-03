@@ -26,10 +26,9 @@ Students registering for 631 are expected to have taken at least one core PhD-le
 
 ## Class notes
 
-<!--
-and recorded lectures
-
 1. [Introduction](01/index.html)
+
+<!--
 
 2. [Estimating trend and autocovariance](02/index.html)
 

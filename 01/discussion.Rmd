@@ -1,0 +1,48 @@
+---
+title: "Chapter 1 discussion questions"
+author: "DATASCI/STATS 531"
+output:
+  html_document:
+    toc: yes
+---
+
+\newcommand\prob{\mathbb{P}}
+\newcommand\E{\mathbb{E}}
+\newcommand\var{\mathrm{Var}}
+\newcommand\cov{\mathrm{Cov}}
+
+-----------
+
+1. **Fitting to different time intervals.** In chapter 1, we saw results for ARMA models fitted to two different time intervals. Here are the full R fitted model summaries for data up to 2018 and 2020:
+
+```{r compare}
+y <- read.table(file="ann_arbor_weather.csv",header=1)
+arma2018 <- arima(y$Low[y$Year<=2018], order=c(1,0,1))
+arma2018
+arma2020 <- arima(y$Low[y$Year<=2020], order=c(1,0,1))
+arma2020
+```
+
+What do you conclude by comparing these fitted models? Do you notice anything surprising? 
+
+2. **Diagnostics.** We plotted the residuals and we checked their autocorrelation, but we did not do a normality test on them. We could have done a Shapiro-Wilk test,
+
+```{r shapiro}
+y <- read.table(file="ann_arbor_weather.csv",header=1)
+r <-  arima(y$Low, order=c(1,0,1))$resid
+shapiro.test(r)
+```
+
+We could confirm that the residuals have an approximatedly normal marginal distribution, for example 
+
+```{r hist}
+hist(r)
+```
+
+The importance of normality may depend on what we want to do with the resulting fitted model. For many purposes, a central limit result may make results insensitive to normality. Severe outliers may nevertheless be important, and plotting the residuals can help to identify these.
+
+What purposes for a fitted model might be more---or less---sensitive to normality?
+
+If you're curious to read more about this, Section 3.10 of [Box (1976)](https://doi.org/10.1080/01621459.1976.10480949) gives an example where addressing dependence is much more important than non-normality.
+
+------------
