@@ -415,6 +415,68 @@ normality?</p>
 <p>If you’re curious to read more about this, Section 3.10 of <a href="https://doi.org/10.1080/01621459.1976.10480949">Box (1976)</a>
 gives an example where addressing dependence is much more important than
 non-normality.</p>
+<ol start="3" style="list-style-type: decimal">
+<li><strong>Changing variation</strong>. Perhaps climate change in
+Michigan January low temperature is primarily in the variability rather
+than the expected value? Let’s look for a trend in absolute
+deviation.</li>
+</ol>
+<pre class="r"><code>y &lt;- read.table(file=&quot;ann_arbor_weather.csv&quot;,header=1)$Low
+year &lt;- seq_along(y)-1 # year since 1900
+ad &lt;- abs(y-median(y,na.rm=TRUE))
+lm.ad &lt;- lm(ad~year)
+summary(lm.ad)</code></pre>
+<pre><code>## 
+## Call:
+## lm(formula = ad ~ year)
+## 
+## Residuals:
+##     Min      1Q  Median      3Q     Max 
+## -6.9934 -3.3128 -0.6988  2.8033 15.5023 
+## 
+## Coefficients:
+##             Estimate Std. Error t value Pr(&gt;|t|)    
+## (Intercept)  4.71299    0.79788   5.907 3.23e-08 ***
+## year         0.01983    0.01110   1.786   0.0766 .  
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Residual standard error: 4.479 on 122 degrees of freedom
+##   (1 observation deleted due to missingness)
+## Multiple R-squared:  0.02547,    Adjusted R-squared:  0.01749 
+## F-statistic: 3.189 on 1 and 122 DF,  p-value: 0.07662</code></pre>
+<p>This is borderline significant, so maybe we are onto something.
+Perhaps the change in variability will be clearer if we separate it from
+the possible change in expected value:</p>
+<pre class="r"><code>y &lt;- read.table(file=&quot;ann_arbor_weather.csv&quot;,header=1)$Low
+year &lt;- seq_along(y)-1 # year since 1900
+y.na &lt;- is.na(y)
+y &lt;- y[!y.na]
+year &lt;- year[!y.na]
+y2 &lt;- resid(lm(y~year+I(year^2)+I(year^3)))
+ad2 &lt;- abs(y2-median(y2))
+lm.ad2 &lt;- lm(ad2~year)
+summary(lm.ad2)</code></pre>
+<pre><code>## 
+## Call:
+## lm(formula = ad2 ~ year)
+## 
+## Residuals:
+##     Min      1Q  Median      3Q     Max 
+## -6.8807 -3.2359 -0.8642  2.3473 15.6314 
+## 
+## Coefficients:
+##             Estimate Std. Error t value Pr(&gt;|t|)    
+## (Intercept)  4.46909    0.79646   5.611 1.28e-07 ***
+## year         0.02306    0.01108   2.081   0.0395 *  
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Residual standard error: 4.471 on 122 degrees of freedom
+## Multiple R-squared:  0.03427,    Adjusted R-squared:  0.02636 
+## F-statistic:  4.33 on 1 and 122 DF,  p-value: 0.03955</code></pre>
+<p>We have statistical significance at the 5% level, but have we
+p-hacked? How would you assess this?</p>
 <hr />
 
 

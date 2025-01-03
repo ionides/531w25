@@ -45,4 +45,26 @@ What purposes for a fitted model might be more---or less---sensitive to normalit
 
 If you're curious to read more about this, Section 3.10 of [Box (1976)](https://doi.org/10.1080/01621459.1976.10480949) gives an example where addressing dependence is much more important than non-normality.
 
+3. **Changing variation**. Perhaps climate change in Michigan January low temperature is primarily in the variability rather than the expected value? Let's look for a trend in absolute deviation.
+```{r ad}
+y <- read.table(file="ann_arbor_weather.csv",header=1)$Low
+year <- seq_along(y)-1 # year since 1900
+ad <- abs(y-median(y,na.rm=TRUE))
+lm.ad <- lm(ad~year)
+summary(lm.ad)
+```
+This is borderline significant, so maybe we are onto something. Perhaps the change in variability will be clearer if we separate it from the possible change in expected value:
+```{r ad-detrended}
+y <- read.table(file="ann_arbor_weather.csv",header=1)$Low
+year <- seq_along(y)-1 # year since 1900
+y.na <- is.na(y)
+y <- y[!y.na]
+year <- year[!y.na]
+y2 <- resid(lm(y~year+I(year^2)+I(year^3)))
+ad2 <- abs(y2-median(y2))
+lm.ad2 <- lm(ad2~year)
+summary(lm.ad2)
+```
+We have statistical significance at the 5% level, but have we p-hacked? How would you assess this?
+
 ------------
