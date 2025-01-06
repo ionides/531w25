@@ -22,7 +22,7 @@ Instructor contact information:
 
 * email: ionides@umich.edu 
 * web: dept.stat.lsa.umich.edu/~ionides
-* office hours: Wed 4-5pm, Thu 3-4pm in 453 West Hall. 
+* office hours: Wed 4-5pm, Thu 2-3pm in 453 West Hall. 
 
 GSI: Aaron Abkemeier
 
@@ -104,9 +104,8 @@ Statistical computing background:
 * Two individual anonymous peer review evaluations of other group midterm projects (5%, due 11:59pm on Friday 2/28). Each should be about 500 words, and should identify the main strengths and weaknesses of the project (from both technical and conceptual perspectives) as well as identifying points with room for improvement. The reviews should include discussion relating to reproducibility of the project's numerical results.
 * A group final project (30%, due 11:59pm on Tuesday 4/22).
 * Two individual anonymous peer review evaluations of other group final projects (10\%, due 11:59pm on Wednesday 4/30). Each should be about 750 words, and should identify the main strengths and weaknesses of the project (from both technical and conceptual perspectives) as well as identifying points with room for improvement. The reviews should include discussion relating to reproducibility of the project's numerical results.
-* Participation (5%). Students are expected to help with building a learning community where we support each other by asking and answering questions. Participation grading will be based on quality and quantity of posts on the class Piazza discussion forum.
-<!--To build a learning community, willingness to ask and answer questions in class is valuable. Similarly, both raising and answering questions on a discussion forum can help the entire class.
-The instructor and GSI will keep track of student participation following a [rubric](rubric_participation.html).-->
+* Participation (5%). Students are expected to help with building a learning community where we support each other by asking and answering questions. Half the participation credit will be awarded for quality and quantity of posts on the class Piazza discussion forum.
+The other half will be awarded for responding to in-class feedback questions; typically single-question Canvas quizzes that do not require any preparation.
 * Two quizzes (5% each), in class on Monday 2/17  and Wednesday 4/16.
 * Course letter grades are anticipated to be mostly in the A, A-, B+ range customary for courses at this level. In the past, this has corresponded to overall scores of approximately 95% for A+, 90% for A, 85% for A-, 80% for B+. However, the exact cutoff used will be determined in the context of the course for this specific semester.
 

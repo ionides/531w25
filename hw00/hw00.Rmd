@@ -1,0 +1,47 @@
+---
+title: "Homework 0. Some course preparation."
+author: "DATASCI/STATS 531"
+output:
+  html_document:
+    toc: no
+---
+
+This homework has nothing to turn in, but it prepares you for future assignments.
+
+## Read the syllabus
+
+* As the [syllabus](../syllabus.html) explains, the [grading rubric](../rubric_homework.html) puts considerable emphasis on scholarship, including the need to cite all sources and to be explicit about the lack of sources when you do not consult any. You are expected to make it easy for the reader to assess your own contribution and what help you did (and did not) get from sources. This is necessary in order to allow full use of internet resources, including the many past projects and homework solutions available online, while maintaining the course integrity. If you follow standard scientific citation practices, the scholarship points are easy credit and we can happily focus on learning time series. If we have to spend time learning how to give proper credit to sources, that is also not wasted effort.
+
+## Join Piazza
+
+* Asking and answering questions on Piazza are both contributions to the course community, and both count toward the course participation credit, as described in the syllabus.
+
+* Please join the class Piazza site [piazza.com/umich/winter2025/datascistats531](https://piazza.com/umich/winter2025/datascistats531) if you have not already done so.
+
+## Internet repositories for collaboration and open-source research: git and GitHub
+
+* All the course materials are in a git repository, at [https://github.com/ionides/531w25](https://github.com/ionides/531w25). Keeping a local copy of the course git project is a good way to maintain up-to-date copies of all the files. Also, you may find additional features of git to be useful, such as making pull requests with corrections or improvements to the notes!
+
+* You do not need to use git for this course. All the materials are mirrored from the GitHub repository to the class website. However, use of git is recommended.
+
+* Git is currently the dominant tool for managing, developing and sharing code within the computational sciences and industry. 
+
+* GitHub is the largest git-based internet repository, but others (such as bitbucket) also use git, and it can be useful to use git to build a local repository on your own computer. 
+
+* If you like, you can read Karl Broman's practical and minimal git/github tutorial ([kbroman.org/github_tutorial](https://kbroman.org/github_tutorial/)). A deeper, more technical tutorial is [www.atlassian.com/git/tutorials](https://www.atlassian.com/git/tutorials/).
+
+## R and Rstudio
+
+* You have probably used R before, and if not it is time to start! We will make extensive use of R. Please check an up-to-date R version is installed on your laptop. It is available at [www.r-project.org](https://www.r-project.org)
+
+* Rstudio is a popular environment for carrying out statistical analysis in R. You can choose whether or not to access R through Rstudio for this course, but many people find that a convenient approach. It can be downloaded from [https://posit.co/products/open-source/rstudio/](https://posit.co/products/open-source/rstudio/)
+
+## Rmarkdown and knitr
+
+* The midterm and final projects will be submitted as reproducible reports written in Rmarkdown or knitr. A reproducible report combines text and source code, generates the results by running the code, and inserts the resulting tables, figures and numbers into the finished document.
+
+* Advantages of this approach are: (i) you can easily modify your report if you want to try doing something differently; (ii) the reader can, if necessary, inspect or run the code that gave the results; (iii) classmates can easily learn effective data analysis techniques from each other.
+
+* Rmarkdown is a popular approach for doing this, see [rmarkdown.rstudio.com](http://rmarkdown.rstudio.com). If you have not used Rmarkdown before, you might like to start familiarizing yourself with it. Rstudio works well with Rmarkdown (Rmd) files, especially for generating HTML documents. Knitr is similar to Rmarkdown, and provides a better environment for producing pdf documents. The course notes are written using knitr, and you are welcome to inspect the source files in the GitHub repository.
+
+------
