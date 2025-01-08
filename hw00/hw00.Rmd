@@ -12,11 +12,11 @@ This homework has nothing to turn in, but it prepares you for future assignments
 
 * As the [syllabus](../syllabus.html) explains, the [grading rubric](../rubric_homework.html) puts considerable emphasis on scholarship, including the need to cite all sources and to be explicit about the lack of sources when you do not consult any. You are expected to make it easy for the reader to assess your own contribution and what help you did (and did not) get from sources. This is necessary in order to allow full use of internet resources, including the many past projects and homework solutions available online, while maintaining the course integrity. If you follow standard scientific citation practices, the scholarship points are easy credit and we can happily focus on learning time series. If we have to spend time learning how to give proper credit to sources, that is also not wasted effort.
 
-## Join Piazza
+## Join piazza
 
-* Asking and answering questions on Piazza are both contributions to the course community, and both count toward the course participation credit, as described in the syllabus.
+* Asking and answering questions on piazza are both contributions to the course community, and both count toward the course participation credit, as described in the syllabus.
 
-* Please join the class Piazza site [piazza.com/umich/winter2025/datascistats531](https://piazza.com/umich/winter2025/datascistats531) if you have not already done so.
+* Please join the class piazza site [piazza.com/umich/winter2025/datascistats531](https://piazza.com/umich/winter2025/datascistats531) if you have not already done so.
 
 ## Internet repositories for collaboration and open-source research: git and GitHub
 

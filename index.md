@@ -17,9 +17,9 @@ The second half of the course will focus on state space model techniques for fit
 We will progress from fitting linear, Gaussian dynamic models to fitting nonlinear models for which Monte Carlo methods are required.
 Examples will be drawn from ecology, economics, epidemiology, finance and elsewhere.
 
-The course outline, course information and grading policies are described in the [syllabus](syllabus.html).
+Additional information is in the [syllabus](syllabus.html). Online discussion is on [piazza](https://piazza.com/umich/winter2025/datascistats531).
 
-631 has an additional [reading group](631.html) where we discuss a research paper each week.
+631 includes a [reading group](631.html) where we discuss a research paper each week.
 Students registering for 631 are expected to have taken at least one core PhD-level class such as STATS 600.
 
 --------------
