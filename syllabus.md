@@ -113,7 +113,7 @@ The other half will be awarded for responding to in-class feedback questions; ty
 
 Careful attribution of sources is fundamental to good scholarship.  The grader will look for demonstrated effort in submitted homework, with contributions that go beyond the sources.
 
-+ Each homework will have a question asking about sources. You will be asked to explain which parts of your responses above made use of a source, meaning anything or anyone you consulted (including classmates or office hours or any website you visited) to help you write or check your answers. **All sources are permitted. Every source must be documented. Full credit requires being explicit about which parts you did without any collaboration or other source, as well as being explicit about which parts used or did not use each listed source.**
++ Each homework will have points for scholarship, which mostly means clarifying sources (or the lack of sources). You will be asked to explain which parts of your responses above made use of a source, meaning anything or anyone you consulted (including classmates or office hours or any website you visited) to help you write or check your answers. **All sources are permitted. Every source must be documented. Full credit requires being explicit about which parts you did without any collaboration or other source, as well as being explicit about which parts used or did not use each listed source.**
 
 + You should study the [posted rubric](rubric_homework.html) to undertand how your homework will be graded. 
 
