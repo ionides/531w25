@@ -65,6 +65,8 @@ ad2 <- abs(y2-median(y2))
 lm.ad2 <- lm(ad2~year)
 summary(lm.ad2)
 ```
-We have statistical significance at the 5% level, but have we p-hacked? How would you assess this?
+(a) We have statistical significance at the 5% level, but have we p-hacked? How would you assess this?
+
+(b) Do you think it is scientifically plausible that climate change is affecting the variation but not (yet) the mean? What is your reasoning? As statisticians, we do not necessarily have extensive scientific knowledge about the data we are analyzing, but we can still use whatever we know to help interpret the data analysis. 
 
 ------------
