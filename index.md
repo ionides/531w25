@@ -28,9 +28,9 @@ Students registering for 631 are expected to have taken at least one core PhD-le
 
 1. [Introduction](01/index.html)
 
-<!--
-
 2. [Estimating trend and autocovariance](02/index.html)
+
+<!--
 
 3. [Stationarity, white noise, and some basic time series models](03/index.html)
 
