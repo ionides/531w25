@@ -79,10 +79,10 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 * [Homework 0](hw00/hw00.html). Some course preparation. Nothing to submit.
 
-* [Homework 1](hw01/hw01.html), due Sun Jan 19, 11:59pm. 
-[Solution](hw01/sol01.html).
+* [Homework 1](hw01/hw01.html), due Sun Jan 19, 11:59pm.
 
 <!--
+[Solution](hw01/sol01.html).
 
 * [Participation 1](participation/participation1.html), due Sun Jan 21, 11:59pm.
 
