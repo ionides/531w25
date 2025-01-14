@@ -17,11 +17,10 @@ To make sure that expectations of scholarship are clear, we also emphasize the i
 
 A guiding principle in scientific work is that anything that can be attributed to a source should be. You should not appear to take credit for something that you did not work out yourself, and if you don't supply a source it is implicit that you are claiming intellectual credit for yourself. There is an exception for facts that are already well known to all readers, but good scientific writing uses this exception sparingly.
 
-In academic coursework, there is an additional principle that you should __actively assist the grader to evaluate your contribution__. Any source you could acknowledge that would accurately diminish your own contribution should be described. Explicitly saying when you did not use sources helps the grader and therefore deserves additional credit. If you say nothing about sources, the grader may start wondering about the difference between absence of evidence and evidence of absence, and may legitimately find room for improvement in your solution.
+In academic coursework, there is an additional principle that you should __actively assist the grader to evaluate your contribution__. Any source you could acknowledge that would accurately diminish your own contribution should be described. Explicitly saying when you did not use sources helps the grader and therefore deserves additional credit. If you say nothing about sources, the grader may start wondering about the difference between absence of evidence and evidence of absence, and may legitimately find room for improvement in the scholarship for your solution.
 
 Getting full credit for good scholarship should be easy. You just have to follow standard scientific practice while being honest, generous, and helpful to the reader.
-However, if a careful reader notices that credit is unclear and starts to wonder if there are significant missing sources, you will start losing points.
-In extreme cases, failure to credit sources can amount to plagiarism which can end up having serious consequences for your success in this class.
+From another perspective, failure to credit sources can amount to plagiarism which can end up having serious consequences for your success in this class.
 
 ------------
 

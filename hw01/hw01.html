@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="Instructor: Edward L. Ionides" />
+<meta name="author" content="DATASCI/STATS 531, Winter 2025" />
 
 
-<title>STATS 631</title>
+<title>Homework 1, due Sunday 1/19, 11:59pm</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,195 +349,144 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">STATS 631</h1>
-<h4 class="author">Instructor: Edward L. Ionides</h4>
+<h1 class="title toc-ignore">Homework 1, due Sunday 1/19, 11:59pm</h1>
+<h4 class="author">DATASCI/STATS 531, Winter 2025</h4>
 
 </div>
 
 
-<div id="schedule" class="section level2">
-<h2>Schedule</h2>
-<p>STATS 631 is new this year, so suggestions on how to make it work
-well are particularly appreciated. In addition to all the activities of
-531, we will arrange a one-hour meeting at a time we call all make, at
-which we will discuss a paper. Everyone is expected to have something to
-say, for example, a fairly brief reading of the paper should be
-sufficient to have an opinion on one or more of the “generic questions”
-listed below. You are expected to spend at least an hour reading the
-paper. The primary intention here is that we learn about research in
-time series analysis by discussing some strong papers (old and new)
-which have helped to define the current state of the art.</p>
-<p>Meetings are Thursday 10:30-11:30 in 438 West Hall.</p>
+<hr />
+<p>Submit your solution as a pdf via Canvas. If you are still on the
+waitlist, you can email your solution to the GSI, Aaron Abkemeier (<a href="mailto:aaronabk@umich.edu" class="email">aaronabk@umich.edu</a>).</p>
+<p>You may scan a handwritten report. Later in the course, we will be
+using Rmarkdown for projects, so you might like to use that also for
+this homework. In that case, the source code for this assignment is
+available on GitHub to help get you started. Rmarkdown combines R with
+Latex, so extra work will be required initially if you are unfamiliar
+with either of these.</p>
+<p>The grading scheme for the homework report puts an emphasis on
+careful explanation of sources, as explained in the <a href="../rubric_homework.html">grading rubric</a>. You are advised to
+read this rubric before submitting your homework. You are expected to
+support your homework report with sources, when appropriate. Usually,
+the sources are listed at the end of the report and cited where
+applicable within the report.</p>
+<p>Questions about the homework can be asked and answered on the <a href="https://piazza.com/umich/winter2025/datascistats531">course piazza
+site</a>. Activity on piazza counts toward class participation.</p>
+<hr />
+<p><strong><big>Question 1.1</big></strong>. Recall the basic properties
+of covariance, <span class="math inline">\(\mathrm{Cov}(X,Y) =
+E\big[(X-\mathbb{E}[X])(Y-\mathbb{E}[Y])\big]\)</span>, following the
+convention that upper case letters are random variables and lower case
+letters are constants:</p>
+<p>P1. <span class="math inline">\(\quad \mathrm{Cov}(Y,Y)=
+\mathrm{Var}(Y)\)</span>,</p>
+<p>P2. <span class="math inline">\(\quad
+\mathrm{Cov}(X,Y)=\mathrm{Cov}(Y,X)\)</span>,</p>
+<p>P3. <span class="math inline">\(\quad \mathrm{Cov}(aX,bY)=
+ab\,\mathrm{Cov}(X,Y)\)</span>,</p>
+<p>P4. <span class="math inline">\(\quad \mathrm{Cov}\left(\sum_{m=1}^M
+Y_m,\sum_{n=1}^N Y_n\right)= \sum_{m=1}^M \sum_{n=1}^N \mathrm{Cov}(Y_m,
+Y_n)\)</span>.</p>
+<p>Let <span class="math inline">\(Y_{1:N}\)</span> be a covariance
+stationary time series model with autocovariance function <span class="math inline">\(\gamma_h\)</span> and constant mean function,
+<span class="math inline">\(\mu_n=\mu\)</span>. Consider the sample mean
+as an estimator of <span class="math inline">\(\mu\)</span>, <span class="math display">\[\widehat{\mu}(y_{1:N}) = \frac{1}{N}\sum_{n=1}^N
+y_n.\]</span> Show how the basic properties of covariance can be used to
+derive the expression, <span class="math display">\[\mathrm{Var}\big(\widehat{\mu}(Y_{1:N})\big) =
+\frac{1}{N}\gamma_0 +
+\frac{2}{N^2}\sum_{h=1}^{N-1}(N-h)\gamma_h.\]</span></p>
+<hr />
+<p><strong><big>Question 1.2</big></strong>. The sample autocorrelation
+is perhaps the second most common type of plot in time series analysis,
+after simply plotting the data. We investigate how R represents chance
+variation in the plot of the sample autocorrelation function produced by
+the <code>acf</code> function. We seek to check what R actually does
+when it constructs the dashed horizontal lines in this plot. What
+approximation is being made? How should the lines be interpreted
+statistically?</p>
+<p>If you type <code>acf</code> in R, you get the source code for the
+acf function. You’ll see that the plotting is done by a service function
+<code>plot.acf</code>. This service function is part of the package, and
+is not immediately accessible to you. Nevertheless, you can check the
+source code as follows:</p>
 <ol style="list-style-type: decimal">
-<li><p>Week starting Jan 13: <a href="https://doi.org/10.1109/TAC.1974.1100705"><strong>akaike74</strong></a>
-<br> Hirotugu Akaike’s information criterion (AIC) is used in many
-recent time series papers, including those later on our reading list.
-Akaike developed his ideas in a sequence of papers, with time series
-analysis being one of his main motivations. This paper is the first one
-which focuses on the current standard definition of AIC. Akaike’s
-foundational papers are 50 years old, and there has been much work on
-model selection since then. Why have Akaike’s ideas been so
-persistent?</p></li>
-<li><p>Week starting Jan 20: <a href="https://doi.org/10.1080/01621459.1976.10480949"><strong>box76</strong></a>
-<br> George Box’s work popularized the autoregressive integrated moving
-average (ARIMA) framework for time series. Among many other notable
-contributions, he is responsible what is perhaps the most widely quoted
-advice for applied statistics, “All models are wrong, but some models
-are useful.” This influential discussion of the relationship between
-science and statistics, and the role of models in this relationship, is
-informed by Box’s extensive work in time series analysis. Look for
-places where dependence, including temporal dependence, play a
-role.</p></li>
-<li><p>Week starting Jan 27: <a href="https://doi.org/10.18637/jss.v027.i03"><strong>hyndman08</strong></a>
-<br> Rob Hyndman’s many contributions to time series analysis include
-the development of <code>auto.arima</code>, a widely used approach for
-choosing ARIMA models. This paper explains the construction of this
-procedure and its motivation, as well as mentioning alternative
-approaches.</p></li>
-<li><p>Week starting Feb 3: <a href="https://doi.org/10.1080/00031305.2017.1380080"><strong>taylor18</strong></a>
-<br> This paper introduces a widely used modern forecasting tool,
-Facebook Prophet, implemented by the R package <a href="https://cran.r-project.org/web/packages/prophet/index.html"><strong>prophet</strong></a>.
-Facebook Prophet is not based on ARIMA modeling, and the difference
-between these approaches is worth consideration.</p></li>
-<li><p>Week starting Feb 10: <a href="https://doi.org/10.1098/rsta.2020.0209"><strong>lim21</strong></a>
-<br> Deep learning has been influential throughout statistics, and time
-series analysis is no exception. This review discusses the deep learning
-for time series, situated before the widespread popularization of
-transformers.</p></li>
-<li><p>Week starting Feb 17: <a href="https://proceedings.neurips.cc/paper_files/paper/2023/file/3eb7ca52e8207697361b2c0fb3926511-Paper-Conference.pdf"><strong>gruver24</strong></a>
-<br> When is GenAI useful for time series analysis?</p></li>
-<li><p>Week starting Feb 24: <a href="https://doi.org/10.1126/science.1062226"><strong>bjornstad01</strong></a>
-<br> There are surprisingly many important ideas about time series
-analysis for nonlinear stochastic dynamic systems discussed in this
-compact paper. The issues it raises have prompted much work over the
-past two decades, and some issues remain unresolved.</p></li>
+<li><p>Notice, either from the help documentation <code>?acf</code> or
+the last line of the source code <code>acf</code> that this function
+resides in the package <code>stats</code>.</p></li>
+<li><p>Now, you can access this namespace directly, to list the source
+code, by</p></li>
 </ol>
-<p>Spring Break</p>
-<ol start="8" style="list-style-type: decimal">
-<li><p>Week starting Mar 10: <a href="http://www.warwick.ac.uk/fac/sci/statistics/staff/academic-research/johansen/publications/dj11.pdf"><strong>doucet09</strong></a>
-<br> Particle filtering facilitates time series analysis for many
-nonlinear systems. We study a review of this technique by two leading
-experts.</p></li>
-<li><p>Week starting Mar 17: <a href="https://doi.org/10.18637/jss.v070.i05"><strong>kristensen16</strong></a>
-<br> Perhaps the main alternative to likelihood-based inference for
-partially observed Markov process (POMP) models is the locally Gaussian
-approximation used in the integrated nested Laplace approximation
-method. A popular implemention is Template Model Builder, described in
-this paper.</p></li>
-<li><p>Week starting Mar 24: <a href="https://doi.org/10.1016/j.fishres.2021.105967"><strong>stock21</strong></a>
-<br> Fishery management is a major economic and environmental task that
-is based on POMP models for time series data. Template Model Builder is
-widely used in this context. Would there be an advantage to using
-particle filter methods to avoid the approximations inherent in Template
-Model Builder, or does this class of problems expose the limitations of
-the particle filter?</p></li>
-<li><p>Week starting Mar 31: <a href="https://doi.org/10.1371/journal.pcbi.1012032"><strong>wheeler24</strong></a>
-<br> A paper dealing with various practical issues in data analysis via
-mechanistic models, including residual analysis and benchmarking to help
-identify model misspecification.</p></li>
-<li><p>Week starting Apr 7: <a href="https://doi.org/10.1073/pnas.2019716118"><strong>subramanian21</strong></a>
-<br> Many papers were written fitting mechanistic models to learn about
-COVID-19 transmission and to forecast its trajectory. This paper shows
-how it is critical to understand both the reporting process and the
-disease dynamics.</p></li>
-<li><p>Week starting Apr 14: <a href="https://doi.org/10.1371/journal.pcbi.1010251"><strong>lau21</strong></a>
-<br> Machine learning and mechanistic modeling are sometimes seen as
-alternative approaches whereas they should work together to complement
-each other. This paper investigates the possibilities in a case
-study.</p></li>
+<pre><code>stats:::plot.acf</code></pre>
+<ol start="3" style="list-style-type: decimal">
+<li>Now we can see how the horizontal dashed lines are constructed. The
+critical line of code seems to be</li>
 </ol>
-</div>
-<div id="references-for-the-stats-631-reading-group" class="section level2">
-<h2>References for the STATS 631 reading group</h2>
-<p><a href="https://doi.org/10.1109/TAC.1974.1100705"><strong>akaike74</strong></a>.
-Akaike, H. (1974). A new look at the statistical model identification.
-<em>IEEE Transactions on Automatic Control</em>, 19(6), 716-723.</p>
-<p><a href="https://doi.org/10.1126/science.1062226"><strong>bjornstad01</strong></a>.
-Bjørnstad, O. N., &amp; Grenfell, B. T. (2001). Noisy clockwork: time
-series analysis of population fluctuations in animals. Science,
-293(5530), 638-643.</p>
-<p><a href="https://doi.org/10.1080/01621459.1976.10480949"><strong>box76</strong></a>.
-Box, George E. P. (1976). Science and statistics. <em>Journal of the
-American Statistical Association</em>, 71 (356): 791–799.</p>
-<p><a href="http://www.warwick.ac.uk/fac/sci/statistics/staff/academic-research/johansen/publications/dj11.pdf"><strong>doucet09</strong></a>.
-Doucet, A., &amp; Johansen, A. M. (2009). A tutorial on particle
-filtering and smoothing: Fifteen years later. <em>Handbook of Nonlinear
-Filtering</em>, 12(656-704), 3.</p>
-<p><a href="https://proceedings.neurips.cc/paper_files/paper/2023/file/3eb7ca52e8207697361b2c0fb3926511-Paper-Conference.pdf"><strong>gruver24</strong></a>.
-Gruver, N., Finzi, M., Qiu, S., &amp; Wilson, A. G. (2024). Large
-language models are zero-shot time series forecasters. <em>Advances in
-Neural Information Processing Systems</em>, 36.</p>
-<p><a href="https://doi.org/10.18637/jss.v027.i03"><strong>hyndman08</strong></a>.
-Hyndman, R. J. &amp; Khandakar, Y. (2008) Automatic time series
-forecasting: The forecast package for R. <em>Journal of Statistical
-Software</em>, 26(3).</p>
-<p><a href="https://doi.org/10.18637/jss.v070.i05"><strong>kristensen16</strong></a>.
-Kristensen, K., Nielsen, A., Berg, C. W., Skaug, H., &amp; Bell, B. M.
-(2016). TMB: Automatic Differentiation and Laplace Approximation.
-<em>Journal of Statistical Software</em>, 70(5), 1–21.</p>
-<p><a href="https://doi.org/10.1371/journal.pcbi.1010251"><strong>lau21</strong></a>.
-Lau, M. S., Becker, A., Madden, W., Waller, L. A., Metcalf, C. J. E.,
-&amp; Grenfell, B. T. (2022). Comparing and linking machine learning and
-semi-mechanistic models for the predictability of endemic measles
-dynamics. <em>PLOS Computational Biology</em>, 18(9), e1010251.</p>
-<p><a href="https://doi.org/10.1098/rsta.2020.0209"><strong>lim21</strong></a>.
-Lim, B., &amp; Zohren, S. (2021). Time-series forecasting with deep
-learning: a survey. <em>Philosophical Transactions of the Royal Society
-A</em>, 379(2194), 20200209.</p>
-<p><a href="https://doi.org/10.1016/j.fishres.2021.105967"><strong>stock21</strong></a>.
-Stock, B. C., &amp; Miller, T. J. (2021). The Woods Hole Assessment
-Model (WHAM): a general state-space assessment framework that
-incorporates time-and age-varying processes via random effects and links
-to environmental covariates. <em>Fisheries Research</em>, 240,
-105967.</p>
-<p><a href="https://doi.org/10.1073/pnas.2019716118"><strong>subramanian21</strong></a>.
-Subramanian, R., He, Q., &amp; Pascual, M. (2021). Quantifying
-asymptomatic infection and transmission of COVID-19 in New York City
-using observed cases, serology, and testing capacity. <em>Proceedings of
-the National Academy of Sciences</em>, 118(9), e2019716118.</p>
-<p><a href="https://doi.org/10.1080/00031305.2017.1380080"><strong>taylor18</strong></a>.
-Taylor, S. J., &amp; Letham, B. (2018). Forecasting at scale. <em>The
-American Statistician</em>, 72(1), 37-45.</p>
-<p><a href="https://doi.org/10.1371/journal.pcbi.1012032"><strong>wheeler24</strong></a>.
-Wheeler, J., Rosengart, A., Jiang, Z., Tan, K., Treutle, N., &amp;
-Ionides, E. L. (2024). Informing policy via dynamic models: Cholera in
-Haiti. <em>PLOS Computational Biology</em>, 20(4), e1012032.</p>
-</div>
-<div id="generic-questions" class="section level2">
-<h2>Generic questions</h2>
+<pre><code>clim0 &lt;- if (with.ci) qnorm((1 + ci)/2)/sqrt(x$n.used)</code></pre>
+<p>This appears to correspond to a normal distribution approximation for
+the sample autocorrelation estimator, with mean zero and standard
+deviation <span class="math inline">\(1/\sqrt{N}\)</span>.</p>
+<p><br></p>
+<p><strong>A</strong>. This question investigates the use of <span class="math inline">\(1/\sqrt{N}\)</span> as an approximation to the
+standard deviation of the sample autocorrelation estimator under the
+null hypothesis that the time series is a sequence of independent,
+identically distributed (IID) mean zero random variables.</p>
+<p>Instead of studying the full autocorrelation estimator, you are asked
+to analyze a simpler situation where we take advantage of the knowledge
+that the mean is zero and consider <span class="math display">\[
+\widehat{\rho}_h(Y_{1:N}) = \frac{\frac{1}{N}\sum_{n=1}^{N-h} {Y_n} \,
+Y_{n+h}}
+{\frac{1}{N}\sum_{n=1}^{N} Y_{n}^2}\]</span> where <span class="math inline">\(Y_1,\dots,Y_N\)</span> are IID random variables
+with zero mean and finite variance. Specifically, find the mean and
+standard deviation for <span class="math inline">\(\widehat{\rho}_h(Y_{1:N})\)</span> when <span class="math inline">\(N\)</span> becomes large.</p>
+<p>The actual autocorrelation estimator subtracts a sample mean, and you
+can analyze that instead if you want an additional challenge.</p>
+<p>You will probably want to make an argument based on linearization.
+You can reason at whatever level of math stat formalization you’re happy
+with. According to <em>Mathematical Statistics and Data Analysis</em> by
+John Rice, a textbook used for the undergraduate upper level Math Stats
+course, STATS 426,</p>
+<p>“When confronted with a nonlinear problem we cannot solve, we
+linearize. In probability and statistics, this method is called
+<strong>propagation of errors</strong> or the <strong><span class="math inline">\(\delta\)</span> method</strong>. Linearization is
+carried out through a <a href="https://en.wikipedia.org/wiki/Taylor_series">Taylor Series</a>
+expansion.”</p>
+<p>Rice then proceeds to describe the delta method in a way very similar
+to the <a href="https://en.wikipedia.org/wiki/Delta_method">Wikipedia
+article</a> on this topic. In summary, suppose <span class="math inline">\(X\)</span> is a random variable with mean <span class="math inline">\(\mu^{}_X\)</span> and small variance <span class="math inline">\(\sigma^2_X\)</span>, and <span class="math inline">\(g(x)\)</span> is a nonlinear function with
+derivative <span class="math inline">\(g^\prime(x)=dg/dx\)</span>. To
+study the random variable <span class="math inline">\(Y=g(X)\)</span> we
+can make a Taylor series approximation, <span class="math display">\[ Y
+\approx g(\mu^{}_X) + (X-\mu^{}_X) g^\prime(\mu^{}_X).\]</span> This
+approximates <span class="math inline">\(Y\)</span> as a linear function
+of <span class="math inline">\(X\)</span>, so we have</p>
 <ol style="list-style-type: decimal">
-<li><p>Which parts of the paper might be worthwhile for me to read in
-more detail, and why? If you see an immediate benefit to obtaining a
-better understanding of part of the paper, then you may spend extra time
-on it to the extent that fits into your schedule.</p></li>
-<li><p>What is the strongest part of the paper? i.e., something that the
-paper demonstrates which deserves to be widely known.</p></li>
-<li><p>What is the weakest part of the paper? Is there a limitation that
-may make the paper less useful in practice, or even misleading. (This
-may be rare, or hard to find, in high-impact papers.)</p></li>
-<li><p>Has the paper had an impact on statistical theory and/or
-methodology and/or applications? Why or why not?</p></li>
-<li><p>Technical questions include: (a) why was the notation set up this
-way? (b) what steps need additional explanation to be clear to this
-reader?</p></li>
-<li><p>Study the numerical results, figures and tables. To what extent
-do they support the conclusions of the paper?</p></li>
+<li><p><span class="math inline">\(\quad \mu^{}_Y = \mathbb{E}[Y]\approx
+g(\mu^{}_X)\)</span>.</p></li>
+<li><p><span class="math inline">\(\quad \sigma^2_Y = \mathrm{Var}(Y)
+\approx \sigma^2_X \big\{g^\prime(\mu^{}_X)\big\}^2\)</span>.</p></li>
+<li><p><span class="math inline">\(\quad\)</span>If <span class="math inline">\(X\sim N\big[\mu^{}_X,\sigma_X^2\big]\)</span>,
+then <span class="math inline">\(Y\)</span> approximately follows a
+<span class="math inline">\(N\big[g(\mu^{}_X), \sigma^2_X
+\big\{g^\prime(\mu^{}_X)\big\}^2\big]\)</span> distribution.</p></li>
 </ol>
-</div>
-<div id="grading-policy" class="section level2">
-<h2>Grading policy</h2>
-<ul>
-<li><p>Grading is on attendance and participation in a weekly 1-hour
-discussion.</p></li>
-<li><p>Minimal preparation for participation means spending one hour
-reading the paper and thinking about its contribution. This is a useful
-academic skill—we read many more papers superficially than we can read
-in detail.</p></li>
-<li><p>631 students will also complete the same assignments as 531
-students. The 631 meeting will count for 20% of the grade, and other
-components of 531 will be scaled accordingly.</p></li>
-</ul>
-</div>
+<p>For this question, we have a two-dimensional situation, where <span class="math inline">\(Y=g(U,V)\)</span> and the Taylor series
+approximation becomes <span class="math display">\[ Y \approx
+g(\mu^{}_U,\mu^{}_V) + (U-\mu^{}_U) \frac{\partial }{\partial
+u}g(\mu^{}_U,\mu^{}_V) + (V-\mu^{}_V) \frac{\partial}{\partial
+v}g(\mu^{}_U,\mu^{}_V)\]</span> with <span class="math inline">\(U=\widehat{\gamma}_h(Y_{1:N})=\frac{1}{N}\sum_{n=1}^{N-h}
+{Y_n} \, Y_{n+h}\)</span> and <span class="math inline">\(V=\widehat{\gamma}_0(Y_{1:N}) =
+\frac{1}{N}\sum_{n=1}^{N} {Y_n}^2\)</span>. Finding the mean and
+variance of <span class="math inline">\(U\)</span> and <span class="math inline">\(V\)</span> requires similar techniques to Question
+1.1.</p>
+<p><br></p>
+<p><strong>B</strong>. It is often asserted that the horizontal dashed
+lines on the sample ACF plot represent a confidence interval. For
+example, in the documentation produced by <code>?plot.acf</code> we
+read</p>
+<pre><code>ci: coverage probability for confidence interval.  Plotting of the confidence interval is suppressed if ‘ci’ is zero or negative.</code></pre>
+<p>Use a definition of a confidence interval to explain how these lines
+do, or do not, construct a confidence interval.</p>
+<hr />
 
 
 
