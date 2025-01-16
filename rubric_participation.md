@@ -5,7 +5,7 @@ output: html_document
 
 ---
 
-Participation credit rewards and incentivize contributions that help to build a constructive learning community for our study of time series analysis.
+Participation credit rewards and incentivizes contributions that help to build a constructive learning community for our study of time series analysis.
 
 1. The [piazza site](https://piazza.com/umich/winter2025/datascistats531) is the main venue for participation in class discussions. If this site does not currently contain the discussion topics you need, then start them. The instructors will also introduce discussion topics that you may like to respond to.
 

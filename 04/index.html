@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="DATASCI/STATS 531" />
+<meta name="author" content="Edward L. Ionides" />
 
 
-<title>Chapter 3 discussion questions</title>
+<title>Modeling and Analysis of Time Series Data DATASCI/STATS 531.  Chapter 4: Linear time series models and the algebra of ARMA models</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,32 +349,68 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Chapter 3 discussion questions</h1>
-<h4 class="author">DATASCI/STATS 531</h4>
+<h1 class="title toc-ignore">Modeling and Analysis of Time Series
+Data<br>DATASCI/STATS 531. <br>Chapter 4: Linear time series models and
+the algebra of ARMA models</h1>
+<h4 class="author">Edward L. Ionides</h4>
 
 </div>
 
 
 <hr />
-<p><strong>Q3.1. Burn-in.</strong> On slide 18 of Chapter 3, we
-discovered that <code>arima.sim()</code> initializes using a burn-in
-strategy that throws away the first 13 simulated time points. Finding
-out where this number 13 comes from, and whether it would change for a
-different model, is an exercise in checking the source code. By looking
-at <code>?arima.sim</code> can you tell how the burn-in lag is chosen?
-Perhaps using some of the ideas of Chapter 4 you can intuitively explain
-why this might be a reasonable choice.</p>
-<p><strong>Q3.2. Models for white noise without independence.</strong>
-The plots on slides 29 and 31 of Chapter 3 demonstrate that stock market
-returns are examples of quantities that are uncorrelated but not
-independent. More exactly, we showed that an appropriate model for stock
-market returns should have these properties. Independent and identically
-distributed models are relatively easy to write down, since you can just
-specify a marginal density for one variable, a common example being the
-normal density. Can you write down a mean zero, constant variance time
-series model (i.e., a collection of random variables) which is
-uncorrelated but not independent? If you can think of many choices, you
-can ask which may be most appropriate for these data.</p>
+<table>
+<colgroup>
+<col width="45%" />
+<col width="54%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left"> </th>
+<th align="center"> </th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">Lecture slides</td>
+<td align="center"><a href="slides.pdf">pdf</a></td>
+</tr>
+<tr class="even">
+<td align="left">Lecture notes</td>
+<td align="center"><a href="notes.pdf">pdf</a></td>
+</tr>
+<tr class="odd">
+<td align="left">Recording, Winter 2021: Chapter 4, Part 1</td>
+<td align="center"><a href="https://youtu.be/dtef_fgyrIc">Video (27
+mins)</a></td>
+</tr>
+<tr class="even">
+<td align="left">Recording, Winter 2021: Chapter 4, Part 2</td>
+<td align="center"><a href="https://youtu.be/hPeCV-MSnag">Video (19
+mins)</a></td>
+</tr>
+<tr class="odd">
+<td align="left">Recording, Winter 2021: Chapter 4, Part 3</td>
+<td align="center"><a href="https://youtu.be/qcx_-C3WKA0">Video (21
+mins)</a></td>
+</tr>
+<tr class="even">
+<td align="left">Discussion questions</td>
+<td align="center"><a href="discussion.html">html</a></td>
+</tr>
+<tr class="odd">
+<td align="left"></td>
+<td align="center"></td>
+</tr>
+</tbody>
+</table>
+<!--
+| Annotated slides | [pdf](slides-annotated.pdf) |
+-->
+<hr />
+<p><a href="../index.html">Back to course homepage</a><br />
+<a href="../acknowledge.html">Acknowledgements</a><br />
+<a href="http://github.com/ionides/531w25/tree/master/04/">Source code
+for these notes</a></p>
 <hr />
 
 

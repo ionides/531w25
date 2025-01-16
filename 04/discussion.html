@@ -12,7 +12,7 @@
 <meta name="author" content="DATASCI/STATS 531" />
 
 
-<title>Chapter 3 discussion questions</title>
+<title>Chapter 4 discussion questions</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,32 +349,60 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Chapter 3 discussion questions</h1>
+<h1 class="title toc-ignore">Chapter 4 discussion questions</h1>
 <h4 class="author">DATASCI/STATS 531</h4>
 
 </div>
 
 
 <hr />
-<p><strong>Q3.1. Burn-in.</strong> On slide 18 of Chapter 3, we
-discovered that <code>arima.sim()</code> initializes using a burn-in
-strategy that throws away the first 13 simulated time points. Finding
-out where this number 13 comes from, and whether it would change for a
-different model, is an exercise in checking the source code. By looking
-at <code>?arima.sim</code> can you tell how the burn-in lag is chosen?
-Perhaps using some of the ideas of Chapter 4 you can intuitively explain
-why this might be a reasonable choice.</p>
-<p><strong>Q3.2. Models for white noise without independence.</strong>
-The plots on slides 29 and 31 of Chapter 3 demonstrate that stock market
-returns are examples of quantities that are uncorrelated but not
-independent. More exactly, we showed that an appropriate model for stock
-market returns should have these properties. Independent and identically
-distributed models are relatively easy to write down, since you can just
-specify a marginal density for one variable, a common example being the
-normal density. Can you write down a mean zero, constant variance time
-series model (i.e., a collection of random variables) which is
-uncorrelated but not independent? If you can think of many choices, you
-can ask which may be most appropriate for these data.</p>
+<p><strong>Q4.1. ARMA models with a mean</strong>. The following are
+candidate ways to write an ARMA(p,q) model with mean <span class="math inline">\(\mu\)</span>. <span class="math display">\[\begin{array}{crcl}
+[A1] &amp; \hspace{15mm} Y_n &amp;=&amp; \mu + \phi_1
+Y_{n-1}+\phi_2Y_{n-2}+\dots +\phi_pY_{n-p}
+\\
+&amp; &amp;&amp; + \epsilon_n +\psi_1 \epsilon_{n-1}
++\dots+\psi_q\epsilon_{n-q}
+\\
+[A2] &amp; Y_n &amp;=&amp; \mu + \phi_1
+(Y_{n-1}-\mu)+\phi_2(Y_{n-2}-\mu)+\dots +\phi_p(Y_{n-p}-\mu)
+\\
+&amp; &amp;&amp; + \epsilon_n +\psi_1 \epsilon_{n-1}
++\dots+\psi_q\epsilon_{n-q}
+\\
+[A3] &amp; \phi(B) Y_n &amp;=&amp; \psi(B)\epsilon_n
+\\
+&amp;\phi(x)&amp;=&amp;1-\phi_1x - \phi_2 x^2 - \dots - \phi_p x^p
+\\
+&amp;\psi(x)&amp;=&amp;1+\psi_1x + \psi_2 x^2 + \dots + \psi_q x^q.
+\end{array}\]</span> Are both [A1] and [A2] reasonable alternative
+models? Is there a reason to prefer one to the other? Which one matches
+[A3]?</p>
+<p><strong>Q4.2. Two equivalent MA models</strong>. Consider the
+following moving average models, defined in terms of a Gaussian white
+noise process <span class="math inline">\(\epsilon_n \sim \mathrm{iid}
+\, N(0,\sigma^2)\)</span>. <span class="math display">\[\begin{array}{crcll}
+[B1]  &amp; \hspace{10mm} Y_n &amp;=&amp; \epsilon_n +
+2\epsilon_{n-1},  \hspace{5mm} &amp; \sigma^2=1.
+\\
+[B2] &amp;  Y_n &amp;=&amp; \epsilon_n + 0.5\epsilon_{n-1}, &amp;
+\sigma^2=4.
+\end{array}\]</span> Why can data never tell us which of [B1] and [B2]
+is preferable for a particular situation? Is there a practical reason to
+prefer [B1] or [B2]?</p>
+<p><strong>Q.3. Over-damped AR(2) models</strong>. In Chapter 4, we saw
+that AR(2) models can describe quasi-periodic oscillatory behavior, with
+an autocorrelation function (ACF) that is an exponentially decaying
+sinusoid. You could experiment with <code>ARMAacf()</code> to find
+parameter values <span class="math inline">\(\phi_1\)</span> and <span class="math inline">\(\phi_2\)</span> for a causal AR(2) model that does
+not have a sinusoidal oscillation in its ACF. Instead, the ACF should
+decay to zero similar to an AR(1) model. Can you say anything about the
+class of all AR(2) models that do not have any oscillatory behavior? In
+other words, can you find a mathematical expression for the set of
+values of <span class="math inline">\(\phi_1\)</span> and <span class="math inline">\(\phi_2\)</span>? One way to address this in the
+context of Chapter 4 is to work out when a deterministic skeleton decays
+with no oscillations. In physics and engineering, this is called an
+over-damped system.</p>
 <hr />
 
 
