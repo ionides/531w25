@@ -19,7 +19,7 @@
 \usepackage{bbm} % for blackboard bold 1
 
 
-\title{\vspace{2mm} \link{https://ionides.github.io/531w24/}{Modeling and Analysis of Time Series Data}\\ \vspace{2mm}
+\title{\vspace{2mm} \link{https://ionides.github.io/531w25/}{Modeling and Analysis of Time Series Data}\\ \vspace{2mm}
 Chapter \CHAPTER: Linear time series models and the algebra of ARMA models}
 \author{Edward L. Ionides}
 \date{}
@@ -713,7 +713,7 @@ Equivalently, on what timescale does the phase of the fluctuations lose memory o
 \item   \parbox[t]{0.75\textwidth}{Licensed under the \link{http://creativecommons.org/licenses/by-nc/4.0/}{Creative Commons Attribution-NonCommercial license}.
     Please share and remix non-commercially, mentioning its origin.}
     \parbox[c]{1.5cm}{\includegraphics[height=12pt]{../cc-by-nc}}
-\item We acknowledge \link{https://ionides.github.io/531w24/acknowledge.html}{previous versions of this course}.
+\item We acknowledge \link{https://ionides.github.io/531w25/acknowledge.html}{previous versions of this course}.
 \end{itemize}
 }
 
