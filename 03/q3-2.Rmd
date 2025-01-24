@@ -26,7 +26,7 @@ B. The sample variance is evidently different in different time intervals. Howev
 
 C. A model with randomly changing variance looks appropriate for these data. Since the variance for such a model is time-varying, the model must be non-stationary.
 
-D. A model with randomly changing variance looks appropriate for these data. Despite the variance for such a model being time-varying, the model is stationary.
+D. A model with randomly changing variance looks appropriate for these data. Despite the sample variance being clearly time-varying, an appropriate model can be stationary.
 
 E. The sample variance is evidently different in different time intervals. An appropriate next step to investigate stationary would be to plot the sample autocorrelation function for different intervals to see if the dependence between time points is also time-varying.
 

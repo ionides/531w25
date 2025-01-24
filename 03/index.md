@@ -9,6 +9,7 @@ output: html_document
 | &nbsp;          | &nbsp;               |
 |:----------------|:--------------------:|
 | Lecture slides  | [pdf](slides.pdf) |
+| Annotated slides | [pdf](slides-annotated.pdf) |
 | Lecture notes   | [pdf](notes.pdf) |
 | Recording, Winter 2021: Chapter 3, Part 1  | [(27 mins)](https://youtu.be/tLCAJ74cvnA) |
 | Recording, Winter 2021: Chapter 3, Part 2  | [(24 mins)](https://youtu.be/HSWLJnLbCC0) |
@@ -24,7 +25,7 @@ output: html_document
 
 [Back to course homepage](../index.html)  
 [Acknowledgements](../acknowledge.html)  
-[Source code for these notes](http://github.com/ionides/531w24/tree/master/03/)
+[Source code for these notes](.)
 
 
 ----------------------
