@@ -136,12 +136,11 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 -->
 
 
-<!--
-
 ## Midterm project
 
 * [Information](midterm_project/midterm_project_info.html).
 
+<!--
 * [Midterm peer review report instructions](midterm_project/midterm_review.html)
 
 * [2024 midterm projects](midterm_project/index.html)
