@@ -1,5 +1,6 @@
-# Data from 1918 downloaded on 24-01-26 from
+# Data from 1918-2023 downloaded on 24-01-26 from
 # https://drive.google.com/file/d/1z5010rdGBEmyFrVPOEOu-1PpxP8u5Hta/view?usp=share_link
+# with 2024 added on 25-01-28
 # linked from
 # https://www.greatlakescc.org/en/coordinating-committee-products-and-datasets/
 # NAME: LAKE MICHIGAN-HURON MONTHLY MEAN LEVELS 
@@ -183,3 +184,4 @@ Year, Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
 2021,177.06,176.99,176.94,176.94,176.95,176.93,177.0,177.01,176.93,176.9,176.77,176.69 
 2022,176.6,176.54,176.53,176.66,176.75,176.8,176.81,176.79,176.71,176.6,176.55,176.46 
 2023,176.44,176.41,176.43,176.56,176.68,176.68,176.7,176.7,176.64,176.56,176.51,176.44 
+2024,176.42,176.4,176.39,176.46,176.58,176.66,176.73,176.68,176.57,176.42,176.33,176.23

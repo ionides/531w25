@@ -488,7 +488,11 @@ Consider the strategy of selecting the model with the lowest AIC value, and view
 
 \begin{frame}[fragile]{Reading in the data}
 
-The file \url{huron_level.csv} gives monthly water level, in meters, for Lakes Michigan and Huron from 1860 to 2023.
+<<read_data_first,echo=F>>=
+dat <- read.table(file="huron_level.csv",sep=",",header=TRUE)
+@
+
+The file \url{huron_level.csv} gives monthly water level, in meters, for Lakes Michigan and Huron from \Sexpr{min(dat$Year)} to \Sexpr{max(dat$Year)}.
 
 <<read_data>>=
 dat <- read.table(file="huron_level.csv",sep=",",header=TRUE)
