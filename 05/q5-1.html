@@ -374,11 +374,12 @@ display: none;
 ## sigma^2 estimated as 0.04364:  log likelihood = 22.64,  aic = -33.28</code></pre>
 <p>The R output above uses <code>stats::arima</code> to fit ARMA(2,1)
 and ARMA(2,2) models to the January level (in meters above sea level) of
-Lake Huron from 1860 to 2024. We aim to choose one of these as a null
-hypothesis of no trend for later comparison with models including a
+Lake Huron from 1860 to 2024. Residual diagnostics (not shown) show no
+major violation of model assumptions. We aim to choose one of these as a
+null hypothesis of no trend for later comparison with models including a
 trend.</p>
-<p>Which is the best conclusion from the evidence above:</p>
-<p>A: The ARMA(2,2) model has a lower AIC so it should be prefered</p>
+<p>Which is the best conclusion from the avaiable evidence:</p>
+<p>A: The ARMA(2,2) model has a lower AIC so it should be prefered.</p>
 <p>B: We cannot reject the null hypothesis of ARMA(2,1) since the
 ARMA(2,2) model has a likelihood less than 1.92 log units higher than
 ARMA(2,1). Since there is not sufficient evidence to the contrary, it is

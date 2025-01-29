@@ -31,11 +31,11 @@ arma2.1
 arma2.2
 ```
 
-The R output above uses `stats::arima` to fit ARMA(2,1) and ARMA(2,2) models to the January level (in meters above sea level) of Lake Huron from 1860 to 2024. We aim to choose one of these as a null hypothesis of no trend for later comparison with models including a trend.
+The R output above uses `stats::arima` to fit ARMA(2,1) and ARMA(2,2) models to the January level (in meters above sea level) of Lake Huron from 1860 to 2024. Residual diagnostics (not shown) show no major violation of model assumptions. We aim to choose one of these as a null hypothesis of no trend for later comparison with models including a trend.
 
-Which is the best conclusion from the evidence above:
+Which is the best conclusion from the avaiable evidence:
 
-A: The ARMA(2,2) model has a lower AIC so it should be prefered
+A: The ARMA(2,2) model has a lower AIC so it should be prefered.
 
 B:  We cannot reject the null hypothesis of ARMA(2,1) since the ARMA(2,2) model has a likelihood less than 1.92 log units higher than ARMA(2,1). Since there is not sufficient evidence to the contrary, it is better to select the simpler ARMA(2,1) model.
 
