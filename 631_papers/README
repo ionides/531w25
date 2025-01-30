@@ -1,0 +1,7 @@
+
+Rscript -e "rmarkdown::render('hyndman08-slides.md')"
+
+
+
+rmarkdown::render('slides.md')
+
