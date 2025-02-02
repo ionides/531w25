@@ -1,0 +1,35 @@
+---
+title: ""
+author: ""
+geometry: paperheight=4.5in,paperwidth=7in,margin=0.3in
+output:
+    pdf_document
+---
+
+
+
+```{r preliminaries,echo=F,cache=F}
+Q <- "Q3-01"
+library(png)
+set.seed(31415)
+knitr::opts_chunk$set(cache = FALSE)
+my_dir <- Q
+
+```
+
+\newcommand\exam[1]{#1} 
+\renewcommand\exam[1]{} 
+
+\newcommand\var{\mathrm{Var}}
+\newcommand\varSample{\mathrm{var}}
+\newcommand\cov{\mathrm{Cov}}
+\newcommand\covSample{\mathrm{cov}}
+\newcommand\cor{\mathrm{Cor}}
+\newcommand\corSample{\mathrm{cor}}
+\newcommand\TRUEorFALSE{TRUE or FALSE. } 
+
+```{r,child=paste(my_dir,"/q.Rmd",sep="")}
+```
+
+
+
