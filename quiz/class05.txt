@@ -1,0 +1,27 @@
+
+Solve the question at https://ionides.github.io/531w25/04/q4-1.html. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+1. Multiple choice question title: Equivalent ARMA models: https://ionides.github.io/531w25/04/q4-1.html
+
+Question text:  The question is posted at https://ionides.github.io/531w25/04/q4-1.html.
+
+
+Answers: See https://ionides.github.io/531w25/03/q3-2.html
+
+A. Y_n = (1/2)Y_{n-1} + e_n
+B. Y_n = -(1/2)Y_{n-1} + e_n
+C. Y_n = (1/2)Y_{n-2} - (1/16)Y_{n-4} + e_n + e_{n-1} + (1/4)e_{n-2}
+D. Y_n = -(1/2)Y_{n-2} - (1/16)Y_{n-4} + e_n + e_{n-1} + (1/4)e_{n-2}
+E. None of the above
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer to the multiple choice question. For text typing of math, you can denote a subscript of Y by Y_n
+
+You are expected to write between one and three sentences.
+
+The credit is for Q2 not Q1. For this assignment, the grade is for participation and feedback not correctness. 
+
+
+

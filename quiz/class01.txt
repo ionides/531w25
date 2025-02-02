@@ -1,0 +1,6 @@
+
+Type: essay
+Title: Motivation for this course
+
+Prompt: What is your motivation for taking a class on time series analysis? Please write one or two sentences. Your response may be shared anonymously with the class.
+

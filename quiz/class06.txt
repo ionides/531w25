@@ -1,0 +1,28 @@
+
+Solve the question at https://ionides.github.io/531w25/05/q5-1.html. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+1. Multiple choice question title: Comparing ARMA models: https://ionides.github.io/531w25/05/q5-1.html
+
+Question text:  The question is posted at https://ionides.github.io/531w25/05/q5-1.html
+
+
+Answers: 
+
+A: The ARMA(2,2) model has a lower AIC so it should be preferred.
+
+B:  We cannot reject the null hypothesis of ARMA(2,1) since the ARMA(2,2) model has a likelihood less than 1.92 log units higher than ARMA(2,1). Since there is not sufficient evidence to the contrary, it is better to select the simpler ARMA(2,1) model.
+
+C: Since the comparison of AIC values and the likelihood ratio test come to different conclusions in this case, it is more-or-less equally reasonable to use either model.
+
+D: When the results are borderline, numerical errors in the stats::arima optimization may become relevant. We should check using optimization searches from multiple starting points in parameter space, for example, using arima2::arima.
+
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer to the multiple choice question. You are expected to write between one and three sentences.
+
+The credit is for Q2 not Q1. For this assignment, the grade is for participation and feedback not correctness. 
+
+
+
