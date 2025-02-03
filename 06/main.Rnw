@@ -150,7 +150,7 @@ abline(v=2014.99,col="red")
 
 Based on our previous analysis, we try fitting AR(1) for the annual polynomial. We try ARMA(1,1) for the monthly part, giving
 \begin{equation}
-(1-\AR_1 B^{12})(1-\ar_1 B) Y_n = (1+\ma_1 B)\epsilon_n.
+(1-\AR_1 B^{12})(1-\ar_1 B) (Y_n-\mu) = (1+\ma_1 B)\epsilon_n.
 \end{equation}
 
 \bi
