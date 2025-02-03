@@ -1,6 +1,6 @@
 
 
-Solve the question at https://ionides.github.io/531w25/quiz/class7.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
+Solve the question at https://ionides.github.io/531w25/quiz/class07.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
 
 
 1. Multiple choice question title: Checking an AIC table: https://ionides.github.io/531w25/quiz/class07.pdf
