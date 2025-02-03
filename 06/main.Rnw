@@ -491,6 +491,103 @@ What other supplementary analysis could you do to strengthen your conclusions?
 
 \end{frame} 
 
+\section{Testing for trend vs unit root}
+
+\begin{frame}{Augmented Dickey–Fuller test}
+
+\bi
+\item A time series model is said to have a \myemph{unit root} if its first difference is stationary.
+
+\item For linear time series models, this corresponds to a $(1-L)$ factor in the AR specification, and hence an AR polynomial root of $1$.
+
+\item A unit root corresponds to a ``stochastic trend'' (formally an oxymoron) described by a random walk.
+
+\item The augmented Dickey–Fuller (ADF) test has this null hypothesis.
+
+\item ADF test is sometimes erroneously called a test for ``stationarity''. However, many non-stationary models remain non-stationary after any amount of differencing. For example, models with non-polynomial trend.
+
+\item Assessing evidence for a trend is better than applying an ADF test for a unit root if a model with trend is statistically (or scientifically) preferable to a model with a random walk.
+
+\ei
+
+\end{frame}
+
+\begin{frame}[fragile]
+
+\myquestion. Which of \code{y1}, \code{y2}, \code{y3}, \code{y4} do you think will be considered non-stationary by a unit root test?
+
+<<adf-seed,echo=FALSE>>=
+set.seed(42)
+@
+
+<< adf-series, echo=TRUE>>=
+n <- 0:100
+epsilon <- rnorm(n=length(n),mean=0,sd=1)
+y1 <- 2*n/100 + epsilon
+y2 <- exp(1.5*n/100) + epsilon
+y3 <- sin(2*pi*n/200)
+y4 <- n*(100-n)/2500
+@
+
+\end{frame}
+
+\begin{frame}[fragile]
+
+<<adf-plots, echo=FALSE,fig.width=8,fig.height=6>>=
+#,fig.fullwidth=TRUE>>=
+## make a 2x2 plot of y1, y2, y3 and y4, all plotted against n, using ggplot
+df <- data.frame(n, y1, y2, y3, y4)
+
+# Reshape the data to a long format
+df_long <- tidyr::gather(df, key = "variable", value = "value", -n)
+
+# Use ggplot to make the 2x2 plot
+library(ggplot2)
+ggplot(df_long, aes(x = n, y = value)) +
+  geom_line() +
+  facet_wrap(~ variable, scales = "free_y")
+  
+@
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Result of \code{adf.test()}}
+<<adf-tests,echo=F,warning=FALSE, message=FALSE,size="small">>=
+my_adf_print <- function(x) cat(
+  "data:  ", x$data.name,
+  "\nDickey-Fuller = ", x$statistics,
+  ", Lag order = ", x$parameter,
+  ", p-value = ", x$p.value,
+  "\nAlternative hypothesis: ",x$alternative, "\n "
+)
+
+y1_adf <- tseries::adf.test(y1)
+y2_adf <- tseries::adf.test(y2)
+y3_adf <- tseries::adf.test(y3)
+y4_adf <- tseries::adf.test(y4)
+
+my_adf_print(y1_adf)
+my_adf_print(y2_adf)
+my_adf_print(y3_adf)
+my_adf_print(y4_adf)
+
+@
+
+\end{frame}
+
+\begin{frame}
+\frametitle{When to use \code{adf.test()}}
+
+\bi
+\item If you are interested in a null hypothesis of a random walk against an alternative of a stationary ARMA model, then this test is applicable.
+
+\item Generalizations of ADF claim to identify random walks on top of a nonlinear trend, but distinguishing these two options is hard and beyond our scope.
+
+\item Most midterm projects benefit from avoiding the ADF test and focusing on a direct investigation of the evidence for trend or other non-stationary behavior.
+
+\ei
+
+\end{frame}
 
 \begin{frame}{Further reading} 
 
@@ -505,8 +602,8 @@ What other supplementary analysis could you do to strengthen your conclusions?
 
 \end{frame}
 
-
 \newcommand\acknowledgments{
+
 \begin{itemize}
 \item   Compiled on {\today} using \Rlanguage version \Sexpr{getRversion()}.
 \item   \parbox[t]{0.75\textwidth}{Licensed under the \link{http://creativecommons.org/licenses/by-nc/4.0/}{Creative Commons Attribution-NonCommercial license}.
