@@ -9,7 +9,7 @@ output:
 
 
 ```{r preliminaries,echo=F,cache=F,results=F}
-Q <- "Q3-01"
+Q <- "Q1-03"
 file.copy(paste0(Q,"/q.Rmd"),"tmp.Rmd",overwrite=TRUE)
 library(png)
 set.seed(31415)
