@@ -35,9 +35,9 @@ my_adf_print(tseries::adf.test(monthly_data$person_injured))
 
 A: The time plot indicates a non-constant mean function describing a major dip due to the COVID-19 pandemic and an increasing trend at other times. The ADF test does not support or refute that model.
 
-B: The ADF test indicates that the series is stationary, supporting a decision to fit a SARMA model.
+B: The ADF test suggests the series is stationary, supporting a decision to fit a SARMA model.
 
-C: The ADF test shows the series is non-stationary, so it should be differenced before fitting a SARMA.
+C: The ADF test suggests the series is non-stationary; it should be differenced before fitting a SARMA.
 
 D: The ADF test indicates that the series is non-stationary, supporting the use of a non-constant mean function to describe a major dip due to the COVID-19 pandemic and an increasing trend at other times.
 
