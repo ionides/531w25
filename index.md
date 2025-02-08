@@ -134,7 +134,7 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 ## Quizzes
 
-* Quiz 1. In class on Monday 2/17. [Sample questions with solutions](quiz/quiz1.pdf).
+* Quiz 1. In class on Monday 2/17. [Sample questions](quiz/quiz1-all.pdf). [With solutions](quiz/quiz1-sol.pdf).
 
 ## Midterm project
 
