@@ -36,7 +36,7 @@ q_setup <- function(n){
     write(c(
       "```{r,echo=F,results=ifelse(QLABELS,'asis','hide')}",
       paste("my_dir <- '",q_dir,"'",sep=""),
-      "cat(my_dir,'.',sep='')",
+      "cat('**',my_dir,'.**',sep='')",
       "```"),
       file=q_tmp,append=TRUE
     )
@@ -84,14 +84,11 @@ cat("**This document produces different random quizzes each time the source code
 ```
 
 ```{r,results="asis",echo=F,purl=F,eval=ALL}
-cat("**This version lists all the questions currently in the quiz generator. The actual quiz will be samples from these questions.**")
+cat("**This version lists all the questions currently in the quiz generator. The actual quiz will have one question sampled from each of the 6 question categories.**")
 ```
 
-**Instructions. You have a time allowance of 30 minutes.  The quiz is closed book, and you are not allowed access to any notes. Any electronic devices in your possession must be turned off and remain in a bag on the floor.**
+**Instructions. You have a time allowance of 30 minutes. The quiz may be ended early if everyone is done. The quiz is closed book, and you are not allowed access to any notes. Any electronic devices in your possession must be turned off and remain in a bag on the floor. For each question, circle one letter answer and provide some supporting reasoning.**
 
-**The following formulas are provided.**
-
-TO BE DECIDED
 
 -------------------------
 
