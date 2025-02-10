@@ -24,7 +24,7 @@ mtext("B",side=3,line=0,at=-4.2,cex=2)
 A: We should consider fitting a long-tailed error distribution, such as the t distribution.\
 B: The model is missing seasonality, which could be critical in this situation.\
 C: For using ARMA methods, these data should be log-transformed to make a linear Gaussian approximation more appropriate.\
-D: The normal quantile plot shows a long-tailed distribution, but this is not a major problem. We have over 300 data points, so the central limit theorem should hold for parameter estimates.
+D: The normal quantile plot shows a long-tailed distribution, but this is not a major problem. We have over 300 data points, so the central limit theorem should hold for parameter estimates.\
 E: The normal quantile plot shows long tails, but with the right tail noticeably longer than the left tail. We should consider an asymmetric error distribution.\
 F: We should not interpret (B) before testing for stationarity. First run `adf.test()` and, if the null hypothesis is not rejected, recalculate (B) when fitting to the differenced data. 
 
