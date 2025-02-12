@@ -18,7 +18,7 @@ mtext("B",side=3,line=-1,at=-1.6,cex=2)
 
 ```
 
-The monthly US consumer price index (CPI) combines the price of a basket of products, such as eggs and bread and gasoline. (A) Annual percent inflation, the difference of log-CPI multiplied by $12\times 100$ (black line), and a smooth estimate via local linear regression (red line). (B) The periodogram of inflation and its smooth estimate. Which best characterizes the behavior of the smoother?
+The monthly US consumer price index (CPI) combines the price of a basket of products, such as eggs and bread and gasoline. (A) Annualized monthly percent inflation, i.e., the difference of log-CPI multiplied by $12\times 100$ (black line); a smooth estimate via local linear regression (red line). (B) The periodogram of inflation and its smooth estimate. Which best characterizes the behavior of the smoother?
 
 A: Cycles longer than 2 months are removed\
 B: Cycles shorter than 2 months are removed\
