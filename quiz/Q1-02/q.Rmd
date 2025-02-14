@@ -1,5 +1,5 @@
 
-```{r timeplot,echo=FALSE,fig.width=6,fig.height=4}
+```{r timeplot,echo=FALSE,fig.width=6,fig.height=4,out.width="5in"}
 set.seed(33)
 N <- 1000
 sd1 <- rep(1,N)

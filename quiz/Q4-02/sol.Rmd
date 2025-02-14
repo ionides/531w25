@@ -1,7 +1,8 @@
 
 \color{blue}
 
-**Solution**. C. Here's what happens when we take a `log(x+1)` transform, fitting ARMA(2,2) and checking the residuals as before.
+**Solution**. C.\
+Here's what happens when we take a `log(x+1)` transform, fitting ARMA(2,2) and checking the residuals as before.
 
 ```{r log_mers,echo=FALSE,fig.width=7,fig.height=2.5,out.width="5in",}
 log_arma22 <- arima(log(mers+1),order=c(2,0,2))

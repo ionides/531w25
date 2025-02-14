@@ -1,6 +1,6 @@
 ---
 title: "Quiz 1, STATS/DATASCI 531/631 W25	"
-author: "In class on 2/17"
+author: "In class on 2/17, 2:30pm to 3:00pm"
 output:
   pdf_document:
     latex_engine: xelatex
@@ -11,13 +11,24 @@ csl: ecology.csl
 ---
 
 
-```{r preliminaries,echo=F,cache=F}
- ALL <- TRUE
-#ALL <- FALSE
-#SOL <- TRUE
-SOL <- FALSE
- QLABELS <- TRUE
-#QLABELS <- FALSE
+```{r preliminaries,echo=FALSE,cache=FALSE}
+ALL <- TRUE
+SOL <- TRUE
+#SOL <- FALSE
+QLABELS <- TRUE
+EXAM <- FALSE
+EXAM <- TRUE
+if(EXAM){
+  ALL <- FALSE
+  SOL <- FALSE
+  QLABELS <- FALSE
+}
+```
+
+\newcommand\exam[1]{#1}
+<!-- \renewcommand\exam[1]{} to remove exam formatting -->
+
+```{r setup,echo=FALSE,cache=FALSE}
 # library(mat2tex)
 library(png)
 set.seed(12)
@@ -59,8 +70,6 @@ q_setup <- function(n){
 ```
 
 
-\newcommand\exam[1]{#1} 
-\renewcommand\exam[1]{} 
 
 \newcommand\var{\mathrm{Var}}
 \newcommand\varSample{\mathrm{var}}
@@ -68,8 +77,6 @@ q_setup <- function(n){
 \newcommand\covSample{\mathrm{cov}}
 \newcommand\cor{\mathrm{Cor}}
 \newcommand\corSample{\mathrm{cor}}
-\newcommand\TRUEorFALSE{TRUE or FALSE. } 
-
 
 \exam{\vspace{1.5cm}
 
@@ -87,10 +94,10 @@ cat("**This document produces different random quizzes each time the source code
 cat("**This version lists all the questions currently in the quiz generator. The actual quiz will have one question sampled from each of the 6 question categories.**")
 ```
 
-**Instructions. You have a time allowance of 30 minutes. The quiz may be ended early if everyone is done. The quiz is closed book, and you are not allowed access to any notes. Any electronic devices in your possession must be turned off and remain in a bag on the floor. For each question, circle one letter answer and provide some supporting reasoning.**
+**Instructions. You have a time allowance of 30 minutes. The quiz may be ended early if everyone is done. The quiz is closed book, and you are not allowed access to any notes. Any electronic devices in your possession must be turned off and remain in a bag on the floor.**
 
+**For each question, circle one letter answer and provide some supporting reasoning.**
 
--------------------------
 
 \exam{\newpage}
 
@@ -159,6 +166,9 @@ cat_file6 <- q_setup(6)
 ```{r q6, child = cat_file6}
 ```
 
+
+
+\exam{\vfill}
 
 ------
 

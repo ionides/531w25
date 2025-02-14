@@ -1,7 +1,8 @@
 
 \color{blue}
 
-**Solution**. D. All the answers are fairly reasonable here! Perhaps the most unreasonable thing would be to be sure there's only one reasonable answer.
+**Solution**. D.\
+All the answers are fairly reasonable here! Perhaps the most unreasonable thing would be to be sure there's only one reasonable answer.
 
 However, a more careful optimization using `arima2::arima` shows us that ARMA(2,1) actually has a higher AIC than ARMA(2,2) so all lines of evidence suggest ARMA(2,1) is a better choice. The differences are small, so the choice is unlikely to be highly consequential.
 

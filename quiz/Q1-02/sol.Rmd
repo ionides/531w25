@@ -1,9 +1,8 @@
 
 \color{blue}
 
-**Solution**. D. This is a subtle question, so let's discuss each option.
-
-The plotted time series is a realization of a stationary model:
+**Solution**. D.\
+This is a subtle question, so let's discuss each option. The plotted time series is a realization of a stationary model:
 
 ```{r eval=FALSE, echo=TRUE}
 N <- 1000

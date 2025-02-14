@@ -1,7 +1,8 @@
 
 \color{blue}
 
-**Solution**. E. This model is not started in its stationary distribution, leading to a covariance that is not shift invariant. The exact calculation is not needed, but it is as follows.
+**Solution**. E.\
+This model is not started in its stationary distribution, leading to a covariance that is not shift invariant. The exact calculation is not needed, but it is as follows.
 $$\begin{array}{rcl}
 \cov(Y_n,Y_k) &=& \cov\left(
   \sum_{i=1}^n \phi^{n-i}\epsilon_i,
