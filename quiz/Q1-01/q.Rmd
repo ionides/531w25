@@ -1,7 +1,7 @@
 
 Suppose that a dataset $y_{1:N}^*$ is well described by the statistical model
 $$Y_n = a + b n + \epsilon_n,$$
-where $\epsilon_n$ is white noise and $b \neq 0$. Which of the following is the best approach to time series modeling of $y_{1:N}^*$?
+where $\epsilon_n$ is a Gaussian ARMA process and $b \neq 0$. Which of the following is the best approach to time series modeling of $y_{1:N}^*$?
 
 A. The data are best modeled as non-stationary, so we should take differences. The differenced data are well described by a stationary ARMA model.
 
