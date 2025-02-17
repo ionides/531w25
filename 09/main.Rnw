@@ -330,9 +330,9 @@ LRT_pval <- 1-pchisq(2*log_lik_ratio,df=1)
   \item Both $X$ and $Y$ are caused by a third variable $Z$ that is unmeasured or has been omitted from the analysis. In this case, $Z$ is called a \myemph{confounding variable}.
 \end{enumerate}
 \bi
-\item Here, it is not considered plausible that mortality fluctations drive economic fluctuations (the \myemph{reverse causation} possibility).
+\item Excluding the economic consequences of COVID-19, it is not considered plausible that mortality fluctations drive economic fluctuations (the \myemph{reverse causation} possibility).
 
-\item Unemployment is a \myemph{proxy variable} for economic fluctuations. Increased unemployment itself is necessarily directly causing reduced mortality: all proxy variables for economic activity are confounded in this analysis.
+\item Unemployment is a \myemph{proxy variable} for economic fluctuations. Increased unemployment may not directly cause reduced mortality: all proxy variables for economic activity are confounded in this analysis.
 
 \ei
 
