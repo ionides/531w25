@@ -1,10 +1,13 @@
 
 \color{blue}
 
-**Solution**. B.\
-The usual interpretation of the sample ACF assumes that variance and covariance depend only on lag (i.e., the data are well modeled by a shift-invariant autocovariance) but the plot does not check this.
+**Solution**. A.\
+In this example, the units of the "time" variable $n$ are a dimensionless count of firing events.
+ So, the units of frequency are cycles per firing event. The units of period are firing events per cycle.
+ The peak in the smoothed periodogram corresonds to a cycle length of about $1/0.07\approx 14$ observations. 
+ These cycles correspond to oscillations between low firing rate (i.e., long time intervals between firing) and high firing rate (short time intervals between firing).
 
-There is clear evidence that the process is not well modeled by white noise. There is also clear evidence against a trend in the mean, which would show up as a slowly decaying sample ACF.
+The units of $y_n$ are time, in milliseconds. It is unusual, and therefore somewhat counter-intuitive, to have a time series with units of time for the measured variable and a dimensionless "time" variable.
 
 \color{black}
 

@@ -23,7 +23,7 @@ spectrum(z,spans=c(11,9,13),sub="",main="")
 
 Which if the following is the best inference from this figure
 
-A. Rapid neuron firing events (i.e., short intervals between firing events) come in groups with a typical size of $1/0.07\approx 14$.
+A. Transitions between rapid neuron firing (short intervals between firing) and slow neuron firing (long intervals between firing) occur every $1/0.07\approx 14$ firing events.
 
 B. The neuron has a characteristic duration between firing events of $1/0.07 \approx 14$  milliseconds.
 
