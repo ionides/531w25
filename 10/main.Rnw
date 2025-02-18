@@ -1,0 +1,162 @@
+\input{../header}
+
+\newcommand\eqspace{\hspace{3mm}}
+\newcommand\eqvspace{\vspace{1mm}}
+\newcommand\negListSpace{\hspace{-4mm}}
+
+
+\mode<beamer>{\usetheme{AnnArbor}}
+\mode<beamer>{\setbeamertemplate{footline}}
+\mode<beamer>{\setbeamertemplate{footline}[frame number]}
+\mode<beamer>{\setbeamertemplate{frametitle continuation}[from second][\insertcontinuationcountroman]}
+\mode<beamer>{\setbeamertemplate{navigation symbols}{}}
+
+\mode<handout>{\pgfpagesuselayout{2 on 1}[letterpaper,border shrink=5mm]}
+
+\newcommand\CHAPTER{10}
+% \newcommand\answer[2]{\textcolor{blue}{#2}} % to show answers
+% \newcommand\answer[2]{\textcolor{red}{#2}} % to show answers
+ \newcommand\answer[2]{#1} % to show blank space
+\usepackage{bbm} % for blackboard bold 1
+
+
+\title{\vspace{2mm} \link{https://ionides.github.io/531w25/}{Modeling and Analysis of Time Series Data}\\ \vspace{2mm}
+Chapter \CHAPTER: Forecasting}
+\author{Edward L. Ionides}
+\date{}
+
+\setbeamertemplate{footline}[frame number]
+
+<<setup,include=FALSE,cache=FALSE,purl=FALSE,child="../setup.Rnw">>=
+@
+
+\begin{document}
+
+\maketitle
+
+\mode<article>{\tableofcontents}
+
+\mode<presentation>{
+  \begin{frame}{Outline}
+    \tableofcontents
+  \end{frame}
+}
+
+
+<<,echo=F>>=
+set.seed(2050320976)
+@
+
+\section{Introduction}
+% \subsection{Introduction}
+\begin{frame}[fragile]{Model-based forecasts}
+
+\mode<presentation>{
+\vspace{-2mm}
+}
+
+\bi
+
+\item  Data, $y^*_{1:N}$, and a model $Y_{1:N+h}$ with joint density $f_{Y_1:N+h}(y_{1:N+h}|\theta)$ can be used to \myemph{forecast} future values $y_{N+1:N+h}$ up to a \myemph{horizon}, $h$.
+
+
+\item A model-based \myemph{probabilistic forecast} of the not-yet-observed values $y_{N+1:N+h}$ is
+\begin{equation}
+f_{Y_{N+1:N+h}|Y_{1:N}} \big( y_{N+1:N+h} | y^*_{1:N} ; \hat\theta \big),
+\end{equation}
+where $\hat\theta$ is a point estimate such as an MLE.
+
+\item A model-based \myemph{point forecast} of $y_{N+1:N+h}$ is
+\begin{equation}
+\E\big[Y_{N+1:N+h} \big| Y_{1:N}=y^*_{1:N};\hat\theta big].
+\end{equation}
+
+\item Point forecasts and probabilistic forecasts have many applications in business and elsewhere.
+
+\ei
+
+\end{frame}
+
+\begin{frame}{Evaluating forecasts}
+
+\bi
+\item Point forecasts could be evaluated by squared error, absolute error, relative squared error, relative absolute error, etc.
+
+\item Probabilistic forecasts are naturally evaluated by the forecast density,
+\begin{equation}
+f_{Y_{N+1:N+h}|Y_{1:N}} \big( y_{N+1:N+h} | y^*_{1:N} ; \hat\theta \big),
+\end{equation}
+evaluated at the data, $y^*_{N+1:N+h}$, once it is collected.
+
+\item Due to time dependence, and limited amounts of data, it can be problematic to evaluate by cross-validating.
+
+\ei
+
+ARIMA forecasting
+
+likelihood and one-step forecasting
+
+exponential weights forecasting (introduced as a stochastic model)
+
+prophet
+
+forecasting vs model fitting
+
+deep learning?
+
+evaluation of forecasts
+
+example: huron water level (forecasting from 2014)
+
+\end{frame}
+
+\begin{frame}{Further reading} 
+
+\bi
+
+\item Section~3.5 of \citet{shumway17} covers ARIMA forecasting.
+
+\item \citet{hyndman08} introduces the \texttt{forecast} R package.
+
+\item \citet{taylor18} presents the Facebook Prophet forecasting algorithm.
+
+\ei
+
+
+\end{frame}
+
+\newcommand\acknowledgments{
+
+\begin{itemize}
+\item   Compiled on {\today} using \Rlanguage version \Sexpr{getRversion()}.
+\item   \parbox[t]{0.75\textwidth}{Licensed under the \link{http://creativecommons.org/licenses/by-nc/4.0/}{Creative Commons Attribution-NonCommercial license}.
+    Please share and remix non-commercially, mentioning its origin.}
+    \parbox[c]{1.5cm}{\includegraphics[height=12pt]{../cc-by-nc}}
+\item We acknowledge \link{https://ionides.github.io/531w25/acknowledge.html}{previous versions of this course}.
+\end{itemize}
+}
+
+\mode<presentation>{
+\begin{frame}[allowframebreaks=0.8]{References and Acknowledgements}
+   
+\bibliography{../bib531}
+
+\vspace{3mm}
+
+\acknowledgments
+
+\end{frame}
+}
+
+\mode<article>{
+
+{\bf \Large \noindent Acknowledgments}
+
+\acknowledgments
+
+  \bibliography{../bib531}
+
+}
+
+\end{document}
+

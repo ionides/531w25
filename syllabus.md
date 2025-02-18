@@ -27,7 +27,7 @@ Instructor contact information:
 GSI: Aaron Abkemeier
 
 * email: aaronabk@umich.edu
-* office hours: TBD
+* office hours: Tue, 4:30-6:00 PM, and Friday, 3:00-4:30 PM. Angell Hall, Room G219.
 
 
 Computing support. If you have a coding problem you cannot debug, it is often helpful to develop a [minimal reproducible example](https://stackoverflow.com/help/minimal-reproducible-example) that others can run to help you. You can share this, and the error message you obtain, with your group and/or on Piazza, or by email if necessary.
