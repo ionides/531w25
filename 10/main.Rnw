@@ -99,11 +99,13 @@ evaluated at the data, $y^*_{N+1:N+h}$, once it is collected.
 
 \end{frame}
 
+\section{ARIMA forecasting}
+
 \begin{frame}[fragile]{ARIMA forecasting}
 
 \code{predict.Arima()} computes the conditional Gaussian distribution for forecasting an ARIMA model.
 
-<<arima-predict-huron,echo=TRUE,eval=F>>=
+<<arima-predict-huron-code,echo=TRUE,eval=F>>=
 dat <- read.table(file="huron_level.csv",sep=",",header=TRUE)
 huron_level <- ts(as.vector(t(dat[,2:13])),start=1860,freq=12)
 time <- rep(dat$Year,each=12)+ rep(0:11,nrow(dat))/12
@@ -122,15 +124,70 @@ lines(f.time,f.val-1.96*f.se,col="blue")
 
 \end{frame}
 
-\begin{frame}{Facebook Prophet}
+\begin{frame}[fragile]{95\% prediction interval from December 2014}
 
-test
+<<arima-predict-huron-plot,echo=FALSE,eval=TRUE,fig.height=5,fig.width=8,out.width="12cm">>=
+<<arima-predict-huron-code>>
+@
 
 \end{frame}
 
-\begin{frame}{Forecasting vs model fitting}
+\section{Prophet}
 
-test
+\begin{frame}{Facebook Prophet}
+\bi
+\item ARIMA models are good for relatively short time series.
+\item SARIMA is good for monthly and quarterly data, but less so for daily or hourly.
+\item You may have already experienced this. Large-scale forecasting competitions confirm it \citep{makridakis20}.
+\item Prophet was designed for high-frequency (daily, hourly) business forecasting tasks at Facebook, and is widely used for similar tasks elsewhere.
+\item Prophet does penalized regression estimating trend and seasonality components. It can also do Bayesian fitting.
+\item Unlike ARIMA, Prophet cannot describe general covariance structures.
+\ei
+
+\end{frame}
+
+\begin{frame}[fragile]
+<<prophet-predict-huron-code,echo=TRUE,eval=TRUE,warning=FALSE,messages=FALSE,fig.height=3,fig.width=8,out.width="12cm">>=
+library(prophet)
+library(ggplot2)
+history <- data.frame(y = huron_old,
+  ds = seq(as.Date('1860-01-01'), as.Date('2014-12-01'), by = 'm'))
+fit <- prophet(history)
+future <- make_future_dataframe(fit, periods = 10*12,freq='month')                           
+forecast <- predict(fit,future)
+plot(fit,forecast)+
+  geom_point(data=data.frame(ds=future$ds[-(1:1860)],y=huron_level[-(1:1860)]),color="red")
+@
+
+\end{frame}
+
+\section{Forecasting vs modeling}
+
+\begin{frame}{Forecasting versus model fitting}
+
+\bi
+\item A good model should imply a good model-based forecast.
+
+\item Long-term forecasting is extrapolation. The model may be unreliable far from the timeframe used to build it.
+
+\item Without evidence to support a model for long-term forecasts, uncertainty estimates should be high. Uncertainty estimates are also uncertain!
+
+\item Deep learning methods need large amounts of data. They are not yet standard for forecasting. Prophet uses automatic differentiation techniques that enable deep learning.
+
+\ei
+
+\end{frame}
+
+\begin{frame}{Forecasting with trends and covariates}
+
+\bi
+\item A model with trends and covariates must project those into the future in order to forecast.
+
+\item Uncertainty about future trends may be captured by ``stochastic trend'' models. Prophet does this.
+
+\item We've seen the difficulty assessing stationarity vs slowly varying trend. The same issue arises with forecasting. How do we know if a trend will continue, or if it will change in future?
+
+\ei
 
 \end{frame}
 

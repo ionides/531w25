@@ -44,6 +44,8 @@ Students registering for 631 are expected to have taken at least one core PhD-le
 
 9. [Case study: An association between unemployment and mortality?](09/index.html)
 
+10. [Forecasting](10/index.html)
+
 <!--
 
 10. [Introduction to partially observed Markov process models](10/index.html)
