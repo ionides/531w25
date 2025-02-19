@@ -82,31 +82,55 @@ where $\hat\theta$ is a point estimate such as an MLE.
 \bi
 \item Point forecasts could be evaluated by squared error, absolute error, relative squared error, relative absolute error, etc.
 
-\item Probabilistic forecasts are naturally evaluated by the forecast density,
+\item Probabilistic forecasts are naturally evaluated by the forecast log-density,
 \begin{equation}
-f_{Y_{N+1:N+h}|Y_{1:N}} \big( y_{N+1:N+h} | y^*_{1:N} ; \hat\theta \big),
+\log f_{Y_{N+1:N+h}|Y_{1:N}} \big( y_{N+1:N+h} | y^*_{1:N} ; \hat\theta \big),
 \end{equation}
 evaluated at the data, $y^*_{N+1:N+h}$, once it is collected.
 
-\item Due to time dependence, and limited amounts of data, it can be problematic to evaluate by cross-validating.
+\item Due to time dependence, and limited amounts of data, it can be problematic to evaluate by cross-validation.
+
+\item Note that log-likelihood can be written as a sum of one-step forecast log-densities:
+\begin{equation}
+\log f_{Y_{1:N}}(y^*_{1:N};\theta) = \sum_{n=1}^N  \log f_{Y_{n}|Y_{1:n-1}}(y^*_n| Y^*_{1:n-1};\theta)
+\end{equation}
 
 \ei
 
-ARIMA forecasting
+\end{frame}
 
-likelihood and one-step forecasting
+\begin{frame}[fragile]{ARIMA forecasting}
 
-exponential weights forecasting (introduced as a stochastic model)
+\code{predict.Arima()} computes the conditional Gaussian distribution for forecasting an ARIMA model.
 
-prophet
+<<arima-predict-huron,echo=TRUE,eval=F>>=
+dat <- read.table(file="huron_level.csv",sep=",",header=TRUE)
+huron_level <- ts(as.vector(t(dat[,2:13])),start=1860,freq=12)
+time <- rep(dat$Year,each=12)+ rep(0:11,nrow(dat))/12
+huron_old <- window(huron_level,end=2014.99)
+sarma <- arima(huron_old,order=c(1,0,1),
+  seasonal=list(order=c(1,0,1),period=12))
+f.sarma <- predict(sarma,n.ahead=120)
+f.val <- as.vector(f.sarma$pred)
+f.se <- as.vector(f.sarma$se)
+f.time <- as.vector(time(f.sarma$pred))
+plot(huron_level)
+lines(f.time,f.val,col="red")
+lines(f.time,f.val+1.96*f.se,col="blue")
+lines(f.time,f.val-1.96*f.se,col="blue")
+@
 
-forecasting vs model fitting
+\end{frame}
 
-deep learning?
+\begin{frame}{Facebook Prophet}
 
-evaluation of forecasts
+test
 
-example: huron water level (forecasting from 2014)
+\end{frame}
+
+\begin{frame}{Forecasting vs model fitting}
+
+test
 
 \end{frame}
 
