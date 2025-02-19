@@ -28,8 +28,8 @@ text("B",x=0,y=0.32,cex=2)
 
 \(A) Inflation (black) and unemployment (red) for the USA, 1980-2024. (B) Cross-correlation function, `ccf(inflation,unemployment)`. What is the best interpretation of this plot?
 
-A: High inflation generally leads high unemployment, with a lag of about 4 yr.\
-B: High inflation generally lags high unemployment, with a lag of about 4 yr.\
+A: High inflation generally led high unemployment, with a lag of about 4 yr.\
+B: High inflation generally followed high unemployment, with a lag of about 4 yr.\
 C: Association is not causation, so we should not interpret a cross-correlation plot in terms of lead and lag relationships.
 
 
