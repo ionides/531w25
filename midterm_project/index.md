@@ -22,7 +22,7 @@ output:
 | | |
 |:----|:----|----|
 | 1. [Flight Delays](project01/blinded.html) | |
-| 2. [U.S. Airline Trafic Analysis](project02/blinded.html) | |
+| 2. [U.S. Airline Traffic Analysis](project02/blinded.html) | |
 | 3. [Solar Power Generation](project03/blinded.html) | |
 | 4. TBA | |
 | 5. [Complexity of U.S. Baby Names](project05/blinded.html) | |
