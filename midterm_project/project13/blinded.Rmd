@@ -1,0 +1,459 @@
+---
+title: "Time Series Analysis of the Vanguard S&P500 ETF"
+output:
+  html_document:
+    toc: yes
+---
+
+\newcommand\prob{\mathbb{P}}
+\newcommand\E{\mathbb{E}}
+\newcommand\var{\mathrm{Var}}
+\newcommand\cov{\mathrm{Cov}}
+
+\usepackage{amsmath, amssymb}
+
+-----------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(arima2)
+library(dplyr)
+library(forecast)
+library(knitr)
+library(signal) # filtering
+library(zoo)
+library(readr)
+library(ggplot2)
+library(prophet)
+library(parallel)
+library(future.apply)
+```
+
+## Introduction
+
+Exchange Traded Funds (ETFs) are one of the most common ways to trade and invest in multiple stocks at the same time which helps reduce the overall risk and exposure of any portfolio while also diversifying it and providing potential tax benefits to the holders ^[Understanding ETFs. https://www.schwab.com/etfs/understand-etfs]. These funds trade on and generally track specific indexes and so, some of them are often used as indicators of the overall market conditions such as the economy, large capitalization companies, small capitalization companies etc.
+
+Out of the many companies and individuals trading on the various stock exchanges, three companies have come to dominate the financial world in terms of assets controlled - State Street, Vanguard and BlackRock. State Street's S&P 500 index, SPY, has historically been the world's largest ETF but recently, Vanguard's own version of the index, Vanguard S&P 500 ETF (VOO) overtook this coveted ETF to become the largest in the world. ^[SPY Loses Title of Largest ETF. https://www.wsj.com/livecoverage/stock-market-today-dow-sp500-nasdaq-live-02-18-2025/card/spy-loses-title-of-largest-etf-after-decades-long-run-kpVmECP0UPdXYArYn6go]
+
+As a result of this change, we are interested in diving deeper into the Vanguard S&P 500 ETF and would like to understand more about its returns, their trend and the possibility of forecasting the future price of the index. Specifically, we will be aiming to answer the following questions:^[Apple Stock Analysis Project. https://github.com/ionides/531w24/blob/main/midterm_project/project14/blinded.Rmd]
+
+- Can we model the log returns of the Vanguard S&P 500 ETF using relatively simple models?
+- Are there considerations such as seasonality that need to be taken into account when trying to model the log returns?
+- Can we forecast the future prices of the ETF with a decent degree of accuracy?
+
+## Data Ingestion and Exploration
+
+We begin by retrieving data from the Wharton Research Data Services (WRDS) for the Vanguard S&P 500 ETF (VOO). The retrieved data is from Jan 02, 2019 to Dec 31, 2024 and has a daily frequency so we have roughly 1500 data points. We are only interested in the price of the ETF (PRC) along with its returns.
+
+Since in the financial world, it is common to work with the log of the returns, we also calculate the log returns manually using the price. This is because traders and investors often care more about the percent change in price rather than the absolute price change [2](). We then plot the original time series of the price and the log returns of the ETF over time.
+
+```{r data-reading, echo=FALSE, fig.align='center'}
+df <- read.csv("./Vanguard S&P 500 Data.csv", header = TRUE)
+
+# Select relevant columns
+df <- df[, c("PRC", "date")]
+
+# Data Formatting
+df$date <- as.Date(df$date, format = "%Y-%m-%d")
+df$PRC <- as.numeric(df$PRC)
+
+# Ensure data is sorted by date
+df <- df[order(df$date), ]
+
+# Compute log returns
+df$log_ret <- c(NA, diff(log(df$PRC)))
+
+# Plot original price and log returns
+plot(df$date, df$PRC, type = "l",
+     xlab = "Date", ylab = "Price (PRC)", main = "Original Price of VOO")
+
+plot(df$date, df$log_ret, type = "l", col = "blue",
+     xlab = "Date", ylab = "Log Returns",
+     main = "Log Returns of VOO")
+```
+
+Something to note here is that the original price of the ETF shows a clear upward trend as the price increases. However, the daily log returns themselves do not deviate much except for the volatile period around COVID in the year 2020.
+The mean log returns seems to be 0 with some level of increased variation in the years 2022-2023. Thus we can proceed forward with the null hypothesis that the daily log returns of the ETF can be modeled using a stationary model i.e. a model with no overall trend.
+
+```{r acf, echo=FALSE, fig.align='center'}
+acf(df$PRC, main = "Autocorrelation of VOO Price")
+acf(na.omit(df$log_ret), main = "Autocorrelation of Daily Log Returns")
+```
+
+We also look at the autocorrelation plots of the original price and the daily log returns in order to check our hypothesis. We can clearly observe that the price of the ETF has significant autocorrelation for all lags which implies that there is a definite correlation between the price of the ETF over time, which is to be intuitively expected. On the other hand, the daily log returns don't have any significant autocorrelation for most lags. The lags that do have significant ACF values should be interpreted and accepted with caution since the values could be because of random noise in the data and/or the drastic volatility period seen during COVID around the year 2020. There is also no obvious pattern in the overall plot which suggests that the log returns are mostly uncorrelated.
+
+## Frequency & Spectral Analysis
+
+To understand if there is any seasonality involved in the daily log returns or price before we do model fitting, we do some frequency analysis and spectral analysis to check for any possible dominant frequencies or periods.
+
+We first start by decomposing the data into trend, seasonality and noise, often referred to as a STL Decomposition ^[Hyndman, R. J., & Athanasopoulos, G. (2018). Forecasting: Principles and Practice (2nd ed). OTexts. Retrieved from https://otexts.com/fpp2/stl.html]
+
+```{r seasonal-decomposition, echo=FALSE, fig.align='center'}
+# STL Decomposition for Original Data
+decomposed_price <- stl(ts(df$PRC, frequency = 12), s.window = "periodic")
+plot(decomposed_price, main = "STL Decomposition of Original Price Data")
+
+# STL Decomposition for Log Returns
+decomposed_log_ret <- stl(ts(na.omit(df$log_ret), frequency = 12), s.window = "periodic")
+plot(decomposed_log_ret, main = "STL Decomposition of Log Returns")
+```
+
+The decomposition yields the same result regarding the trend of the original price and the log returns that we mentioned earlier. However, we note that the remainder i.e. the noise in the original price data is a lot more pronounced as compared to the log returns. This is to be expected because of the log transform as well as the differencing we did which stabilized the series for the log returns.
+
+We now look at the raw as well as the smoothed periodogram of the log returns ^[STATS 531 Course Materials, Chapter 8, Slide 3. Introduction to smoothing in time series analysis. University of Michigan.] along with calculating the value of the dominant frequency and the corresponding period. ^[STATS 531 Course Materials, Chapter 7, Slide 28. *Units of Frequency and Period*. University of Michigan.]
+
+```{r spectrum-analysis, echo=FALSE, fig.align='center'}
+# Raw Periodogram for Log Returns
+raw_log_ret <- spectrum(na.omit(df$log_ret), plot = FALSE)
+plot(raw_log_ret$freq, raw_log_ret$spec, type = "l", xlab = "Frequency",
+     ylab = "Spectrum",
+     main = "Raw Periodogram of Log Returns")
+
+# Smoothed Periodogram for Log Returns
+smooth_log_ret <- spectrum(na.omit(df$log_ret), spans = c(19, 19), plot = FALSE)
+
+# Identify Dominant Frequency and Corresponding Period
+dominant_freq <- smooth_log_ret$freq[which.max(smooth_log_ret$spec)]
+dominant_period <- 1 / dominant_freq
+
+# Ensure date is in correct format
+df$date <- as.Date(df$date)
+
+# Determine the Time Unit
+diff_dates <- unique(diff(df$date))
+median_diff <- median(as.numeric(diff_dates), na.rm = TRUE)  
+
+if (median_diff > 25) { 
+  period_unit <- "months" 
+} else if (median_diff > 5) {
+  period_unit <- "weeks"
+} else {
+  period_unit <- "days"
+}
+
+# Print Dominant Period
+print(paste("Dominant period is approximately", round(dominant_period, 2),
+            period_unit))
+
+# Plot Spectral Density with Highlighted Dominant Frequency
+plot(smooth_log_ret$freq, smooth_log_ret$spec, type = "l", log = "y",
+     xlab = "Frequency", ylab = "Spectral Density",
+     main = "Smoothed Periodogram of Log Returns")
+
+# Highlight Dominant Frequency
+abline(v = dominant_freq, col = "red", lwd = 2, lty = 2)
+
+# Corrected Label Placement
+dominant_spec_value <- max(smooth_log_ret$spec)
+text(dominant_freq * 0.7, dominant_spec_value * 0.6,   
+     labels = paste0(" Dominant Freq: ", round(dominant_freq, 3), 
+                     "\nPeriod: ", round(dominant_period, 2), " ", period_unit), 
+     pos = 3, col = "red")
+```
+
+The raw periodogram shows us that the peak value is somewhere close to a frequency of 0.45. When we look at the smoothed periodogram (using 2 spans of size 19), that peak comes at a frequency of 0.429 which corresponds to a period of 2.33 days. However something to keep in mind here is that even though there is a peak in the spectral density, we can see that there is no periodic pattern of rise every 2.3 days in the series. Rather, we don't expect the price of the Vanguard ETF to fluctuate every 2.33 days. Hence, this result should be accepted with caution and skeptically since this spike could have come because of the extreme variance i.e. high frequency induced in the data during the 2020 COVID year or could just be noise.
+
+In order to make a better estimate and understanding, we finally apply a band-pass filter ^[STATS 531 Course Materials, Chapter 8, Slide 17. Extracting Business Cycles: A Band Pass Filter. University of Michigan.] to the data to make sure that the variance we see is actually from the "signal" i.e. the data we are interested in and not the extraneous high frequency "noise". ^[ChatGPT – Understanding Band-Pass Filtering in Time Series Analysis.+ Gain insights into implementing a Butterworth band-pass filter]
+
+```{r band-pass-filter, echo=FALSE, fig.align='center'}
+# Define Band-Pass Filter around Dominant Frequency
+low_freq <- dominant_freq * 0.75
+high_freq <- dominant_freq * 1.25
+
+# Apply Band-Pass Filter
+filtered_signal <- butter(2, c(low_freq, high_freq), type = "pass", plane = "z")
+filtered_data <- filtfilt(filtered_signal, na.omit(df$log_ret))
+
+# Plot Original vs Filtered Log Returns
+plot(df$date[-1], na.omit(df$log_ret), type = "l", col = "blue",
+     xlab = "Date", ylab = "Log Returns",
+     main = "Log Returns with Band-Pass Filter Applied")
+lines(df$date[-1], filtered_data, col = "red", lwd = 2)
+legend("topright", legend = c("Original Log Returns", "Filtered Log Returns"),
+       col = c("blue", "red"), lty = 1, lwd = 2)
+```
+
+We use the low and high frequency thresholds to be defined as the frequencies within 0.75 times the dominant frequency and 1.25 times the dominant frequency respectively. Note that this implementation is different from the implementation used in the lecture slides of the class.
+
+As we see from the plot above, the original log returns exhibit high volatility during the year 2020 which corresponds with the COVID-19 pandemic period, whereas the filtered returns remain more stable. Thus, this suggests that excluding extreme volatility observed such as during the COVID-19 period, the VOO log returns remain relatively stable in the long run. This observation agrees with the statement in the introduction where ETFs generally diversify the portfolio and protect it from exposure to a single industry or stock.
+
+## ARMA Model Selection and Fitting
+
+Now, since the log returns for VOO can be modeled using a stationary model, we will start by trying to fit an ARMA(p,q) model to the log returns. Recall, an ARMA(p,q) model has the following equation:^[Notation followed in Chapter 1 Notes. https://ionides.github.io/531w25/01/notes.pdf]
+
+$$
+Y_n = \phi_1(Y_{n-1} - \mu) + \phi_2(Y_{n-2} - \mu) + \dots + \phi_p(Y_{n-p} - \mu) + \epsilon_n + \psi_1\epsilon_{n-1} + \dots + \psi_q\epsilon_{n-q} + \mu
+$$
+where $\{\epsilon_n\}$ is a Gaussian white noise process with distribution $N(0, \sigma^2)$. The parameters for this model are $(\phi_1, \phi_2, \dots, \phi_p, \psi_1, \psi_2, \dots, \psi_q, \mu, \sigma^2)$ which represent the coefficients for the auto-regressive (AR) and moving average (MA) parts of the model along with the mean of the model and the variance of the white noise process.
+
+In order to find which ARMA model will be the best candidate, we use the Akaike Information Criterion (AIC) and compare the values for multiple fitted models with the parameters for the AR and MA parts ranging from 0 to 9^[Chapter 5 Slide 21 Class Notes. https://ionides.github.io/531w25/05/index.html]. We chose values up till 9 to make sure the models remain fairly simple while also reducing any errors in the numerical optimization procedure involved in fitting the models and getting the AIC. We optimize this by using parallel processing^[ChatGPT - Optimize using Parallel Processing in R]
+
+```{r arma-model-selection, echo=FALSE, fig.align='center'}
+data <- df[, c("log_ret")]
+
+# Optimized function using parallel processing
+aic_table_parallel <- function(data, P, Q) {
+  # Define all ARMA combinations
+  params <- expand.grid(p = 0:P, q = 0:Q)
+
+  # Set up parallel processing
+  n_cores <- detectCores() - 1  # Use all but one core
+  plan(multisession, workers = n_cores)
+
+  # Function to compute AIC for given (p, q)
+  compute_aic <- function(param) {
+    tryCatch({
+      arima_model <- arima(data, order = c(param$p, 0, param$q))
+      return(arima_model$aic)
+    }, error = function(e) return(NA))  # Handle errors gracefully
+  }
+
+  # Compute AIC values in parallel
+  aic_values <- future_sapply(seq_len(nrow(params)), function(i) compute_aic(params[i, ]))
+
+  # Reshape AIC values into a matrix
+  table <- matrix(aic_values, nrow = P + 1, ncol = Q + 1, byrow = FALSE)
+  dimnames(table) <- list(paste("AR", 0:P, sep=""), paste("MA", 0:Q, sep=""))
+
+  # Stop parallel processing
+  plan(sequential)
+
+  return(table)
+}
+
+temp.aic <- aic_table_parallel(data, 9, 9)
+kable(temp.aic, digits = 2)
+```
+
+From the above table, we notice that the lowest AIC score is attained for the ARMA(6,9) model. We keep this as one of the candidate models however, it should be remembered that it is a relatively complex model so a more simpler candidate model will be possibly preferred as well. We next note that the ARMA(7,5) model also has a relatively close AIC score while having a much simpler model structure. Finally, we also consider the simple ARMA(9,0) i.e. AR(9) model since it has a better AIC score than ARMA(7,5) while also being the simplest of the three models.
+
+Note that the AICs in the table have a high chance of being wrong values or have inconsistencies based on Wilks' Approximation due to numerical optimization and model fitting issues. This is because of the number of parameters we are trying to fit to the data. An example pair of models where there could be a possible problem as mentioned would be ARMA(0,8) and ARMA(1,8). We see a score difference of roughly 15.16 in the models that have a difference of just 1 parameter in spite of the fact that according to Wilks' Approximation, there can't be an increase of AIC score by more than 1.92 between those models.
+
+Now we fit all 3 models and compare their roots for any possible cases of invertibility or causality.
+
+```{r model-fit, echo=FALSE, fig.align='center'}
+arma69 <- arima(data, order = c(6, 0, 9))
+arma75 <- arima(data, order = c(7, 0, 5))
+arma90 <- arima(data, order = c(9, 0, 0))
+arma69
+arma75
+arma90
+```
+
+We see from the fitted models directly that the ARMA(9,0) model has a slightly lower AIC while having a simpler structure as compared to the ARMA(7,5) model. Thus, we can take ARMA(7,5) out of contention going forward. However, ARMA(6,9) and ARMA(9,0) still have different parameter estimates, significantly different AICs but at the same time a difference of 6 parameters. Thus, these will be our candidate models for root analysis.
+
+```{r arma-roots-analysis, echo=FALSE, fig.align='center'}
+arma69_roots_ar <- polyroot(c(1, -arma69$coef[1:6]))
+arma69_roots_ma <- polyroot(c(1, arma69$coef[7:15]))
+arma90_roots_ar <- polyroot(c(1, -arma90$coef[1:9]))
+cat("AR Roots for ARMA(6,9):", arma69_roots_ar, "\n")
+cat("MA Roots for ARMA(6,9):", arma69_roots_ma, "\n")
+cat("AR roots for ARMA(6,9) (value):", abs(arma69_roots_ar), "\n")
+cat("MA roots for ARMA(6,9) (value):", abs(arma69_roots_ma), "\n")
+cat("\n")
+cat("AR Roots for ARMA(9,0):", arma90_roots_ar, "\n")
+cat("AR roots for ARMA(9,0) (value):", abs(arma90_roots_ar), "\n")
+```
+We see from the roots and their absolute values ^[Code adapted from Chapter 4 Slide 17 Class Notes. https://ionides.github.io/531w25/04/index.html] above that there is no problem of invertibility or causality for either model where applicable, although the MA roots for ARMA(6,9) model are very close to the threshold boundary of the unit circle. Irrespective, both these models have no problems which is a desirable trait.
+
+## ARMA Model Diagnostics
+
+We need to do model diagnostics on the fitted ARMA models so that we can ensure that our model assumptions such as normality and uncorrelated errors are not violated.
+
+We start by plotting the ACF of the residuals of the ARMA models to check for any error correlations
+
+```{r model-diagnostics, echo=FALSE, fig.align='center'}
+par(mfrow=c(1, 2))
+acf(na.omit(arma69$residuals), main="ACF of ARMA(6,9) Residuals")
+acf(na.omit(arma90$residuals), main="ACF of ARMA(9,0) Residuals")
+```
+
+We see from the plots above that the residuals seem to be mostly uncorrelated for both models, except for some specific lags such as lags 9 and 22 for the ARMA(2,2) model and lags 22 and 26 for the ARMA(4,4) model. We also see lag 25 for the ARMA(4,4) model to be on the edge of the confidence interval, however we need to keep in mind that these results could be because of the extra undue variation seen during the COVID period in the year 2020. Since the overall pattern also shows no significant evidence for correlation of the errors, it is safe to say that the residuals and the model have mostly uncorrelated errors.
+
+We also plot the QQ plots for the models to check for the normality assumption of the errors.
+
+```{r qq-plots, echo=FALSE, fig.align='center'}
+par(mfrow=c(1, 2))
+qqnorm(na.omit(arma69$residuals), main="QQ-Plot of ARMA(6, 9) Residuals")
+qqline(na.omit(arma69$residuals))
+
+qqnorm(na.omit(arma90$residuals), main="QQ-Plot of ARMA(9, 0) Residuals")
+qqline(na.omit(arma90$residuals))
+```
+
+We see that for both models, the QQ plot clearly shows deviation from normal behavior because of the heavy tails of the plot. This is to be expected when dealing with financial information since the returns of most stocks or indices don't follow a normal pattern and have heavier tails. ^[Basnarkov, L., Stojkoski, V., Utkovski, Z., & Kocarev, L. (2018). Option Pricing with Heavy-Tailed Distributions of Logarithmic Returns. ArXiv. https://arxiv.org/abs/1807.01756]
+
+Finally, to decide which model is better between the two ARMA models, we construct a formal hypothesis test based on Wilks' Approximation. For the test, we will assume our null hypothesis to be the ARMA(9,0) model while our alternative hypothesis will be the ARMA(6,9) model. Recall, according to Wilks' Approximation,^[Adapted from https://github.com/ionides/531w24/blob/main/hw03/sol03.Rmd]
+
+$$\gamma = 2(L_1-L_0) \approx \chi^2_{D_1-D_0}$$
+
+Where $L_i$ is the maximum log likelihood under hypothesis $H_i$ and $D_i$ is the number of estimated parameters under the hypothesis $H_i$. According to the test, we will reject the null hypothesis if $\gamma$ is larger than the $\chi^2$ cutoff.
+
+```{r hypothesis-test, echo=FALSE, fig.align='center'}
+alpha = 0.05
+threshold <- qchisq(1 - alpha, df=6)
+gam <- 2*(arma69$loglik - arma90$loglik)
+```
+
+When comparing the ARMA(6,9) and ARMA(9,0) models, we see that $\gamma = `r round(gam, 2)`$ whereas the Chi-square cutoff is $`r round(threshold, 2)`$, which means our statistic is larger than the cutoff by a significant margin. Thus, we can reject the null hypothesis that the ARMA(9,0) model models the data better than the ARMA(6,9) model.
+
+Finally, we will plot the residuals of the ARMA(6,9) model to validate our results.
+
+```{r residual-plot, echo=FALSE, fig.align='center'}
+plot(arma69$residuals, ylab = "Residuals", main = "ARMA(6,9) Residuals")
+```
+
+We notice that the residuals also roughly seem to be similar to the original data and there is no outright pattern visible. The ACF plot also suggests that there is no significant dependence of the white noise errors with each other, except for one lag which is 26. Overall, however, we do see something close to a pattern in the ACF plot so we might want to consider other models as well for the data to be sure.
+
+A word of caution here is that in-spite of choosing ARMA(6,9) model as the best model, we acknowledge that the model is a very complex model compared to the majority of models and there is a good chance that the model is "overfitting" to the data or fitting to the noise rather than the data. Hence, we are also in agreement that there might be simpler models such as the ARMA(4,4) model that can do the same job with a minimal loss of information or generality.
+
+## Models With Trend
+
+Since this data can be well modeled by white noise, we fit a signal plus white noise model. This is a more sensitive way to look for a trend. We try some low-order polynomial trend specifications $$Y_n=\sum_{k=0}^K \beta_k n^k + \epsilon_n$$
+where $K$ is the order of the fitted trend model and we compare AIC for $K$ up to 5.^[Code changed to adapt, adapted from https://github.com/ionides/531w24/blob/main/hw03/sol03.Rmd]
+
+```{r daily-trend, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width=10, fig.height=5}
+# daily 
+df$n <- 1:nrow(df)
+temp.use <- df$log_ret
+
+lm0 <- lm(log_ret~1, data=df) 
+lm1 <- lm(log_ret~n, data=df)  
+lm2 <- lm(log_ret~n+I(n^2), data=df) 
+lm3 <- lm(log_ret~n+I(n^2)+I(n^3), data=df) 
+lm4 <- lm(log_ret~n+I(n^2)+I(n^3)+I(n^4), data=df) 
+lm5 <- lm(log_ret~n+I(n^2)+I(n^3)+I(n^4)+I(n^5), data=df) 
+
+poly_aic <- matrix(c(AIC(lm0),
+                     AIC(lm1),
+                     AIC(lm2),
+                     AIC(lm3),
+                     AIC(lm4),
+                     AIC(lm5)), 
+                   nrow=1,
+                   dimnames=list("<b>AIC</b>", paste0("K=", 0:5)))
+
+kable(poly_aic, digits=1)
+```
+
+```{r monthly-trend, echo=FALSE, warning=FALSE, message=FALSE}
+# month
+df$date  <- as.Date(df$date)
+df$month <- as.numeric(format(df$date, "%m"))
+
+lm0 <- lm(log_ret~1, data=df) 
+lm1 <- lm(log_ret~month, data=df) 
+lm2 <- lm(log_ret~month+I(month^2), data=df)  
+lm3 <- lm(log_ret~month+I(month^2)+I(month^3), data=df)  
+lm4 <- lm(log_ret~month+I(month^2)+I(month^3)+I(month^4), data=df) 
+lm5 <- lm(log_ret~month+I(month^2)+I(month^3)+I(month^4)+I(month^5), data=df) 
+
+poly_aic <- matrix(c(AIC(lm0),
+                     AIC(lm1),
+                     AIC(lm2),
+                     AIC(lm3),
+                     AIC(lm4),
+                     AIC(lm5)), 
+                   nrow=1,
+                   dimnames=list("<b>AIC</b>", paste0("K=", 0:5)))
+
+kable(poly_aic, digits=1)
+```
+
+In both cases of modelling by day and month of the data, the lowest AIC values all happen at when degree ```K=0```, so there is no evidence suggesting a model with low-order polynomial trend.
+
+## Forecasting Using Prophet
+
+A natural question to follow from the above analysis is if it is possible for us to predict or "forecast" the prices of the Vanguard S&P500 ETF. When we talk about forecasting, it follows that "a good model should imply a good model-based forecast".^[STATS 531 Course Materials, Chapter 10, Slide 9. Facebook Prophet. University of Michigan.]
+
+In this project, we attempt to use the widely-known forecasting tool Prophet by Facebook (Meta) to forecast the price of the Vanguard S&P500 ETF for the immediate future. Before model training however, we first split the data into training and validation sets to later compare the accuracy of the forecast with the actual values.^[STATS 531 Course Materials, Chapter 10, Slide 8. Facebook Prophet. University of Michigan.]
+
+```{r prophet-forecasting, echo=FALSE, fig.align='center'}
+df_prophet <- df %>%
+  mutate(ds = as.POSIXct(date)) %>%  # Transform Date to POSIXct
+  select(ds, y = PRC)  
+
+# Seperate Train / Validation 
+train_size <- floor(0.8 * nrow(df_prophet))
+train_data <- df_prophet[1:train_size, ]
+valid_data <- df_prophet[(train_size + 1):nrow(df_prophet), ]
+
+fit <- prophet(train_data, daily.seasonality = TRUE)
+
+future <- make_future_dataframe(fit, periods = nrow(valid_data), freq='day')
+
+forecast <- predict(fit, future)
+
+plot(fit, forecast) +
+  geom_point(data = valid_data, aes(x = ds, y = y), color = "red") +
+  ggtitle("Prophet Model Forecasting for PRC (Stock Price)") +
+  xlab("Date") +
+  ylab("Stock Price (PRC)")
+```
+
+We split the total data using a 80-20 split i.e. 80% training data and 20% validation data and fit Prophet with daily seasonality to the training data. We then make a future dataframe on which Prophet can give its predictions and we compare it to the actual values we have. We observe from the above plot that Prophet was able to understand quite a lot of context from the data and understood the general, overall trend. It was also able to forecast the initial set of price with a high degree accuracy but became less accurate later on. Overall though, we consider Prophet to have learned from the data quite well and performed a decent job of forecasting the price.
+
+To judge the results of Prophet with the actual values we have in a quantitative manner, we also used various error metrics to find specific rates or error percentages.
+
+```{r forecasting-error, echo=FALSE}
+actual_values <- valid_data$y  # validation data (red)
+predicted_values <- forecast$yhat[(train_size + 1):nrow(forecast)]  # Prophet value (blue)
+
+# MAPE (Mean Absolute Percentage Error)
+mape <- mean(abs((actual_values - predicted_values) / actual_values)) * 100
+
+# RMSE (Root Mean Squared Error)
+rmse <- sqrt(mean((actual_values - predicted_values)^2))
+
+# MAE (Mean Absolute Error)
+mae <- mean(abs(actual_values - predicted_values))
+
+print(paste("MAPE:", round(mape, 2), "%"))
+print(paste("RMSE:", round(rmse, 2)))
+print(paste("MAE:", round(mae, 2)))
+```
+
+We used 3 metrics: Mean Absolute Percentage Error (MAPE), Root Mean Square Error (RMSE) and Mean Absolute Error (MAE) to judge the performance of Prophet.^[Jedox. Error Metrics: How to Evaluate Forecasts. Retrieved from https://www.jedox.com/en/blog/error-metrics-how-to-evaluate-forecasts/] We can see that the MAPE was approximately 9.3% which means Prophet's forecast deviated by 9.3% from the actual values on average. Generally, a MAPE value of <10% is considered very good. ^[ChatGPT - Interpreting MAPE, MAE and RMSE]
+Similarly, the MAE of 46.58 and RMSE of 53.05 represent the the average absolute difference between the predicted and actual values and the average magnitude of the forecast error in the same unit as the actual value. The lower these values are, the better the model's accuracy is. Thus, we can say overall that Prophet's forecasted values for the price of VOO in the immediate future (302 days) seem to be within 10% error rate of the actual values.
+
+```{r future-forecast, echo=FALSE, fig.align='center'}
+df_prophet <- df %>%
+  rename(ds = date, y = PRC) 
+
+# Train Prophet Model (Use all data)
+fit <- prophet(df_prophet, daily.seasonality = TRUE)
+
+# Predict 3 month
+future <- make_future_dataframe(fit, periods = 3, freq='month')
+
+forecast <- predict(fit, future)
+
+plot(fit, forecast) +
+  ggtitle("Prophet Model Forecasting for PRC (Stock Price)") +
+  xlab("Date") +
+  ylab("Stock Price (PRC)")
+```
+
+The graph above describes how Prophet estimates the next 3 months from Jan 1, 2025 will be for VOO's price based on the previous data it learned from. Note that this finding still follows the Efficient Market Hypothesis which states that the price of any index is inclusive of all the information known about that index up till that time. The forecasted price earlier could only be compared because of our design and in no way can they be used to predict the prices for the future, about which we have no information. All we can say is that the trained Prophet model seems to perform within 10% error rate based on the past values of the VOO ETF. This can be easily tested by looking at the graph of the index since Jan 1, 2025 and comparing with the graph above.
+
+In order to further prove that the Efficient Market Hypothesis is true, we could try to model this data using the random walk with drift model to show that any value is equally likely for the index however we have not addressed that in this project for the purpose of keeping the focus on the forecasting and stationarity modelling fronts. Understanding the relationship to the Hypothesis warrants another work separate from this one and would be better performed in collaboration with financial experts and econometrists.
+
+## Conclusion
+
+In conclusion, this project looked at the Vanguard S&P500 ETF (Ticker: VOO) from the perspective of Time Series Analysis. We specifically attempted to understand if relatively simple models can be used to model the log returns of the ETF, if there is any seasonality involved in the ETF log returns and if forecasting the future price of the ETF can be done with decently good accuracy.
+
+From our frequency & spectral analysis, we found the period corresponding to the dominant frequency in the smoothed periodogram of the log returns to be 2.33 days. However, we agree that after looking at the log returns and using a band-pass filter to remove any noise/high frequencies from the data, there is no significant evidence of seasonality in the log returns of the ETF.
+
+We then moved to understanding the structure of the log returns and found them to be stationary which made it possible for us to model them through ARMA models. We shortlisted 3 models after doing model selection via AIC and performed model fitting, analysis and diagnostics, including residual diagnostics and likelihood tests which ultimately led to the stationary ARMA(6,9) model being the best ARMA model to use to model the log returns of the ETF. We also acknowledged that the selected model was a relatively complex model and introduced the possibility of using simpler models in the ARMA model space or other model patterns.
+
+We also looked at the possibility of there being a trend in the log returns of the ETF and found after analysis that there is no evidence of trend in the log returns which can be modeled using polynomial trend models, reinforcing our belief about the stationarity of the data.
+
+Finally, we attempted to forecast the future price of the ETF by using Prophet and initially compared the model estimates via the train-validation methodology. We found that the estimates of Prophet were within 10% deviation from the actual price values for roughly the last year of the data. We also presented Prophet's estimated price for the ETF for the next 3 months from Jan 1, 2025 and how that estimate still follows the Efficient Market Hypothesis. Thus, we believe that Prophet could be a good candidate model to forecast the future price of the Vanguard S&P500 ETF with a decent sense of accuracy for the short term.
+
+For the future, using simpler ARMA models could be explored along with using other complicated models such as the ARMA-GARCH model, ETS model or even Random Walk models. Since the tail distribution of the log returns was seen to be heavier than that of a normal distribution, using heavier tailed models or errors could be explored to ensure uncorrelated errors for the ARMA model. Additionally, inspite of using the `arima2` package that reduces numerical discrepancies, we still see some possible places where there might be problems related to optimization and maximization so these avenues should be explored further to ensure reproducible and accurate overall results.
+
+## References
+
+We utilized previous projects from 2020 and 2024 to formulate our overall project flow. Specifically, [Apple Stock Analysis Project](https://github.com/ionides/531w24/blob/main/midterm_project/project14/blinded.Rmd) from 2024 and [Russell 2000 Index Analysis Project](https://github.com/ionides/531w20/blob/master/midterm_project/project4/mid-term%20project.Rmd) from 2020 were used. The Apple Stock Analysis Project was also utilized in formulating and presenting the research questions for this project. We also utilized the concepts and content taught by Prof. Edward Ionides in class lectures and all slides are available on the [course website](https://ionides.github.io/531w25/) for Winter 2025 term.
+
+### Reference List

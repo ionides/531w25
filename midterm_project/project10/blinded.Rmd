@@ -1,0 +1,1108 @@
+---
+title: "STATS 531 Project-Group 10"
+date: "`r Sys.Date()`"
+output: html_document
+header-includes:
+  - \usepackage{xcolor}
+  - \usepackage{amsmath}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## **Past Projects Study**
+
+All group members collaboratively reviewed a set of past project reports related to financial data, chosen for their similarities to our CPI dataset. The list includes:
+
+- Project 03, 2022. **Ethereum and Investment**, https://ionides.github.io/531w22/midterm_project/project02/blinded.html#Introduction
+- Project 23, 2022. **US CPI Average Price Gasoline Data**, https://ionides.github.io/531w22/midterm_project/project23/blinded.html
+- Project 03, 2024. **Unemployment and Federal Interest Rate**, https://ionides.github.io/531w24/midterm_project/project03/blinded.html.
+- Project 14, 2024. **Apple Stock Price**, https://ionides.github.io/531w24/midterm_project/project14/blinded.html.
+- Project 15, 2024. **Nvidia Stock Price**, https://ionides.github.io/531w24/midterm_project/project15/blinded.html.
+
+We examined each report individually and discussed the methods used for modeling and analysis, without using any of their code or results. Since we are employing SARIMA models, we compared the strengths and weaknesses of their approaches. For instance, reports such as "Unemployment and Federal Interest Rate" and "Nvidia Stock Price" demonstrated strong diagnostic procedures.
+
+However, the presence of unit roots—likely due to high-order AR and MA parameters—raised concerns about model interpretability and assumption violations, so we want to be more cautious for the model selection process. Also, we noted that SARIMA models perform poorly on high-frequency data (daily or hourly). In "Ethereum and Investment", for example, cryptocurrency prices, which typically behave like a Wiener process, may not be well-suited for ARMA models even after log transformation and differencing; phenomena such as volatility clustering and sudden stops are common, suggesting that a GARCH model, as used in the "Apple Stock Price" report, might be more appropriate.
+
+## **1. Introduction**
+
+### **1.1. Motivation**
+
+Inflation is a critical economic indicator that affects monetary policy, financial markets, and consumer purchasing power. Recent economic and political changes put inflation rate into a focal point of all market participants from central banks to consumers. The **Consumer Purchasing Index (CPI)** is a widely used measure of inflation. In this project, we are interested in testing time series models on CPI inflation data to forecast future inflation rates. In particular, we will test **(S)ARIMA** models and assess how macroeconomic events influence CPI time series properties. At the end of this report, we will provide an advanced time series model specifically designed to handle fluctuations caused by structural breaks, and we will provide a 5-year forecast for testing and intuition for further studies. 
+
+### **1.2. Background Knowledge: Understanding CPI and Inflation**
+
+The **Consumer Price Index (CPI)** measures the overall change in consumer prices based on a representative basket of goods and services over time. To calculate how much prices are rising, hundreds of government workers spend their days tracking down costs of individual goods and services. 
+
+- A **price level** is a weighted average of prices of goods and services, where the weights are percentage shares of the goods in total consumption (sum to 1).
+
+$$
+P_t^{\$} = \sum_{i=1}^{N} \left( w_{i,t} \times P_{i,t}^{\$} \right)
+$$
+
+- A **price index** is the ratio of the current price level to the price level in a base year (for example, 1992), usually expressed as a percentage. 
+
+$$
+PI_{t+k}^{\$} = \left( \frac{P_{t+k}^{\$}}{P_t^{\$}} \right) \times 100
+$$
+
+- **Inflation** is the percentage change in the corresponding **price level (index)**. 
+
+$$
+\pi_{t,t+k}^{\$} = 100 \times \left( \frac{PI_{t+k}^{\$}}{PI_t^{\$}} - 1 \right)
+$$
+
+- For small changes in **PI**, the above formula is **approximately**: 
+
+$$
+\pi_{t,t+k}^{\$} = 100 \times \left( \log PI_{t+k}^{\$} - \log PI_t^{\$} \right)
+$$
+
+(Source: Session 8_Purchasing Power Parity, Page 6-10)
+
+### **1.3. Dataset**
+
+We use **monthly CPI** data of the last five years (2020-2025) to check our forecasts. Instead of putting all the earlier data into model training, we select data from 1985 to 2020 because the **base year** of CPI data from FRED is 1982-1984. Due to changes in the basket of goods and services for measurement of monthly CPI, data prior to 1984 is liable to adjustments and lack of accuracy. Thus, in order to avoid bringing noisy variables into our model, we are only using **1985-2020** data for modeling. 
+
+We will use the following libraries for this project: 
+
+```{r}
+library(tidyverse)
+library(xts)
+library(lmtest)
+library(quantmod)
+library(forecast)
+library(tseries)
+library(stats4)
+library(astsa)
+library(moments)
+library(rugarch)
+library(FinTS)
+library(PerformanceAnalytics)
+
+getSymbols("CPIAUCSL", src = "FRED")
+```
+
+| **Library**              | **Description** |
+|--------------------------|----------------|
+| `knitr`                 | Enables dynamic report generation and facilitates seamless integration of R code in Markdown documents. |
+| `tidyverse`             | A collection of R packages for data manipulation, visualization, and analysis (e.g., `ggplot2`, `dplyr`, `tidyr`). |
+| `xts`                   | Provides an extensible time series structure for managing and analyzing time-dependent data. |
+| `lmtest`                | Implements tests for linear models, including heteroskedasticity and autocorrelation diagnostics. |
+| `quantmod`              | Offers tools for financial modeling and quantitative trading strategy development. |
+| `forecast`              | Includes functions for time series forecasting, such as ARIMA, ETS, and decomposition methods. |
+| `tseries`               | Provides time series analysis tools, including unit root tests, GARCH models, and bootstrapping methods. |
+| `stats4`                | Implements maximum likelihood estimation for statistical modeling. |
+| `astsa`                 | Supports applied statistical time series analysis, including spectral analysis and forecasting. |
+| `moments`               | Computes statistical moments (skewness, kurtosis) for assessing data distribution properties. |
+| `rugarch`               | Implements univariate GARCH models for volatility modeling and forecasting in financial time series. |
+| `FinTS`                 | Provides diagnostic tools for financial time series, including ARCH effect tests. |
+| `PerformanceAnalytics`  | Offers performance analysis and risk metrics for portfolio and asset return evaluation. |
+
+Using the equation developed in the previous section, we compute and plot the **monthly inflation rate** from 1985-2020: 
+
+```{r}
+log_diff_cpi = diff(log(CPIAUCSL["1985-01-01/2019-12-01"])) * 100
+plot(log_diff_cpi, main = "U.S. Monthly CPI Inflation Rate", col = "blue")
+str(log_diff_cpi)
+summary(log_diff_cpi)
+```
+
+Based on the plot above, we discover the following features of the data: 
+
+- The data contain 420 observations with 1 empty value. The **mean** of our sample is 0.2136. The maximum is 1.3675 and the minimum is -1.7864. 
+- The **median** and **mean** of the data is very close, so we assume a roughly **centered** distribution. 
+- The plot shows a **roughly constant mean** through time, we expect minimal linear trend within the data. 
+- The plot indicates changing **variance** and **volatility clustering**. For instance, fluctuation in 1985-1991 and 2004-2010 are noticeably higher than the rest. Fluctuation after 1999 is also higher than 1985-1998. 
+
+From these observations, we expect an **ARMA** model or an **ARMA-GARCH** model would be a good fit for this time series. We further study the data with hypothesis tests and plots of key statistical parameters. 
+
+## **2. Exploratory Data Analysis (EDA)**
+
+We remove the empty value: 
+
+```{r}
+df_val = na.omit(coredata(log_diff_cpi))
+df = data.frame(time = seq(as.Date("1985-02-01"), as.Date("2019-12-01"), by = "month"), 
+                inflation = coredata(df_val))
+```
+
+### **2.1. ACF Plot**
+
+```{r}
+acf(df$CPIAUCSL, lag = 50, main='Autocorrelation Function of Monthly Inflation Rate')
+```
+
+The **ACF** plot provides the following insights: 
+
+- The ACF declines rapidly after lag of 1, and stays within the band for most of the lags. This suggests that **a white-noise model may not be sufficient** for the data. 
+- The ACF exceeds the band in lag 10, 11, 13, 15, 16, 17, 25, 26, 41, and 42. This suggests that the sample data have other patterns that may not be sufficiently modeled by simple ARMA models. 
+- The peaks of ACF occur regularly, and **oscillation** pattern is observable in the ACF plot. This evidence support the existence of **seasonality**. 
+- The plot also shows **clear evidence against a significant trend in the mean**, which is consistent with our observations before. 
+
+
+### **2.2. Box-Ljung Test**
+
+The ACF plot shows **significant autocorrelation with lag equals to 1**. To further support our observation, we conduct a Box-Ljung Test which tests autocorrelation up to a given lag: 
+
+- $H_0$: The data is **white noise (no autocorrelation)**
+- $H_1$: The data has **significant autocorrelation**
+
+If **p-value < 0.05**, it suggests significant autocorrelation exists (Statistics 509, Winter 2024, Lecture 8, p. 21; Thelen, 2024).  
+
+```{r}
+Box.test(df$CPIAUCSL, lag=20, type="Ljung")
+```
+
+We **reject** the **null hypothesis** that there is no autocorrelation within the data. This result confirms our observation of the ACF plot that **the time series cannot be modeled by white noise**. 
+
+### **2.3. Trend Analysis**
+
+Apart from autocorrelation tests, we also want to provide some support to our observation about trends. The **ACF** plot provides minor support to the **stationarity** of our data, and there seems to be significant **volatility clustering**. We first check if a significant trend exists: 
+
+```{r}
+df_loess1 = loess(df$CPIAUCSL~as.numeric(df$time), span=0.1)
+df_loess5 = loess(df$CPIAUCSL~as.numeric(df$time), span=0.5)
+plot(df,type="l", xlab = "Years", ylab = "Monthly CPI Inflation Rate")
+lines(df_loess5$x, df_loess5$fitted, type="l", col = "red")
+lines(df_loess1$x, df_loess1$fitted, type="l", col = "blue")
+```
+
+(Ionides, 2025, *Modeling and Analysis of Time Series Data*, Chapter 8, p. 14).
+
+The **red line** in the above plot is the **LOESS-smoothed** inflation rate with **span = 0.5**, and the **blue line** is the **LOESS-smoothed** inflation rate with **span = 0.15**. The **LOESS (Locally Estimated Scatterplot Smoothing)** shows that the time series contains some **local trend** but no significant **global trend**. The **LOESS** curve fluctuates around a relatively constant mean, while the sharp spikes and fluctuations cause temporary deviations due to structural breaks. Apart from these **short-term fluctuations**, there are **cyclical patterns** observed in the plot. To further analyze the cyclical patterns, we need to firstly decompose the data into **trend + noise + cycles**: 
+
+```{r}
+i = df$CPIAUCSL
+i_low = ts(loess(df$CPIAUCSL~as.numeric(df$time), span=0.5)$fitted, frequency=12) 
+i_hi = ts(i- loess(df$CPIAUCSL~as.numeric(df$time), span=0.05)$fitted, frequency=12) 
+i_cycles = i - i_hi- i_low 
+plot(ts.union(i, i_low,i_hi,i_cycles), main="Decomposition of CPI inflation as trend + noise + cycles", xlab = "Time (years)")
+```
+
+(Ionides, 2025, *Modeling and Analysis of Time Series Data*, Chapter 8, pp. 17-18). 
+
+We tune the spans so that the cycles' plot contains roughly periodic patterns. The decomposition plot shows the following signs: 
+
+- The **raw data** shows dips and spikes during the time of structural breaks (in 2000-2001 and 2008-2011). The **cyclical series** is affected by these fluctuations, but we can observe a cyclical pattern of roughly **1.0-1.2 years (14 months)**. 
+- The **low-frequency** time series is moving around **0.2**, which indicates that the **long term trend** is roughly **stable** or at most a very **subtle linear trend**. 
+
+```{r}
+spec = spectrum(ts(df$CPIAUCSL, frequency = 12), method = "pgram", spans = c(7, 11, 7), plot = FALSE)
+plot(spec, main = "Smoothed Periodogram", sub = "")
+```
+
+(Ionides, 2025, *Modeling and Analysis of Time Series Data*, Chapter 7, p. 23). 
+
+The **periodogram** has peaks at frequency of around 0.66, 1.2, 2.15, and 3.1. The **highest peak** is located at a frequency of **1.2**, which is evidence supporting a **cyclical pattern of roughly 1.2 years (14 months)**. Besides, all other peaks mentioned above are also significant in scale. This analysis provides strong support for **seasonal models**. 
+
+Based on our observations before and the test result, we propose that a **stationary SARMA model** might be compatible with our data. Despite financial crises do affect inflation greatly, these shocks do not seem to affect the long-run trend of inflation. Without strong disagreements from EDA so far, we will try to fit a **seasonal ARMA model**. However, we remain cautious about the **changing variance** and the effects of **economic shocks** in history, and we will try to fit a **seasonal ARMA-GARCH model** to analyze these effects. A feasible way to retain **seasonality** features and address **volatility clustering** is fitting a **seasonal ARMA model** and then fitting a **GARCH-like model** on the **residuals**. 
+
+(Statistics 509, Winter 2024, Lecture 10, pp. 14-15; Thelen, 2024).
+
+### **2.4. Normality Tests**
+
+In this section, we test the **normality** of our data since this property can affect the **residual distribution** of a fitted ARMA model. If the data is too far from normal, a simple ARMA model may have **non-normal residuals**. We check normality through the following channels: 
+
+- Normal Q-Q plot
+- The Shapiro-Wilk Test
+- The Jarque Bera Test
+
+The **Shapiro-Wilk Test** checks normality by comparing **sample distribution** to a **Normal distribution**, which can provide support for Q-Q plot observations. It works best for **small data**, which suits well with our data. Its **hypotheses** are: 
+
+- $H_0$: The sample data comes from a **normally distributed population**
+- $H_1$: Otherwise, there is evidence that the data tested are not normally distributed
+
+The **test statistics** is calculated as: 
+
+$$
+W = \frac{(\sum_{i=1}^na_ix_{(i)})^2}{\sum_{i=1}^n(x_i - \bar x)^2}
+$$
+
+where: 
+
+- $x_{(i)}$ are the **ordered sample values**
+- $\bar x$ is the sample mean
+- $a_i$ are constants derived from the **expected values of the order statistics of a Normal distribution**
+
+The test statistic follows a **$W$** distribution, and the cutoff values for the statistics are calculated through **Monte Carlo simulations**. 
+
+(Statistics 509, Winter 2024, Lecture 4, p. 34; *Shapiro-Wilk test*, Wikipedia).
+
+The **Jarque-Bera Test** tests normality with **skewness** and **kurtosis** of sample data (weighted sum of skewness and kurtosis). The **skewness** of a sample represents how **"symmetric"** the distribution is around mean, and the **kurtosis** of a sample represents how **"fat"** the tails are: 
+
+$$
+S = \frac{\hat{\mu}_3}{\hat{\sigma}^3} = \frac{\frac{1}{n} \sum_{i=1}^n (x_i - \bar{x})^3}{(\frac{1}{n} \sum_{i=1}^n(x_i - \bar{x})^2)^{3/2}}, 
+$$
+
+$$
+K = \frac{\hat{\mu}_4}{\hat{\sigma}^4} = \frac{\frac{1}{n} \sum_{i=1}^{n} (x_i - \bar{x})^4}{(\frac{1}{n} \sum_{i=1}^{n} (x_i - \bar{x})^2)^{2}}
+$$
+
+A **Normal distribution** has skewness of 0 and kurtosis of 3. We include this test to further support our discovery. 
+
+The **test statistics** is given by: 
+
+$$
+JB = \frac{n}{6} (S^2 + \frac{(K - 3)^2}{4})
+$$
+
+where: 
+
+- $S$ is empirical **skewness** parameter (sample skewness)
+- $K$ is empirical **kurtosis** parameter (sample kurtosis)
+- $n$ is the number of observations
+
+The test follows a **$\chi^2$** distribution with **2 degrees of freedom**, and it has the following **hypotheses**: 
+
+- $H_0$: The **skewness** of the sample data is 0 and the **excess kurtosis** of the sample data is 0 (the sample is drawn from a **Normal distribution**)
+- $H_1$: Otherwise, there is evidence that the data tested are not normally distributed
+
+(Statistics 509, Winter 2024, Lecture 4, p. 34; *Jarque-Bera test*, Wikipedia).
+
+We start from the **Q-Q plot**: 
+
+```{r}
+qqnorm(df$CPIAUCSL)
+qqline(df$CPIAUCSL)
+```
+
+The Q-Q plot indicates a **symmetric** distribution around the mean, but much **fatter tails** than a **Normal distribution**. 
+
+```{r}
+shapiro.test(df$CPIAUCSL)
+jarque.bera.test(df$CPIAUCSL)
+```
+
+Test results of **Shapiro-Wilk Test** and **Jarque-Bera Test** both reject the null hypothesis, supporting our observation of the **Q-Q plot**. Thus, we claim that the data is not following a **Normal distribution**. We know making a log transformation can sometimes resolve the issue, but we cannot do a log transformation to our data because there are **negative values**. Thus, we might need to proceed to the alternative approach of fitting an **seasonal ARMA model with a t-distribution**. 
+
+### **2.5. End Results**
+
+As we reach the point where we suspect **changing variance**, **volatility clustering** and potentially using an **seasonal ARMA model with t-distribution**, the choice of our model narrows down to an **seasonal ARIMA-GARCH model**. However, we will still test the fit of a simple seasonal ARMA model for the purpose of comparison. It may be convenient to conclude our EDA part by computing the **excess kurtosis** and the **degree of freedom $\nu$** of the sample if we were to describe the sample distribution as a **t-distribution**: 
+
+```{r}
+excess_kurtosis = kurtosis(df$CPIAUCSL) - 3
+excess_kurtosis
+nu = 6 / excess_kurtosis + 4
+nu
+```
+
+(Statistics 509, Winter 2024, Lecture 3, p. 32; Thelen, 2024).
+
+The sample data has an **excess kurtosis** of 8.55, which is greatly different from 0. When described as **t-distributed**, it has **degree of freedom** of 4.7. These might greatly affect the **normality** of **ARMA residuals**. 
+
+## **3. SARIMA Model Selection**
+
+### **3.1 Trend Analysis and Model Selection**
+
+We first investigated the possibility of a **linear trend** by fitting a **simple linear regression** against time and observed a **small but statistically significant trend**. However, the **regression residuals** exhibited **strong autocorrelation**, violating the **white noise assumption**. To account for this trend while preserving the **integrity of seasonal and autoregressive patterns**, we would consider to include a **linear term** in the **SARIMA model**, allowing it to focus more effectively on **short-term dependencies and seasonal effects** without the **confounding influence of a slow-moving mean shift**.  
+
+```{r}
+library(lmtest)
+
+model = lm(CPIAUCSL ~ time, data = df)
+summary(model)
+
+plot(df$time, df$CPIAUCSL, pch = 16, col = "blue", main = "Simple Linear Regression", 
+     xlab = "Time", ylab = "Inflation")
+abline(model, col = "red", lwd = 2)
+```
+
+(**Statistics 531, Winter 2025, Lecture 9, p. 12; Ionides, 2025**).  
+
+### **3.2 Model Fitting and AIC Comparison**
+
+We first fit a **non-seasonal model** to determine the **optimal values of $p$ and $q$** for the **SARIMA model** using an **AIC table**. Additionally, we compare **AIC values** across different model specifications, including the effects of **adding a trend term** and incorporating a **differencing parameter**, to evaluate their impact on **model performance**. To increase the accuracy of our **AIC estimation**, we use the **\texttt{arima} function** from the **\texttt{arima2} package**.  
+
+```{r}
+print("Model with no linear trend and differencing:")
+aic_table <- function(data,P,Q){
+table <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima2::arima(data,order=c(p,0,q))$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+require(knitr)
+aic_table <- aic_table(df$CPIAUCSL,4,4)
+kable(aic_table,digits=2)
+
+print("Model with linear trend and no differencing:")
+aic_table2 <- function(data,P,Q){
+table <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima2::arima(data,order=c(p,0,q), xreg = df$time)$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+require(knitr)
+aic_table <- aic_table2(df$CPIAUCSL,4,4)
+kable(aic_table,digits=2)
+
+print("Model with differencing and no linear trend:")
+aic_table3 <- function(data,P,Q){
+table <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima2::arima(data,order=c(p,1,q))$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+require(knitr)
+aic_table <- aic_table3(df$CPIAUCSL,4,4)
+kable(aic_table,digits=2)
+```
+
+Based on the results, the model with a linear trend achieves the lowest **AIC**, with optimal parameters $p=2$ and $q=0$. Also, adding the differencing parameter has the highest **AIC** table for all models, so we set $d=0$. Additionally, we check the existence of unit root by **Augmented Dickey-Fuller test**:
+
+- **$H_0$**: The time series has a **unit root** (non-stationary).  
+- **$H_1$**: The time series does **not** have a unit root.  
+
+```{r}
+adf.test(df$CPIAUCSL)
+```
+
+We obtain a **small $p$-value**, leading to the **rejection of $H_0$** and confirming that our **time series does not have a unit root**. However, this does not necessarily mean that the series is **stationary** or that differencing is not required—it merely provides **additional evidence for not including a differencing parameter**. Now we determine the seasonal parameters $P$ $Q$ with a period of 12, as suggested in the EDA. We use the common \texttt{arima} function here instead of the one in \texttt{arima2}, as the running time for optimization is too long.
+
+
+```{r}
+print("Model with no linear trend:")
+aic_table1 <- function(data,P,Q){
+table <- matrix(NA,(P+1),(Q+1))
+table2 <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima(data, order=c(2,0,0), seasonal = list(order = c(p, 0, q), period = 12))$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+aic_table1 <- aic_table1(df$CPIAUCSL,3,3)
+require(knitr)
+kable(aic_table1,digits=2)
+
+print("Model with linear trend:")
+aic_table2 <- function(data,P,Q){
+table <- matrix(NA,(P+1),(Q+1))
+table2 <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima(data, order=c(2,0,0), seasonal = list(order = c(p, 0, q), period = 12), xreg = df$time)$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+aic_table2 <- aic_table2(df$CPIAUCSL,3,3)
+require(knitr)
+kable(aic_table2,digits=2)
+
+print("Model from auto.arima:")
+auto.arima(df$CPIAUCSL)
+```
+
+We also include the results of model with and without a linear trend. We discover that the model with linear trend still has a better performance with the optimal parameters $P=0$ and $Q=1$, although there is a possibility of optimization and numerical error. We also use \texttt{auto.arima} function from the \texttt{forecast} package as a sanity check, and we observe that our selected model is much better than the model selected by \texttt{auto.arima}, as its searching algorithm is not optimal.
+
+(**Statistics 531, Winter 2025, Lecture 5, p. 21; Ionides, 2025**).  
+
+### **3.3 Residual Analysis and Model Diagnostics**
+
+To further examine the evidence for including the linear trend parameter in our SARIMA model, we provide diagnostic for both options with the other parameters determined above. 
+
+```{r}
+print("Model with no linear trend:")
+model1 <- arima2::arima(df$CPIAUCSL, order=c(2,0,0), seasonal = list(order = c(0, 0, 1), period = 12))
+model1
+# Extract residuals
+residuals_model1 <- residuals(model1)
+
+# Residual Plot
+ggplot() +
+  geom_line(data = data.frame(df$time, Value = df$CPIAUCSL),
+            aes(x = df$time, y = Value), color = "black", alpha = 0.5) +
+  geom_line(data = data.frame(df$time, Residuals = residuals_model1), 
+            aes(x = df$time, y = Residuals), color = "blue") +
+  # Zero reference line
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  # Labels and theme
+  labs(title = "Original Time Series and Residuals", x = "Time", y = "Value / Residuals") +
+  theme_minimal()
+
+par(mfrow = c(2,2))
+
+# Q-Q Plot with Normal Distribution
+qqnorm(residuals_model1, main = "Q-Q Plot (Normal)")
+qqline(residuals_model1, col = "red")
+
+# Q-Q Plot with t-distribution (df = 5), correctly scaled
+t_quantiles <- qt(ppoints(length(residuals_model1)), df = 5)
+
+# Scale the theoretical quantiles to match empirical mean and variance
+t_scaled <- mean(residuals_model1) + sd(residuals_model1) * t_quantiles
+
+qqplot(t_scaled, sort(residuals_model1), main = "Q-Q Plot (t-distribution, df=5)", 
+       xlab = "Theoretical Quantiles (t, df=5)", ylab = "Sample Quantiles")
+abline(0, 1, col = "red")
+
+# ACF Plot of Residuals
+Acf(residuals_model1, main = "ACF of Residuals")
+
+# Ljung-Box Test Plot
+residuals_model1 <- (residuals_model1 - mean(residuals_model1)) / sd(residuals_model1)
+p_values <- sapply(1:20, function(lag) Box.test(residuals_model1, lag = lag, type = "Ljung-Box")$p.value)
+plot(1:20, p_values, type = "b", pch = 16, col = "blue", ylim = c(0,1), xlab = "Lag", ylab = "p-value",
+     main = "Ljung-Box Test p-values")
+abline(h = 0.05, col = "red", lty = 2)
+```
+
+
+```{r}
+print("Model with linear trend:")
+model2 <- arima2::arima(df$CPIAUCSL, order=c(2,0,0), seasonal = list(order = c(0, 0, 1), period = 12), xreg = df$time)
+model2
+
+# Extract coefficients and standard errors
+coef_vals <- coef(model2) 
+std_errs <- sqrt(diag(vcov(model2)))  # Extract standard errors
+
+# Compute z-scores
+z_scores <- coef_vals / std_errs
+
+# Compute p-values (two-tailed test)
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Display results
+data.frame(Coefficients = coef_vals, SE = std_errs, Z = z_scores, p_value = p_values)
+
+# Extract residuals
+residuals_model2 <- residuals(model2)
+
+# Residual Plot
+ggplot() +
+  geom_line(data = data.frame(df$time, Value = df$CPIAUCSL),
+            aes(x = df$time, y = Value), color = "black", alpha = 0.5) +
+  geom_line(data = data.frame(df$time, Residuals = residuals_model2), 
+            aes(x = df$time, y = Residuals), color = "blue") +
+  # Zero reference line
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  # Labels and theme
+  labs(title = "Original Time Series and Residuals", x = "Time", y = "Value / Residuals") +
+  theme_minimal()
+
+par(mfrow = c(2,2))
+
+# Q-Q Plot with Normal Distribution
+qqnorm(residuals_model2, main = "Q-Q Plot (Normal)")
+qqline(residuals_model2, col = "red")
+
+# Q-Q Plot with t-distribution (df = 5), correctly scaled
+t_quantiles <- qt(ppoints(length(residuals_model2)), df = 5)
+
+# Scale the theoretical quantiles to match empirical mean and variance
+t_scaled <- mean(residuals_model2) + sd(residuals_model2) * t_quantiles
+
+qqplot(t_scaled, sort(residuals_model2), main = "Q-Q Plot (t-distribution, df=5)", 
+       xlab = "Theoretical Quantiles (t, df=5)", ylab = "Sample Quantiles")
+abline(0, 1, col = "red")
+
+# ACF Plot of Residuals
+Acf(residuals_model2, main = "ACF of Residuals")
+
+# Ljung-Box Test Plot
+residuals_model2 <- (residuals_model2 - mean(residuals_model2)) / sd(residuals_model2)
+p_values <- sapply(1:20, function(lag) Box.test(residuals_model2, lag = lag, type = "Ljung-Box")$p.value)
+plot(1:20, p_values, type = "b", pch = 16, col = "blue", ylim = c(0,1), xlab = "Lag", ylab = "p-value",
+     main = "Ljung-Box Test p-values")
+abline(h = 0.05, col = "red", lty = 2)
+```
+
+
+We first notice that although **model with linear trend has a lower AIC**, the trend parameter has a **$p$-value of 0.78**, which seems that we cannot suggest the trend is not 0. However, here we are using the typical **confidence interval for an MLE estimate** $\hat{\theta}$:
+$$
+\hat{\theta} \pm z_{\alpha / 2} \cdot \sqrt{\operatorname{Var}(\hat{\theta})}
+$$
+where:  
+- \( z_{\alpha / 2} \) is the **critical value** (e.g., 1.96 for **95% Confidence Interval (CI)**).  
+- \( \operatorname{Var}(\hat{\theta}) \) is estimated using the **observed Fisher Information**.  
+
+This might be a **problematic estimate** if the **likelihood surface is non-quadratic** or **asymmetric**, or if the **sample size is small** and **asymptotic normality does not hold**. In our case, using the **Likelihood Ratio Test (LRT)** might be a better option than the **MLE-based Fisher Information approximation**, and we will investigate that later.
+
+We continue our analysis by examining the **residual distribution**. The residuals remain **heavy-tailed**, and the model fit shows **no improvement over the original data**. As discussed in **Section 2.4**, the **Q-Q plot** against a **normal distribution** does not align well; instead, it closely resembles the **t-distribution**, as observed in **Section 2.5**. This confirms that the **SARIMA model struggles to account for volatility clustering** and **time-varying variance**. 
+
+Indeed, we can check **excess kurtosis** and the **degree of freedom \( \nu \)** again for our residuals.
+
+
+```{r}
+excess_kurtosis = kurtosis(residuals_model2) - 3
+excess_kurtosis
+nu = 6 / excess_kurtosis + 4
+nu
+```
+
+Also, similar to **Section 2.4**, we further perform the **Shapiro-Wilk test** and the **Jarque-Bera test** to formally examine **normality**. The test results for both the **Shapiro-Wilk Test** and the **Jarque-Bera Test** reject the **null hypothesis**, supporting our observation from the **Q-Q plot** that the data is **not normally distributed**.
+
+```{r}
+shapiro.test(residuals_model2)
+jarque.bera.test(residuals_model2)
+```
+
+To better address the issue of **volatility clustering**, we have to introduce an additional structure, such as **GARCH**, to model the **conditional heteroskedasticity** in the data. This will be an extension of our **SARIMA** model in the next section to improve the **AIC** and the **forecasting capability**.
+
+We also perform the **Ljung-Box test** on our residuals for both models, and we also plot the \( p \)-values for different lags. We first notice that we **fail to reject the null hypothesis** for all lags in the model with a **linear trend**, adding evidence that our residuals are **white noise** (**no autocorrelation**, but not normal, as observed above), although some higher lags still have lower \( p \)-values. 
+
+Additionally, the model with a **linear trend** performs better than the model without a trend, which exhibits **autocorrelation for large lags**, as indicated by the **rejection of small \( p \)-values** in the plot. This further supports the inclusion of the **linear trend parameter**. 
+
+We also examine the **Ljung-Box test \( p \)-values plot** for the original data below, which confirms that the **original data exhibits significant autocorrelations across all lags**. Therefore, our **SARIMA** model successfully captures the **autocorrelated structure** of the data.
+
+```{r}
+temp <- (df$CPIAUCSL - mean(df$CPIAUCSL)) / sd(df$CPIAUCSL)
+p_values <- sapply(1:20, function(lag) Box.test(temp, lag = lag, type = "Ljung-Box")$p.value)
+plot(1:20, p_values, type = "b", pch = 16, col = "blue", ylim = c(0,1), xlab = "Lag", ylab = "p-value",
+     main = "Ljung-Box Test p-values for Original Data")
+```
+
+(**Statistics 531, Winter 2025, Lecture4, Lecture 5, Lecture 6; Ionides, 2025. Statistics 509, Winter 2024, Lecture 4, Lecture 5, Lecture 6; Thelen, 2024**).
+
+### **3.4 Final Model Specification**
+
+Based on **trend analysis, residual diagnostics, and profile likelihood evaluation**, our final **SARIMA model** is:  
+
+\[
+(1 - \phi_1 B - \phi_2 B^2) (Y_t -\mu) = \beta X_t + (1 + \theta_{12} B^{12}) \varepsilon_t,
+\]
+
+where:  
+- $Y_t$ = **CPI inflation rate**  
+- $B$ = **Backward shift operator**  
+- $\phi_1, \phi_2$ = **Non-seasonal AR terms**  
+- $X_t$ = **Exogenous regressor (time trend)**  
+- $\beta$ = **Coefficient for time trend**  
+- $\theta_{12}$ = **Seasonal MA term at lag 12**  
+- $\varepsilon_t \sim WN(0, \sigma^2)$ = **White noise error term**  
+
+Given **remaining volatility clustering**, we extend our analysis to **SARIMA-GARCH models** in the next section.  
+
+(**Statistics 531, Winter 2025, Lecture 5, p. 25; Ionides, 2025**).  
+
+## **4. Candidate Models**
+
+### **4.1 SARIMA**
+
+```{r}
+# Fit SARIMA(2,0,0)(0,0,1)[12]
+sarima(df_val, p = 2, d = 0, q = 0, P = 0, D = 0, Q = 1, S = 12)
+```
+
+The **SARIMA(2,0,0)(0,0,1)[12] model** is designed to capture **both short-term and seasonal dependencies** in CPI inflation dynamics. The **non-seasonal AR(2) component** consists of **AR(1) (-0.0896, p = 0.0867) and AR(2) (-0.0134, p = 0.7946)**, where AR(1) is close to statistical significance. This suggests that **inflation exhibits some degree of autoregressive persistence**, meaning past inflation values have a moderate influence on present inflation movements. The **seasonal moving average term (SMA(1)) is not included in the final model,** indicating that seasonal effects were not strongly present in the residual diagnostics.  
+
+Residual diagnostics indicate that **SARIMA removes most autocorrelation**, as shown by the **Ljung-Box test p-values, which remain above 0.05 across multiple lags**. Additionally, the **ACF plot of residuals does not show significant serial correlation**, suggesting that the model captures inflation trends effectively. However, the **Q-Q plot reveals deviations from normality**, particularly in the **tails**, implying that **extreme inflation movements are not fully captured**. This suggests that **SARIMA alone is insufficient to model volatility clustering**, a key feature in financial and macroeconomic time series.  
+
+From a numerical standpoint, **SARIMA achieves an AIC of -0.1478 and a BIC of -0.1475**. Given these limitations, we extend our analysis by integrating **GARCH-type models** to explicitly model **conditional heteroskedasticity**, a common feature in inflation series.
+
+### **4.2 SARIMA-GARCH**
+
+```{r, include=FALSE}
+sarima = sarima(df_val, p = 2, d = 0, q = 0, P = 0, D = 0, Q = 1, S = 12)
+sarima_resid = sarima$fit$residuals
+```
+
+
+```{r, include=FALSE}
+# Define ARIMA-GARCH Model
+spec1 = ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(2,0)),
+  distribution.model = "std"  # Student-t distribution
+)
+
+# Fit the Model
+fit1 = ugarchfit(spec = spec1, data = sarima_resid)
+
+# Print Model Summary
+print(fit1)
+```
+
+
+```{r}
+# Extract standardized residuals (Description?)
+garch_resid = residuals(fit1, standardize = TRUE)
+
+# Run ARCH LM Test on residuals
+ArchTest(garch_resid, lags = 10)
+```
+
+```{r}
+N = length(residuals(fit1))
+quantv = ppoints(N)
+qqplot(qt(quantv, fit1@fit$coef["shape"]), sort(coredata(garch_resid)),
+       main = "Q-Q Plot: GARCH Residuals vs. Student-t (df=shape)",
+       xlab = "Theoretical Quantiles (t-dist)", ylab = "Sample Quantiles")
+qqline(sort(coredata(garch_resid)), distribution = function(p) qt(p, fit1@fit$coef["shape"]), prob = c(0.1, 0.9), col = "red")
+```
+
+```{r}
+acf(garch_resid, main="ACF of GARCH Residuals")
+```
+
+To address **SARIMA’s inability to model volatility clustering**, we introduce the **SARIMA-GARCH model**, which integrates a **GARCH(1,1) component** to capture **time-varying inflation uncertainty**. The **GARCH(1,1) model**, originally introduced by **Bollerslev (1986)** as an extension of the **ARCH model by Engle (1982)**, assumes that **past volatility and past squared shocks influence future inflation uncertainty**. This aligns with discussions in **Tsay (2010, pp. 134-139)**, where ARMA models are coupled with GARCH to improve time series forecasting.  
+
+Examining the conditional variance dynamics, the **GARCH(1,1) coefficients ($\alpha_1 = 0.2339$, $\beta_1 = 0.6834$)** suggest **persistent volatility, with a total persistence measure of 0.917**, indicating that inflation uncertainty remains elevated over extended periods. The **Student-t shape parameter (4.3499)** confirms the presence of **fat-tailed residuals**, further justifying the choice of a t-distributed error model.  
+
+Residual diagnostics, including **ARCH-LM tests**, confirm that the **SARIMA-GARCH model successfully removes significant autocorrelation in squared residuals**. The ARCH-LM test on standardized residuals yields a **p-value of 0.9302**, indicating no remaining ARCH effects, supporting the model’s effectiveness in capturing volatility clustering. From a numerical perspective, **SARIMA-GARCH achieves an AIC of -0.4401 and a BIC of -0.3726**.  
+
+However, a key limitation of SARIMA-GARCH is that it **assumes symmetric volatility responses to inflation shocks**. This means that **positive and negative inflation surprises are treated equally**, despite evidence that **inflation often reacts asymmetrically to economic shocks** (e.g., monetary policy tightening vs. expansionary measures). To address this, we extend our analysis by integrating **EGARCH and GJR-GARCH models**, which allow for **asymmetric volatility effects**.
+
+### **4.3 E-GARCH**
+
+```{r, include=FALSE}
+spec_egarch = ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(2,0)),
+  distribution.model = "std"
+)
+
+# Fit EGARCH Model
+fit_egarch = ugarchfit(spec = spec_egarch, data = sarima_resid)
+
+# Print Model Summary
+print(fit_egarch)
+```
+
+```{r}
+# Extract standardized residuals
+egarch_resid = residuals(fit_egarch, standardize = TRUE)
+
+# Run ARCH LM Test on residuals
+ArchTest(egarch_resid, lags = 10)
+```
+
+```{r}
+# Number of residuals
+N_egarch = length(residuals(fit_egarch))
+
+# Generate theoretical quantiles from Student-t distribution
+quantv_egarch = ppoints(N_egarch)
+
+# Q-Q Plot: EGARCH residuals vs. Student-t
+qqplot(qt(quantv_egarch, fit_egarch@fit$coef["shape"]), 
+       sort(coredata(egarch_resid)),
+       main = "Q-Q Plot: EGARCH Residuals vs. Student-t (df=shape)",
+       xlab = "Theoretical Quantiles (t-dist)", 
+       ylab = "Sample Quantiles")
+
+# Add Q-Q line
+qqline(sort(coredata(egarch_resid)), 
+       distribution = function(p) qt(p, fit_egarch@fit$coef["shape"]), 
+       prob = c(0.1, 0.9), col = "red")
+```
+
+```{r}
+acf(egarch_resid, main="ACF of E-GARCH Residuals")
+```
+
+The **SARIMA-EGARCH model** extends SARIMA-GARCH by introducing **asymmetric volatility effects**, allowing inflation uncertainty to react **differently to positive and negative shocks**. Unlike standard GARCH, **EGARCH**, originally developed by **Nelson (1991)**, uses a **log-transformation of variance**, ensuring that **volatility remains positive without restrictive parameter constraints**. Additionally, EGARCH captures **leverage effects**, meaning that **negative economic shocks can increase inflation volatility more than positive shocks of the same magnitude**. The effectiveness of **EGARCH in modeling asymmetric macroeconomic volatility** has been emphasized in **Tsay (2010, pp. 143-145)**.  
+
+Examining the variance dynamics, the **EGARCH(1,1) parameters ($\beta = 0.8761$, $\alpha = 0.0421$, $\gamma = 0.3925$)** suggest that **past volatility strongly influences current uncertainty**. Importantly, the **asymmetry coefficient ($\gamma = 0.3925$) is highly significant (p < 0.01)**, meaning that **negative inflation shocks increase volatility more than positive ones**, aligning with theoretical expectations. The **omega coefficient (-0.3909)** reflects the baseline log-volatility, and the **Student-t shape parameter (4.3509)** confirms **fat-tailed residuals**, reinforcing the choice of a non-Gaussian error structure.  
+
+ARCH-LM test results show **no remaining ARCH effects (p-value = 0.9242)**, confirming that the model successfully captures conditional heteroskedasticity. From a numerical standpoint, **SARIMA-EGARCH achieves an AIC of -0.4302 and a BIC of -0.3531**. Given the importance of capturing asymmetric volatility, we next explore the **GJR-GARCH model**, which models leverage effects differently than EGARCH.
+
+### **4.4 GJR-GARCH**
+
+```{r, include=FALSE}
+spec_gjr = ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(2,0)),
+  distribution.model = "std"
+)
+
+# Fit GJR-GARCH Model
+fit_gjr = ugarchfit(spec = spec_gjr, data = sarima_resid)
+
+# Print Model Summary
+print(fit_gjr)
+```
+
+```{r}
+# Extract standardized residuals 
+gjr_garch_resid = residuals(fit_gjr, standardize = TRUE)
+
+# Run ARCH LM Test on residuals
+ArchTest(gjr_garch_resid, lags = 10)
+```
+
+```{r}
+# Number of residuals
+N_gjr = length(residuals(fit_gjr))
+
+# Generate theoretical quantiles from Student-t distribution
+quantv_gjr = ppoints(N_gjr)
+
+# Q-Q Plot: GJR-GARCH residuals vs. Student-t
+qqplot(qt(quantv_gjr, fit_gjr@fit$coef["shape"]), 
+       sort(coredata(gjr_garch_resid)),
+       main = "Q-Q Plot: GJR-GARCH Residuals vs. Student-t (df=shape)",
+       xlab = "Theoretical Quantiles (t-dist)", 
+       ylab = "Sample Quantiles")
+
+# Add Q-Q line
+qqline(sort(coredata(gjr_garch_resid)), 
+       distribution = function(p) qt(p, fit_gjr@fit$coef["shape"]), 
+       prob = c(0.1, 0.9), col = "red")
+```
+
+```{r}
+acf(gjr_garch_resid, main="ACF of GJR-GARCH Residuals")
+```
+
+The **SARIMA-GJR-GARCH model** incorporates **asymmetric volatility effects**, specifically focusing on **leverage effects** where negative shocks may increase volatility more than positive ones. This model, developed by **Glosten, Jagannathan, and Runkle (1993)**, is widely used in **financial volatility modeling**.  
+
+Examining the variance dynamics, the **GJR-GARCH(1,1) parameters ($\alpha = 0.2867$, $\beta = 0.7003$, $\gamma = -0.1283$)** suggest that **past volatility and past shocks play an important role in explaining conditional variance**. However, the **asymmetry parameter ($\gamma$) is not statistically significant**, implying that **negative inflation shocks do not drastically increase volatility more than positive ones**. The **Student-t shape parameter (4.4078)** confirms **fat-tailed residuals**.  
+
+ARCH-LM test results confirm **no remaining ARCH effects (p-value = 0.9476)**, indicating that the model sufficiently captures conditional heteroskedasticity. From a numerical perspective, **SARIMA-GJR-GARCH achieves the best log-likelihood (100.0056) and the lowest AIC (-0.4392)**, making it the most effective model in capturing CPI inflation volatility.
+
+### **4.5 Model Selection Based on Fit and Statistical Properties**
+
+```{r}
+# Extract AIC, BIC, and log-likelihood for SARIMA
+sarima_aic = sarima$ICs[1]
+sarima_bic = sarima$ICs[2]
+sarima_loglik = logLik(sarima$fit)
+
+# Extract AIC, BIC, and log-likelihood for GARCH models
+garch_criteria = infocriteria(fit1)
+garch_aic = garch_criteria[1]  # Extract AIC
+garch_bic = garch_criteria[2]  # Extract BIC
+garch_loglik = fit1@fit$LLH  # Extract Log-Likelihood
+
+egarch_criteria = infocriteria(fit_egarch)
+egarch_aic = egarch_criteria[1]
+egarch_bic = egarch_criteria[2]
+egarch_loglik = fit_egarch@fit$LLH
+
+gjr_criteria = infocriteria(fit_gjr)
+gjr_aic = gjr_criteria[1]
+gjr_bic = gjr_criteria[2]
+gjr_loglik = fit_gjr@fit$LLH
+
+# Create a data frame ensuring all values are of the same length
+model_comparison = data.frame(
+  Model = c("SARIMA", "SARIMA-GARCH", "SARIMA-EGARCH", "SARIMA-GJR-GARCH"),
+  AIC = c(sarima_aic, garch_aic, egarch_aic, gjr_aic),
+  BIC = c(sarima_bic, garch_bic, egarch_bic, gjr_bic),
+  Log_Likelihood = c(sarima_loglik, garch_loglik, egarch_loglik, gjr_loglik)
+)
+
+# Print the comparison table
+print(model_comparison)
+```
+
+All three GARCH-based models effectively **eliminate autocorrelation and capture seasonal inflation volatility** using **Student-t distributed errors**, ensuring a robust inflation modeling framework. Among them, **SARIMA-GJR-GARCH(1,1) achieves the best numerical fit**, with the **lowest AIC (-0.4392) and highest log-likelihood (100.0056)**. The **ARCH-LM tests confirm that none of the models exhibit significant remaining ARCH effects**, indicating proper volatility modeling.  
+
+While **SARIMA-GARCH and SARIMA-EGARCH provide valuable insights into volatility clustering and asymmetric effects**, **SARIMA-GJR-GARCH stands out as the best-performing model**, balancing numerical performance with economic interpretability. Given its **statistical fit and ability to incorporate volatility effects**, **SARIMA(2,0,0)(0,0,1)[12]-GJR-GARCH(1,1) emerges as the most appropriate model for CPI inflation forecasting**.  
+
+## **5. Forecasting and Model Comparison**
+
+Rolling window cross-validation is a widely used approach in time series forecasting to **evaluate model performance under dynamically changing conditions**. As Tsay (2010) explains, the rolling forecasting procedure helps account for the fact that **new observations continuously become available**, requiring the model to adapt over time.
+
+This approach ensures that forecast accuracy measures reflect the model's **ability to generalize to unseen data** (p. 216). By shifting the training and test windows forward iteratively, this method mimics the real-world scenario of **incrementally updated forecasts**, improving model robustness. 
+
+Tsay (2010) also notes that rolling evaluations are particularly useful for assessing models that undergo **structural changes**, such as regime-switching processes or those affected by **economic cycles** (p. 222). Consequently, rolling window validation is an essential tool for evaluating forecasting accuracy in financial and economic time series.
+
+### **5.1 Summary of Performance and Forecasting**
+
+```{r}
+# Define split
+split_index = round(0.8 * length(log_diff_cpi))
+
+# Training data (80%)
+train_data = log_diff_cpi[1:split_index]
+
+# Test data (20%)
+test_data = log_diff_cpi[(split_index + 1):length(log_diff_cpi)]
+```
+
+```{r}
+# Define window and horizon
+window_size = 120
+horizon = 60 
+
+# Initialize lists to store error metrics
+errors = list(
+  SARIMA = list(mae = c(), rmse = c()),
+  SARIMA_GARCH = list(mae = c(), rmse = c()),
+  SARIMA_EGARCH = list(mae = c(), rmse = c()),
+  SARIMA_GJR_GARCH = list(mae = c(), rmse = c())
+)
+
+# Ensure we don't exceed test_data length
+for (i in 1:(min(length(train_data) - window_size, length(test_data) - horizon))) {
+  
+  # Define the rolling training subset
+  train_subset = train_data[i:(i + window_size - 1)]
+  
+  # Ensure no missing values and sufficient variance
+  if (all(!is.na(train_subset)) && var(train_subset, na.rm = TRUE) > 1e-6) {
+    
+    # Forecast using SARIMA
+    sarima_fit = arima(train_subset, order = c(2,0,0), seasonal = list(order = c(0,0,1), period = 12))
+    sarima_forecast = forecast::forecast(sarima_fit, h = horizon)$mean
+    
+    # Fit and forecast SARIMA-GARCH(1,1)
+    spec_sgarch = ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+                             mean.model = list(armaOrder = c(2,0)),
+                             distribution.model = "std")
+    fit_sgarch = ugarchfit(spec = spec_sgarch, data = train_subset, solver = "hybrid")
+    forecast_sgarch = ugarchforecast(fit_sgarch, n.ahead = horizon)
+    pred_sgarch = as.numeric(fitted(forecast_sgarch))
+
+    # Fit and forecast SARIMA-EGARCH(1,1)
+    spec_egarch = ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1,1)),
+                             mean.model = list(armaOrder = c(2,0)),
+                             distribution.model = "std")
+    fit_egarch = ugarchfit(spec = spec_egarch, data = train_subset, solver = "hybrid")
+    forecast_egarch = ugarchforecast(fit_egarch, n.ahead = horizon)
+    pred_egarch = as.numeric(fitted(forecast_egarch))
+
+    # Fit and forecast SARIMA-GJR-GARCH(1,1)
+    spec_gjr = ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(1,1)),
+                          mean.model = list(armaOrder = c(2,0)),
+                          distribution.model = "std")
+    fit_gjr = ugarchfit(spec = spec_gjr, data = train_subset, solver = "hybrid")
+    forecast_gjr = ugarchforecast(fit_gjr, n.ahead = horizon)
+    pred_gjr = as.numeric(fitted(forecast_gjr))
+    
+    # Ensure index does not exceed test_data length
+    if ((i + horizon - 1) <= length(test_data)) {
+      actual_values = test_data[i:(i + horizon - 1)]
+      
+      # Compute errors for each model
+      errors$SARIMA$mae = c(errors$SARIMA$mae, mean(abs(sarima_forecast - actual_values), na.rm = TRUE))
+      errors$SARIMA$rmse = c(errors$SARIMA$rmse, sqrt(mean((sarima_forecast - actual_values)^2, na.rm = TRUE)))
+      
+      errors$SARIMA_GARCH$mae = c(errors$SARIMA_GARCH$mae, mean(abs(pred_sgarch - actual_values), na.rm = TRUE))
+      errors$SARIMA_GARCH$rmse = c(errors$SARIMA_GARCH$rmse, sqrt(mean((pred_sgarch - actual_values)^2, na.rm = TRUE)))
+      
+      errors$SARIMA_EGARCH$mae = c(errors$SARIMA_EGARCH$mae, mean(abs(pred_egarch - actual_values), na.rm = TRUE))
+      errors$SARIMA_EGARCH$rmse = c(errors$SARIMA_EGARCH$rmse, sqrt(mean((pred_egarch - actual_values)^2, na.rm = TRUE)))
+      
+      errors$SARIMA_GJR_GARCH$mae = c(errors$SARIMA_GJR_GARCH$mae, mean(abs(pred_gjr - actual_values), na.rm = TRUE))
+      errors$SARIMA_GJR_GARCH$rmse = c(errors$SARIMA_GJR_GARCH$rmse, sqrt(mean((pred_gjr - actual_values)^2, na.rm = TRUE)))
+    }
+  }
+}
+```
+
+
+```{r}
+# Summarize mean errors for each model
+results = data.frame(
+  Model = c("SARIMA", "SARIMA-GARCH", "SARIMA-EGARCH", "SARIMA-GJR-GARCH"),
+  MAE = c(mean(errors$SARIMA$mae, na.rm = TRUE),
+          mean(errors$SARIMA_GARCH$mae, na.rm = TRUE),
+          mean(errors$SARIMA_EGARCH$mae, na.rm = TRUE),
+          mean(errors$SARIMA_GJR_GARCH$mae, na.rm = TRUE)),
+  RMSE = c(mean(errors$SARIMA$rmse, na.rm = TRUE),
+           mean(errors$SARIMA_GARCH$rmse, na.rm = TRUE),
+           mean(errors$SARIMA_EGARCH$rmse, na.rm = TRUE),
+           mean(errors$SARIMA_GJR_GARCH$rmse, na.rm = TRUE))
+)
+
+# Print the summary table
+results
+```
+
+### **5.2 Model Performance and Forecasting Visual Plots**
+
+```{r}
+testset = diff(log(CPIAUCSL["2020-01-01/2024-12-01"])) * 100
+
+# Forecast next 5 years (60 months)
+sarima_model = arima(df_val, order = c(2,0,0), seasonal = list(order = c(0,0,1), period = 12))
+sarima_forecast = predict(sarima_model, n.ahead = 60)
+f.val = as.vector(sarima_forecast$pred)
+f.se = as.vector(sarima_forecast$se)
+f.time = (length(df_val) + 1):(length(df_val) + 60)
+
+# Plot forecast with 95% prediction interval
+plot(df_val, type = "l", xlim = c(1, length(df_val) + 60), main = "SARIMA Forecast", xlab = "Time", ylab = "CPI")
+lines(f.time, f.val, col = "red")
+lines(f.time, f.val + 1.96 * f.se, col = "blue")
+lines(f.time, f.val - 1.96 * f.se, col = "blue")
+lines(f.time, coredata(testset), col = "black")
+```
+
+```{r}
+# Simulate 5-year ahead forecast
+garch_forecast = ugarchforecast(fit1, n.ahead = 60)
+
+# Extract forecasted values
+garch_mean = as.vector(garch_forecast@forecast$seriesFor)
+garch_se = sqrt(garch_forecast@forecast$sigmaFor)
+f.time = (length(df_val) + 1):(length(df_val) + 60)
+
+# Plot forecast with 95% prediction interval
+plot(df_val, type = "l", xlim = c(1, length(df_val) + 60), main = "SARIMA-GARCH Forecast", xlab = "Time", ylab = "CPI")
+lines(f.time, garch_mean, col = "red")
+lines(f.time, garch_mean + 1.96 * garch_se, col = "blue")
+lines(f.time, garch_mean - 1.96 * garch_se, col = "blue")
+lines(f.time, coredata(testset), col = "black")
+```
+
+```{r}
+egarch_forecast = ugarchforecast(fit_egarch, n.ahead = 60)
+
+# Extract forecasted values
+egarch_mean = as.vector(egarch_forecast@forecast$seriesFor)
+egarch_se = sqrt(egarch_forecast@forecast$sigmaFor)
+f.time = (length(df_val) + 1):(length(df_val) + 60)
+
+# Plot forecast with 95% prediction interval
+plot(df_val, type = "l", xlim = c(1, length(df_val) + 60), main = "SARIMA-EGARCH Forecast", xlab = "Time", ylab = "CPI")
+lines(f.time, egarch_mean, col = "red")
+lines(f.time, egarch_mean + 1.96 * egarch_se, col = "blue")
+lines(f.time, egarch_mean - 1.96 * egarch_se, col = "blue")
+lines(f.time, coredata(testset), col = "black")
+```
+
+```{r}
+# Simulate 5-year ahead forecast
+gjr_forecast = ugarchforecast(fit_gjr, n.ahead = 60)
+
+# Extract forecasted values
+gjr_mean = as.vector(gjr_forecast@forecast$seriesFor)
+gjr_se = sqrt(gjr_forecast@forecast$sigmaFor)
+f.time = (length(df_val) + 1):(length(df_val) + 60)
+
+# Plot forecast with 95% prediction interval
+plot(df_val, type = "l", xlim = c(1, length(df_val) + 60), main = "SARIMA-GJR-GARCH Forecast", xlab = "Time", ylab = "CPI")
+lines(f.time, gjr_mean, col = "red")
+lines(f.time, gjr_mean + 1.96 * gjr_se, col = "blue")
+lines(f.time, gjr_mean - 1.96 * gjr_se, col = "blue")
+lines(f.time, coredata(testset), col = "black")
+```
+
+### **5.3 Model Performance and Forecasting Evaluation**
+
+The **SARIMA-EGARCH model** emerges as the best-performing model in **forecasting accuracy**, achieving the **lowest Mean Absolute Error (MAE = 0.1797) and Root Mean Squared Error (RMSE = 0.2448)**. This result supports the findings of **Nelson (1991)** and **Tsay (2010, pp. 143-145)**, which emphasize **EGARCH’s effectiveness in capturing asymmetric volatility effects**. The ability to differentiate between positive and negative economic shocks allows SARIMA-EGARCH to better account for periods of heightened uncertainty, leading to superior predictive accuracy.  
+
+The **SARIMA-GJR-GARCH model** ranks as the second-best performer, with **MAE = 0.1826 and RMSE = 0.2478**. Designed to capture **leverage effects** (Glosten, Jagannathan, & Runkle, 1993), this model effectively accounts for asymmetric responses in inflation volatility. While it slightly underperforms compared to SARIMA-EGARCH, it still demonstrates strong forecasting capabilities and an improvement over standard SARIMA-GARCH.  
+
+The **SARIMA-GARCH model**, originally introduced by **Bollerslev (1986)**, performs slightly worse than SARIMA-GJR-GARCH, with **MAE = 0.1836 and RMSE = 0.2488**. Although integrating **seasonal ARIMA components with GARCH-based volatility structures** enhances forecasting accuracy by capturing both short-term dependencies and long-term volatility clustering, its **lack of asymmetry handling** limits its adaptability in economic environments where inflation reacts differently to supply-side versus demand-side shocks.  
+
+Finally, the **baseline SARIMA model** exhibits the **weakest predictive performance (MAE = 0.1934, RMSE = 0.2575)**, reinforcing the importance of incorporating **volatility modeling techniques** when forecasting inflation. SARIMA's relatively **narrow confidence intervals (CI)** stem from its **lack of a volatility component**, leading to an **underestimation of uncertainty** in future predictions. The **wider confidence bands in EGARCH and GJR-GARCH models reflect their ability to adjust for conditional variance, particularly in volatile periods**.  
+
+Therefore, based on forecasting performance and statistical robustness, **SARIMA-EGARCH emerges as the preferred model for CPI inflation analysis, followed by SARIMA-GJR-GARCH, SARIMA-GARCH, and SARIMA**.
+
+### **5.4 Conclusion for Model Selection**
+
+Given its **numerical superiority and ability to model asymmetric volatility**, **SARIMA-EGARCH is the most effective model for inflation forecasting**. While **SARIMA-GARCH and SARIMA-GJR-GARCH provide solid alternatives**, they do not outperform EGARCH in predictive accuracy. The results highlight the **importance of accounting for asymmetric volatility shocks** when modeling inflation dynamics, supporting the broader literature on **financial and macroeconomic volatility forecasting**.
+
+## **6. Macroeconomic Interpretation**
+
+### **6.1 Macroeconomic Interpretations of SARIMA and SARIMA-EGARCH in CPI Analysis**
+
+The analysis of Consumer Price Index (CPI) inflation using **SARIMA and SARIMA-EGARCH models** provides critical insights into inflationary trends and their macroeconomic implications. The **SARIMA(2,0,0)(0,0,1)[12]** model captures **both short-term and seasonal dependencies** in inflation, highlighting cyclical patterns that align with broader economic fluctuations. However, inflation volatility, which reflects uncertainty in price movements, necessitates models like **EGARCH**, which explicitly model **conditional heteroskedasticity** and asymmetric volatility responses. The findings from **SARIMA-EGARCH** reveal key insights into **inflation persistence, volatility clustering, and the asymmetric response of inflation to economic shocks**, which are crucial for monetary policy and economic forecasting.
+
+The **SARIMA-EGARCH model** emerges as the best-performing model in terms of **forecasting accuracy**, achieving the **lowest Mean Absolute Error (MAE = 0.1797) and Root Mean Squared Error (RMSE = 0.2448)**. This supports findings from **Nelson (1991)** and **Tsay (2010, pp. 143-145)**, emphasizing EGARCH’s ability to capture **asymmetric volatility effects**. Given that inflation dynamics are often driven by unpredictable supply and demand shocks, the flexibility of **EGARCH** in differentiating between **positive and negative shocks** allows for a more realistic representation of inflation volatility.
+
+### **6.2 Inflation Forecasting and Monetary Policy Implications**
+
+Inflation forecasts play a fundamental role in **monetary policy formulation**, as central banks, particularly the **Federal Reserve**, rely on inflation expectations to guide interest rate decisions. The Federal Reserve follows a **dual mandate**—maintaining price stability and fostering maximum employment—where inflation modeling aids in determining appropriate monetary policy responses. According to **Mankiw (2010, Ch. 4)**, inflation trends are heavily influenced by **money supply growth**, as illustrated by the quantity theory of money, which links long-run inflation directly to the expansion of monetary aggregates. Furthermore, the **New Keynesian framework**, as outlined in **Galí (2008, Ch. 5)**, emphasizes the role of **forward-looking expectations** in shaping inflation dynamics, where credibility in monetary policy can anchor inflation expectations.
+
+The results from **SARIMA-EGARCH** highlight that CPI inflation exhibits **volatility clustering**, indicating that periods of high inflation uncertainty are followed by continued uncertainty. This aligns with empirical findings on **monetary policy shocks**, which can induce long-lasting effects on inflation expectations and macroeconomic stability. Additionally, the **EGARCH model captures asymmetric inflation responses**, showing that **negative economic shocks (e.g., recessions, financial crises) have a greater impact on inflation volatility than positive shocks**, reinforcing the notion of **leverage effects** in macroeconomic fluctuations.
+
+### **6.3 Comparing Inflation Dynamics Across Economic Periods**
+
+To contextualize these findings, we can compare **historical inflation trends** with past economic crises and stagflation periods. The **1970s stagflation** (high inflation and high unemployment) was characterized by **supply-side shocks, excessive monetary expansion, and oil price volatility**, which resulted in **persistent inflationary pressures**. During the **2008 financial crisis**, the Federal Reserve implemented **quantitative easing (QE)** to counteract deflationary pressures, highlighting the **trade-offs between inflation targeting and economic stabilization**. More recently, the **COVID-19 pandemic** induced a **sharp increase in inflation volatility**, driven by **supply chain disruptions, labor shortages, and fiscal stimulus measures**. The **SARIMA-EGARCH model confirms that inflation volatility has become more persistent post-pandemic**, reflecting heightened macroeconomic uncertainty.
+
+### **6.4 Conclusion: SARIMA-EGARCH as a Policy and Forecasting Tool**
+
+The empirical results underscore the importance of **SARIMA-EGARCH in inflation analysis**, particularly for **monetary policymakers, financial analysts, and economic forecasters**. While **SARIMA captures trend and seasonality**, **EGARCH provides critical insights into inflation uncertainty and risk**. Given the Federal Reserve's reliance on **inflation forecasts to adjust interest rates**, the ability to model **conditional heteroskedasticity and asymmetric volatility responses** enhances the predictive power of inflation models.
+
+Future research could explore the integration of **exogenous macroeconomic indicators (e.g., oil prices, labor costs, interest rates) using ARIMAX and VAR models** to refine inflation forecasting and provide **richer insights into macroeconomic policy effects**.
+
+## **7. Expansion for Future Research**
+
+### **7.1 Random Forest and XGBoost**
+
+As financial forecasting becomes more complex, traditional statistical models may struggle to capture **nonlinear interactions** and **high-dimensional dependencies** in economic data. Machine learning techniques like **Random Forest (RF) and Extreme Gradient Boosting (XGBoost)** provide alternative approaches by leveraging **ensemble learning** to improve predictive accuracy. Unlike SARIMA-GARCH models, which rely on predefined statistical assumptions, these machine learning methods are **data-driven**, allowing them to detect hidden patterns in time series without requiring explicit model specifications. **Random Forest** constructs multiple decision trees using **bootstrapped samples** and averages predictions to reduce overfitting (James et al., 2021, pp. 344–345). However, RF does not inherently capture temporal dependencies, requiring **feature engineering with lagged variables** for time series forecasting.  
+
+**XGBoost**, an advanced boosting algorithm, sequentially builds trees to **minimize residual errors**, resulting in **higher predictive power and better generalization** (James et al., 2021, pp. 346–348). Unlike RF, which grows trees independently, XGBoost adjusts each tree **based on the weaknesses of prior iterations**, making it highly effective for macroeconomic forecasting. Research has shown that **XGBoost outperforms traditional models in predicting economic trends** by capturing complex relationships and efficiently optimizing hyperparameters. Future research could explore **hybrid approaches integrating SARIMA-GARCH with XGBoost or RF**, leveraging the **interpretability of econometric models** while enhancing predictive accuracy with machine learning’s ability to **capture nonlinear dependencies and dynamic interactions in macroeconomic data**.
+
+### **7.2 Long Short-Term Memory (LSTM)**
+
+Traditional statistical models like SARIMA-GARCH, while effective, struggle to **capture highly non-linear relationships and long-term dependencies** in financial and macroeconomic time series. **Long Short-Term Memory (LSTM)**, a specialized deep learning model, overcomes these limitations by leveraging **recurrent neural network (RNN) architecture** to retain long-term dependencies and mitigate the **vanishing gradient problem** in sequential data. LSTMs have been widely applied in financial forecasting, outperforming conventional models in **volatility modeling and macroeconomic trend prediction**. **Siami-Namini et al. (2018)** compared **ARIMA and LSTM** and found that LSTM models reduced forecasting errors by **84–87%**, demonstrating their superior ability to learn intricate patterns in time series.  
+
+Unlike SARIMA-GARCH hybrids, which assume **linear dependencies and conditional heteroskedasticity**, LSTMs adaptively learn from data without predefined structures, making them particularly **well-suited for inflation forecasting**. **Clark et al. (2020)** highlight that deep learning models, particularly LSTMs, have gained traction in time series regression due to their ability to **handle complex economic shocks dynamically**. Future research could explore **hybrid models combining SARIMA-GARCH with LSTM**, where SARIMA-GARCH captures **short-term dependencies and volatility clustering**, while **LSTM detects long-term macroeconomic dynamics**. This fusion could enhance inflation forecasting, particularly in volatile economic conditions where traditional models may fall short.  
+
+### **7.3 ARIMAX**
+
+Incorporating **exogenous variables** into time series forecasting significantly enhances predictive accuracy, particularly in macroeconomic contexts where external factors influence inflation dynamics. The **Autoregressive Integrated Moving Average with Exogenous Variables (ARIMAX)** model extends ARIMA by integrating explanatory macroeconomic indicators such as **oil prices, labor costs, or Federal Reserve policy changes**. Unlike SARIMA, which relies solely on past values of the target variable, ARIMAX improves forecasting by incorporating economic shocks directly into the model. **Stock & Watson (2001)** demonstrate how ARIMAX models capture interdependencies in inflation and monetary policy, improving model interpretability.  
+
+In contrast, **Vector Autoregression (VAR) models**, commonly used in macroeconomic forecasting, treat all included variables as interdependent, allowing researchers to examine inflation’s response to external policy shocks. **Koop & Korobilis (2010)** highlight that Bayesian estimation techniques can mitigate overfitting in high-dimensional datasets, making VAR a robust alternative for modeling macroeconomic linkages. Future research could compare **ARIMAX models against SARIMA-GARCH hybrids and machine learning techniques like XGBoost and Random Forest**, evaluating their effectiveness in inflation forecasting. A hybrid approach combining the **statistical rigor of ARIMAX with the adaptability of machine learning** could provide a **more flexible and responsive forecasting framework** for real-time economic analysis.
+
+## **8.Conclusion**
+
+This study examined **time series modeling approaches for CPI inflation forecasting**, emphasizing the **importance of volatility modeling** in capturing inflationary dynamics. We compared **SARIMA and SARIMA-GARCH hybrid models**, incorporating **standard GARCH, EGARCH, and GJR-GARCH** models to assess their effectiveness in handling **conditional heteroskedasticity and asymmetric volatility effects**.
+Our findings indicate that **SARIMA-EGARCH delivers the highest forecasting accuracy**, achieving the **lowest Mean Absolute Error (MAE = 0.1797) and Root Mean Squared Error (RMSE = 0.2448)**. This aligns with the literature highlighting EGARCH's effectiveness in **capturing asymmetric responses to economic shocks** (Nelson, 1991; Tsay, 2010). The **SARIMA-GJR-GARCH model ranks second**, demonstrating **strong performance in modeling leverage effects**, though it slightly underperforms compared to SARIMA-EGARCH in overall accuracy. Meanwhile, the **SARIMA-GARCH model effectively captures volatility clustering but lacks asymmetry handling**, and the **baseline SARIMA model exhibits the weakest predictive performance** due to its inability to model time-varying variance.
+From a **macroeconomic perspective**, our results confirm that **inflation volatility is persistent**, supporting theories that inflation uncertainty remains elevated following economic shocks. The asymmetric response captured by **EGARCH and GJR-GARCH suggests that negative economic events contribute disproportionately to inflation volatility**, a critical consideration for **monetary policy formulation and financial risk management**.
+Despite the strong performance of **SARIMA-EGARCH**, certain limitations remain. The model does not incorporate **exogenous macroeconomic variables**, such as interest rates or oil prices, which can significantly influence inflation. Future research could explore **ARIMAX models, machine learning techniques (e.g., XGBoost, LSTM), or hybrid approaches** to enhance forecasting robustness.
+In conclusion, **SARIMA-EGARCH emerges as the most effective model for CPI inflation forecasting**, offering both **statistical rigor and macroeconomic interpretability**. However, integrating **external economic indicators, machine learning techniques, and non-linear methods** could further improve inflation prediction, particularly in periods of heightened economic uncertainty.
+
+## **References Section**
+
+### **Journal Articles & Books**
+
+- **Bollerslev, T. (1986).** Generalized autoregressive conditional heteroskedasticity. *Journal of Econometrics, 31*(3), 307-327. https://doi.org/10.1016/0304-4076(86)90063-1  
+- **Clark, T. E., McCracken, M. W., & Mertens, E. (2020).** Modern strategies for time series regression. *Journal of Econometrics, 215*(1), 72-91. https://doi.org/10.1016/j.jeconom.2019.04.009  
+- **Engle, R. F. (1982).** Autoregressive conditional heteroskedasticity with estimates of the variance of United Kingdom inflation. *Econometrica, 50*(4), 987-1007. https://doi.org/10.2307/1912773  
+- **Galí, J. (2008).** *Monetary policy, inflation, and the business cycle: An introduction to the New Keynesian framework and its applications.* Princeton University Press.  
+- **Glosten, L., Jagannathan, R., & Runkle, D. (1993).** On the relation between the expected value and the volatility of the nominal excess return on stocks. *Journal of Finance, 48*(5), 1779-1801. https://doi.org/10.1111/j.1540-6261.1993.tb05128.x  
+- **Koop, G., & Korobilis, D. (2010).** Bayesian multivariate time series methods for empirical macroeconomics. *Foundations and Trends in Econometrics, 3*(4), 267-358. https://doi.org/10.1561/0800000013  
+- **Mankiw, N. G. (2010).** *Macroeconomics* (7th ed.). Worth Publishers.  
+- **Mishkin, F. S. (2007).** Inflation dynamics. *International Finance, 10*(3), 317-334. https://doi.org/10.1111/j.1468-2362.2007.00210.x  
+- **Nelson, D. B. (1991).** Conditional heteroskedasticity in asset returns: A new approach. *Econometrica, 59*(2), 347-370. https://doi.org/10.2307/2938260  
+- **Siami-Namini, S., Tavakoli, N., & Namin, A. S. (2018).** A comparison of ARIMA and LSTM in forecasting time series. *2018 17th IEEE International Conference on Machine Learning and Applications (ICMLA)*, 1394-1401. IEEE. https://doi.org/10.1109/ICMLA.2018.00227  
+- **Sims, C. A. (1980).** Macroeconomics and reality. *Econometrica, 48*(1), 1-48. https://doi.org/10.2307/1912017  
+- **Stock, J. H., & Watson, M. W. (2001).** Vector autoregressions. *Journal of Economic Perspectives, 15*(4), 101-115. https://doi.org/10.1257/jep.15.4.101  
+- **Tsay, R. S. (2010).** *Analysis of financial time series* (3rd ed.). John Wiley & Sons.  
+
+### **Course Materials & Lecture Notes**
+
+- **FIN 612 "International Financial Management 1: Currency Markets"** (Fall 2024), "Session 8: Purchasing Power Parity", Paolo Pasquariello.  
+- **STATS 509 - Winter 2024**:
+  - "Lecture 3: Probability Models/Distributions and Intro to Value-at-Risk (VaR)/Expected Shortfall", Brian Thelen.  
+  - "Lecture 4: Univariate Descriptive Statistics/EDA", Brian Thelen.  
+  - "Lecture 8: Introduction to Time Series", Brian Thelen.  
+  - "Lecture 10: Advanced Topics in GARCH Time Series Analysis", Brian Thelen.  
+- **STATS 531 - Winter 2025, Edward L. Ionides**:
+  - "Chapter 4: Linear time series models and the algebra of ARMA models."
+  - "Chapter 5: Parameter estimation and model identification for ARMA models."
+  - "Chapter 6: Extending the ARMA model: Seasonality, integration and trend." 
+  - "Chapter 7: Introduction to time series analysis in the frequency domain."  
+  - "Chapter 8: Smoothing in the time and frequency domains."  
+  - "Chapter 9: Case study: An association between unemployment and mortality."
+
+### **Preprints & Online Sources**
+
+- **J. Wheeler & E. L. Ionides.** (2023). Likelihood-based inference of ARMA models. *ArXiv preprint.*  
+- **Wikipedia Entries:**
+  - **"Shapiro-Wilk test"**, Wikipedia. https://en.wikipedia.org/wiki/Shapiro%E2%80%93Wilk_test  
+  - **"Jarque-Bera test"**, Wikipedia. https://en.wikipedia.org/wiki/Jarque%E2%80%93Bera_test  
+- **ChatGPT (2025).** Grammar and LaTeX syntax check with consultations on macroeconomic resource finding and programming aspects.  
+

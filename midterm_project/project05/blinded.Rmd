@@ -1,0 +1,686 @@
+---
+title: "Complexity of US Baby Names"
+output: html_document
+bibliography: unblinded.bib
+csl: apa-numeric-superscript-brackets.csl
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r, echo = FALSE, message = FALSE}
+#import packages
+library(babynames)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(forecast)
+knitr::opts_chunk$set(cache = T, message = F, warning = F)
+```
+
+```{r, echo = F}
+#code borrowed from slides, modified with try-catch 
+aic_table <- function(data, P, Q, D = 0, xreg = NULL) {
+  table <- matrix(NA, (P+1), (Q + 1)) 
+  for (p in 0:P) {
+    for (q in 0:Q) {
+      
+      if (is.null(xreg)) {
+        table[p+1, q+1] <- tryCatch({arima2::arima(data, order = c(p, D, q))$aic},
+        error = function(e){
+          print(c(p,q))
+          print(e) 
+          NA},
+        warning = function(w) {
+          print(c(p,q))
+          print(w)
+          NA
+        })
+      }
+      else{
+        table[p+1, q+1] <- tryCatch({arima2::arima(data, order = c(p, D, q), xreg = xreg, max_iters = 500)$aic},
+        error = function(e){
+          print(c(p,q))
+          print(e) 
+          NA},
+        warning = function(w) {
+          print(c(p,q))
+          print(w)
+          NA
+        })
+      }
+    }
+  }
+  dimnames(table) <- list(paste("AR", 0:P, sep = ""),
+                          paste("MA", 0:Q, sep = ""))
+  return(table)
+}
+```
+
+
+# Introduction
+
+Every year, names US parents choose for their children seem to get more unusual and more complex. The decision of what to name your baby has become so complex that some people choose to hire naming consultants to help them find unique names [@nyt]. However, this phenomenon is mostly ancedotal and may be influenced by the number of celebrities choosing extremely unusual and complicated names for this children. In this project, we set out to explore how the complexity of US baby names has changed over time. Are names actually becoming more complex? Are we able to model how aspects of names change over time? 
+
+To answer these questions, we created three different time series, separated by gender, using data from the US Social Security Administration on first names given to babies born between 1880 and 2017 [@babynames]. Names given to fewer than five babies of the same gender in the same year are excluded; all others are included. As a result, we cannot observe trends in extremely unusual names; however, we can still observe general naming trends. The dataset gives us the number of babies given a particular name, divided by gender and year. 
+
+For each year and sex, we calculated three values aimed at capturing the complexity of names. These three were: the average length of a name, the average number of vowels in a name, and the average longest run of consonants in a name. These were weighted by how popular a name was. In other words, the denominator for these averages was the number of people born that year, not the number of unique names given. Popular names will be given more weight than unusual names. The first two values are fairly self-explanatory, but the third may benefit from an example. For each name, we calculated the longest run of consonants in a name. For example, the name "Isabella" has a longest consonant run of 2, from the "ll" part. The names "Ava" and "Astrid" would have a longest consonant run of 1 and 3, respectively. 
+
+We chose these questions because they seemed to address the question of "complexity" while being fairly easy to calculate and intuitive to explain. "Complexity" can mean very different things when it comes to names. We would generally consider very long names to be complex, but short names with a lot of consonants in a row might also fall under "complex names" especially if the repeated consonants make the name hard to pronounce. We initially got the idea to do average length and average vowel count from a data visualization we found [@data_viz] and came up with the idea for longest consonant run on our own. 
+
+We primarily focus on modeling these time series properly, with a slight focus on forecasting what these trends might look like in the next few years. 
+
+# Exploratory Data Analysis 
+
+We start by exploring what these time series look like visually. First, we plot the average length of the names of all babies born 1880-2017, separated by sex. 
+
+
+```{r, echo = FALSE, message = F, warning = F}
+length_df2 <- babynames %>%
+  mutate(name_length = str_length(name)) %>%
+  mutate(name_length_people = name_length * n) %>%
+  group_by(year, sex) %>%
+  summarize(avg_length = sum(name_length_people)/sum(n)) 
+
+ggplot(length_df2, aes(x = year, y = avg_length, color = sex)) + geom_line() +
+scale_color_manual(values = c("purple2", "mediumaquamarine")) + 
+  labs(x = "Year", y = "Length", color = "Sex") + 
+  ggtitle("Average length of first name, by year") + 
+  theme_classic() + theme(legend.position = "bottom") 
+
+```
+
+The plots look fairly similar for both sexes. There appears to be a general increase in the average length in a name, peaking around the 1990s. 
+
+Next, we plot the average number of vowels in the names of all babies, again separated by sex:
+```{r, echo = F, message = F, warning = F}
+vowel_df2 <- babynames %>%
+  mutate(num_vowels = str_count(name, '[aeoiuAEOIU]')) %>%
+  mutate(num_vowels_people = num_vowels * n) %>%
+  group_by(year, sex) %>%
+  summarize(avg_num = sum(num_vowels_people)/sum(n)) 
+
+ggplot(vowel_df2, aes(x = year, y = avg_num, color = sex)) + geom_line() +
+  scale_color_manual(values = c("purple2", "mediumaquamarine")) + 
+  labs(x = "Year", y = "Number of Vowels", color = "Sex") + 
+  ggtitle("Average number of vowels in first name, by year") + 
+  theme_classic() + theme(legend.position = "bottom") 
+
+```
+
+Here, the overall shape of the time series looks very similar for male and female babies. There might be an overall slight increase from 1880 to 2017, but there also appears to be a decrease around the 1960s. It is also worth noting that this plot is markedly different from the previous one. You might have initially expected that the average number of vowels would look similar to the average length of a name, since longer names likely require more vowels. However, this is not the case. 
+
+Next, we plot the average longest consonant run in the names of all babies, again separated by sex:
+
+```{r, echo = F, message = F, warning = F, cache = T}
+longest_run <- rep(NA, nrow(babynames))
+for (i in 1:nrow(babynames)) {
+  name <- babynames$name[i]
+  longest_run[i] <- max(sapply(str_split(name, "[!aeiouAEIOU]")[[1]], nchar))
+}
+
+consonant_run_df <- babynames %>%
+  mutate(longest_run = longest_run) %>%
+  group_by(year, sex) %>%
+  summarize(weighted_longest_run = sum(n * longest_run)/sum(n)) 
+
+
+ggplot(aes(x = year, y = weighted_longest_run, color = sex), data = consonant_run_df) + 
+  geom_line() + 
+  scale_x_continuous(breaks = c(seq(1880, 2017, 10), 2017)) +
+  scale_y_continuous(breaks = c(1.7, seq(1.75, 1.95, 0.05), 2.0), limits = c(1.7, 2)) + 
+  scale_color_manual(values = c("purple2", "mediumaquamarine")) + 
+  labs(x = "Year", y = "Number of Consonants", color = "Sex") + 
+  ggtitle("Average max number of consonants in a row in first name, by year") + 
+  theme_classic() + theme(legend.position = "bottom") 
+
+```
+
+For both sexes, there appears to be a dramatic decrease in the average longest consonant run starting in the 1990s. Prior to that, there appears to be a slight increase for female babies while the values for male babies stay fairly constant. The peak here appears to be around the same time as the peak for average length, which makes sense since shorter names also means shorter runs of consonants. However, the graphs are still fairly different. 
+
+Calculating these values and plotting them required some additional sources, including documentation for the `stringr` and `ggplot2` packages and a couple chatGPT queries [@stringr; @ai1; @ai2; @ggplot]. 
+
+
+
+# Modeling
+
+## Average Name Length
+
+We will fit the model for both male and female together, as there is not a significant difference between them from the plot. Considering their non-linear trend, we first fit them with a quadratic trend to de-trend it. 
+```{r loaddata,echo=FALSE,warning=FALSE,message=FALSE}
+length_df2 <- babynames %>%
+  mutate(name_length = str_length(name)) %>%
+  mutate(name_length_people = name_length * n) %>%
+  group_by(year, sex) %>%
+  summarize(avg_length = sum(name_length_people)/sum(n), .groups    = "drop") 
+
+ggplot(length_df2, aes(x = year, y = avg_length, color = sex)) + geom_line()
+```
+
+```{r split-data&timeseries,echo=FALSE,warning=FALSE,message=FALSE}
+length_female <- length_df2 %>% filter(sex == "F") %>% arrange(year)
+length_male   <- length_df2 %>% filter(sex == "M") %>% arrange(year)
+# Convert to time-series objects 
+ts_female <- ts(length_female$avg_length, 
+                start = min(length_female$year), 
+                end   = max(length_female$year),
+                frequency = 1)
+
+ts_male <- ts(length_male$avg_length,
+              start = min(length_male$year),
+              end   = max(length_male$year),
+              frequency = 1)
+```
+
+The graph below shows the original female and male name data versus the fitted values (dotted line) from the quadratic polynomial:
+
+```{r fit_quadratictrend,echo=FALSE,warning=FALSE,message=FALSE}
+# Fit a non-linear trend model
+lm_trend_female <- tslm(ts_female ~ trend+I(trend^2))
+summary(lm_trend_female)
+
+lm_trend_male <- tslm(ts_male ~ trend+I(trend^2))
+summary(lm_trend_male)
+
+plot_df_length <- bind_rows(
+  data.frame(year = length_female$year, orig = as.numeric(ts_female), fitted = as.numeric(fitted(lm_trend_female)), sex = "Female"),
+  data.frame(year = length_male$year, orig = as.numeric(ts_male), fitted = as.numeric(fitted(lm_trend_male)), sex = "Male")
+)
+
+ggplot(plot_df_length, aes(x = year, y = orig, color = sex)) +
+  geom_line() +
+  geom_line(aes(y = fitted), linetype = "dotted") +
+  labs(x = "Year", y = "Average Number of Vowels") +
+  ggtitle("Observed Average Length vs. Fitted Quadratic Values")
+```
+
+Since the p‐value for the I(trend^2) term is below 0.05 in the female trend model, we retain the quadratic term. In contrast, for the male data, the p‐value for I(trend^2) exceeds 0.05, so we discard the quadratic term, keep only the linear term, and refit the model.
+
+```{r fit_lineartrend,echo=FALSE,warning=FALSE,message=FALSE}
+lm_trend_male <- tslm(ts_male ~ trend)
+summary(lm_trend_male)
+plot_df_length <- bind_rows(
+  data.frame(year = length_female$year, orig = as.numeric(ts_female), fitted = as.numeric(fitted(lm_trend_female)), sex = "Female"),
+  data.frame(year = length_male$year, orig = as.numeric(ts_male), fitted = as.numeric(fitted(lm_trend_male)), sex = "Male")
+)
+
+ggplot(plot_df_length, aes(x = year, y = orig, color = sex)) +
+  geom_line() +
+  geom_line(aes(y = fitted), linetype = "dotted") +
+  labs(x = "Year", y = "Average Number of Vowels") +
+  ggtitle("Observed Average Length vs. Fitted Values")
+```
+
+Next, we will perform a spectral analysis on the residues of male and female.
+
+```{r spectralanalyse,echo=FALSE,warning=FALSE,message=FALSE}
+resid_female <- residuals(lm_trend_female)
+resid_male <- residuals(lm_trend_male)
+
+
+female_spec_smooth <- spectrum(resid_female,
+         spans = c(3,3), 
+         main  = "Female Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female: ",female_spec_smooth$freq[ which.max(female_spec_smooth$spec) ],"\n")
+
+
+female_spec_aic = spectrum(resid_female, method="ar", main="Spectrum of Female Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female using AIC: ",female_spec_aic$freq[which.max(female_spec_aic$spec)],"\n")
+
+male_spec_smooth <- spectrum(resid_male,
+         spans = c(3,3), 
+         main  = "Male Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male: ",male_spec_smooth$freq[ which.max(male_spec_smooth$spec) ],"\n")
+male_spec_aic = spectrum(resid_male, method="ar", main="Spectrum of Male Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male using AIC: ",male_spec_aic$freq[which.max(male_spec_aic$spec)],"\n")
+```
+
+The highest frequency in the smoothed female and male residuals are both 0.01389, indicating that there is period $T=1/\omega\approx72$ years. However, we only have total record of 138 years, which means in such a super long cycle of 72 years, we can only see at most less than two complete 'ups and downs'. Therefore, it is very difficult to reliably verify it.
+
+And inspired by a previous project [@24project2], when we use AIC to select the best estimators, the peak frequency are both 0 in male and female residuals, leading to an infinite period. Consequently, there are no periodic behavior in both male and female residuals.
+
+We next fit \(ARMA(p,q)\) models to the residuals from each trend model—*quadratic* for female and *linear* for male. For each case, we consider \(p \in \{0,\dots,5\}\) and \(q \in \{0,\dots,5\}\), and then calculate the AIC of every fitted model. As shown in the class [@notes531], we insert `NA` if certain \((p,q)\) pairs fail to converge or emit warnings. We use `arima2` [@arima2] to help avoid optimization pitfalls.
+
+#### Female Residuals (Quadratic Trend)
+
+The polynomial is
+\[
+Y_n \;=\;\alpha \;+\;\beta_1\,X_n \;+\;\beta_2\,X_n^2 \;+\;\varepsilon_n,
+\]
+where we estimated
+\(\alpha = 5.353,\; \beta_1 = 0.01079,\; \beta_2 = -3.322\times 10^{-5}\).
+Here, \(\varepsilon_n\) is modeled by a Gaussian \(ARMA(p,q)\). The AIC values from a grid of \((p,q)\) reveal which ARMA specification best fits the **female** residuals.
+
+#### Male Residuals (Linear Trend)
+
+In contrast, for the **male** series we use a simpler model,
+\[
+Y_n \;=\;\alpha \;+\;\beta_1\,X_n \;+\;\varepsilon_n,
+\]
+with \(\alpha=5.5509\) and \(\beta_1=0.0026868\). Again, \(\varepsilon_n\) follows an \(ARMA(p,q)\). We search over the same grid of \(p,q\) and record AIC values, then select the \((p,q)\) combination yielding the minimum AIC for the male residuals.
+
+Below, we present the AIC tables for both **female** and **male** residuals. From these, we pick the ARMA model (i.e., the \((p,q)\) pair) with the lowest AIC in each case, and proceed with further analysis or diagnostics accordingly.
+ 
+
+```{r fit_arma,cache=T, echo=FALSE,warning=FALSE,message=FALSE}
+# Extract residuals from the quadratic and linear model
+detrend_female <- aic_table(resid_female, P = 5, Q = 5, D = 0)
+detrend_male <- aic_table(resid_male, P = 5, Q = 5, D = 0)
+
+knitr::kable(detrend_female, caption = "AIC Table for Detrended Female Ave Length Run Data")
+knitr::kable(detrend_male, caption = "AIC Table for Detrended Male Ave Length Run Data")
+```
+
+We are going to avoid $p+q\geq5$ situations (in case of overfitting), and thus take $\text{ARMA}(2,2)$ model (AIC: -841.4369) for female residuals and $\text{ARMA}(3,1)$ model (AIC: -851.7415) for male residuals from the above result.
+
+
+```{r plot-inverse-roots, echo = F}
+final_female <- stats::arima(resid_female, order = c(2, 0, 2))
+final_male <- stats::arima(resid_male, order = c(3, 0, 1))
+
+autoplot(final_female) + ggtitle("Inverse Roots For ARMA(2,2) Model (Female Ave length)")
+autoplot(final_male) + ggtitle("Inverse Roots For ARMA(3,1) Model (Male Ave length)")
+```
+
+After we check the plot of inverse roots, we find that for the female model, all the points are inside the boundary of the unit circle (although some points are close to the boundary, we still consider it within the circle), but for the male model, some of the roots are on the border of the unit circle. And this is also true for the $\text{ARMA}(2,2)$ model.
+
+```{r plot-inverse-roots_22, echo = F}
+final_male <- stats::arima(resid_male, order = c(2, 0, 2))
+autoplot(final_male) + ggtitle("Inverse Roots For ARMA(2,2) Model (Male Ave length)")
+```
+
+Therefore, we finally decide to take $\text{ARMA}(4,0)$ model (AIC: -847.2840) for the male residuals, since all the points are inside the boundary of the unit circle.
+
+```{r plot-inverse-roots_40, echo = F}
+final_male <- stats::arima(resid_male, order = c(4, 0, 0))
+autoplot(final_male) + ggtitle("Inverse Roots For ARMA(4,0) Model (Male Ave length)")
+```
+
+And the $\text{ARMA}(2,2)$ model for female residuals, the $\text{ARMA}(4,0)$ model for male residuals are both consistent with the ```auto.arima``` function from the ```forcast``` package [@forecast]. Consequently, we decide to take these two models as our final models for the male and female residuals.
+
+```{r autoarima, echo=FALSE}
+fit_arma_female <- auto.arima(resid_female,
+                              seasonal=FALSE,  
+                              stepwise=TRUE, approximation=FALSE)
+summary(fit_arma_female)
+fit_arma_male <- auto.arima(resid_male,
+                              seasonal=FALSE,  
+                              stepwise=TRUE, approximation=FALSE)
+summary(fit_arma_male)
+```
+
+Next, we plot the forecasted values for the next 20 years:
+
+```{r forecast-length, echo = F, warning = F, message = F}
+h <- 20
+female_final <- stats::arima(resid_female, order = c(2, 0, 2))
+male_final <- stats::arima(resid_male, order = c(4, 0, 0))
+future_trend_female <- forecast(lm_trend_female, h = h)
+future_trend_male <- forecast(lm_trend_male, h = h)
+fc_resid_female <- forecast(female_final, h = h)
+fc_resid_male <- forecast(male_final, h = h)
+fc_combined_female <- future_trend_female$mean + fc_resid_female$mean
+fc_combined_male <- future_trend_male$mean + fc_resid_male$mean
+plot_df_forecast <- bind_rows(
+  data.frame(year = seq(min(length_female$year), max(length_female$year) + h, by = 1), orig = c(as.numeric(ts_female), rep(NA, h)), forecasted = c(rep(NA, length(ts_female)), fc_combined_female), sex = "Female"),
+  data.frame(year = seq(min(length_male$year), max(length_male$year) + h, by = 1), orig = c(as.numeric(ts_male), rep(NA, h)), forecasted = c(rep(NA, length(ts_male)), fc_combined_male), sex = "Male")
+)
+
+ggplot(plot_df_forecast, aes(x = year, y = orig, color = sex)) +
+  geom_line() +
+  geom_line(aes(y = forecasted), linetype = "dotted") +
+  labs(x = "Year", y = "Average Length of Names") +
+  ggtitle("Observed Average Length vs. Forecast")
+```
+
+From the plot, we can see that both male and female curves show a long-run rising tendency, short-term fluctuations, and a modest upward forecast beyond the last observed year.
+
+Finally, We will use the ```checkresiduals``` function to help us determine if we are overfitting the data or leaving out useful information is by checking the residuals.
+
+```{r diagnotics, echo=FALSE}
+checkresiduals(fit_arma_female)
+checkresiduals(fit_arma_male)
+```
+
+#### Female Residuals from $\text{ARMA}(2,2)$
+
+- The residuals fluctuate around zero without any visible trend or large shifts over time. No obvious clustering of positive or negative errors.
+- Nearly all autocorrelations fall within the $\pm2$ SE bounds (blue dashed lines), suggesting no strong leftover serial correlation.
+- The residual distribution appears roughly symmetric and bell‐shaped, indicating approximate normality.
+- Since p-value=0.591 in the Ljung-Box test [@ljungbox], we fail to reject the null of “no autocorrelation,” implying the residuals are effectively white noise.
+
+Therefore, the $\text{ARMA}(2,2)$ model for the female series exhibits no major signs of leftover structure in the residuals, and they appear approximately normal. This indicates a good fit.
+
+#### Male Residuals from $\text{ARMA}(4,0)$
+
+- Also mean‐reverting around zero, with no major pattern. Slightly more spiky at certain points, but nothing glaring.
+- Most lags are within the $\pm2$ SE bounds, though a couple of marginal lags exist. Still, no glaring sign of strong correlation.
+- The residual distribution is near-normal, perhaps slightly skewed in the tails, but not too severe.
+- Since p-value=0.0642 in the Ljung-Box test, we fail to reject the null of “no autocorrelation,” implying the residuals are effectively white noise.
+
+Therefore, the $\text{ARMA}(4,0)$ fit for the male series also has residuals that mostly behave like white noise, although the Ljung–Box test’s p‐value is a bit borderline (0.0642). Overall, it suggests adequate fit.
+
+## Average Number of Vowels
+
+### Data Preparation and Quadratic Trend
+
+```{r vowel-data, echo = F}
+vowel_run_df <- babynames %>%
+  mutate(num_vowels = str_count(name, '[aeoiuAEOIU]')) %>%
+  mutate(num_vowels_people = num_vowels * n) %>%
+  group_by(year, sex) %>%
+  summarize(avg_num = sum(num_vowels_people)/sum(n))
+
+# Separate data for males and females
+vowel_female <- filter(vowel_run_df, sex == "F")
+vowel_male <- filter(vowel_run_df, sex == "M")
+
+# Create time series for both genders
+ts_female_vowel <- ts(vowel_female$avg_num, start = min(vowel_female$year), frequency = 1)
+ts_male_vowel <- ts(vowel_male$avg_num, start = min(vowel_male$year), frequency = 1)
+
+# Fit quadratic trends
+lm_trend_female_vowel <- tslm(ts_female_vowel ~ trend + I(trend^2))
+lm_trend_male_vowel <- tslm(ts_male_vowel ~ trend + I(trend^2))
+```
+
+```{r plot-quadratic-vowel, echo = F}
+plot_df_vowel <- bind_rows(
+  data.frame(year = vowel_female$year, orig = as.numeric(ts_female_vowel), fitted = as.numeric(fitted(lm_trend_female_vowel)), sex = "Female"),
+  data.frame(year = vowel_male$year, orig = as.numeric(ts_male_vowel), fitted = as.numeric(fitted(lm_trend_male_vowel)), sex = "Male")
+)
+
+ggplot(plot_df_vowel, aes(x = year, y = orig, color = sex)) +
+  geom_line() +
+  geom_line(aes(y = fitted), linetype = "dotted") +
+  labs(x = "Year", y = "Average Number of Vowels") +
+  ggtitle("Observed Average Vowel Run vs. Fitted Quadratic Values")
+```
+
+For both females and males, the average vowel count fluctuates across the decades. We can see troughs around 1960s, and there is a trend of increasing after that.
+The quadratic trend lines capture a broad “U-shaped” curve, the line goes down and then up.
+
+### Spectral Analysis
+
+```{r spectralanalysis1, echo=FALSE}
+resid_female_vowel <- residuals(lm_trend_female_vowel)
+resid_male_vowel <- residuals(lm_trend_male_vowel)
+
+female_spec_smooth <- spectrum(resid_female_vowel,
+         spans = c(3,3), 
+         main  = "Female Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female: ",female_spec_smooth$freq[ which.max(female_spec_smooth$spec) ],"\n")
+
+
+female_spec_aic = spectrum(resid_female_vowel, method="ar", main="Spectrum of Female Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female using AIC: ",female_spec_aic$freq[which.max(female_spec_aic$spec)],"\n")
+
+male_spec_smooth <- spectrum(resid_male_vowel,
+         spans = c(3,3), 
+         main  = "Male Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male: ",male_spec_smooth$freq[ which.max(male_spec_smooth$spec) ],"\n")
+male_spec_aic = spectrum(resid_male_vowel, method="ar", main="Spectrum of Male Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male using AIC: ",male_spec_aic$freq[which.max(male_spec_aic$spec)],"\n")
+```
+
+The highest frequency in the smoothed female and male residuals are both 0.01389, indicating that there is period $T=1/\omega\approx72$ years. However, we only have total record of 138 years, which means in such a super long cycle of 72 years, we can only see at most less than two complete 'ups and downs'. Therefore, it is very difficult to reliably verify it.
+
+And inspired by a previous project [@24project2], when we use AIC to select the best estimators, the peak frequency are both 0 in male and female residuals, leading to an infinite period. Consequently, there are no periodic behavior in both male and female residuals.
+
+
+### ARMA Modeling of the Residuals
+
+```{r arma-aic-table-vowel, echo = F}
+# Extract residuals from the quadratic model
+resid_female_vowel <- residuals(lm_trend_female_vowel)
+resid_male_vowel <- residuals(lm_trend_male_vowel)
+
+detrend_female_vowel <- aic_table(resid_female_vowel, P = 5, Q = 5, D = 0)
+detrend_male_vowel <- aic_table(resid_male_vowel, P = 5, Q = 5, D = 0)
+
+knitr::kable(detrend_female_vowel, caption = "AIC Table for Detrended Female Vowel Run Data")
+knitr::kable(detrend_male_vowel, caption = "AIC Table for Detrended Male Vowel Run Data")
+```
+
+Based on the AIC tables, ARMA(2,4) model can be a good fit for female vowels, while the male series fits well with ARMA(2,1).
+
+```{r plot-inverse-roots-vowel, echo = F}
+vowel_final_female <- stats::arima(resid_female_vowel, order = c(2, 0, 4))
+vowel_final_male <- stats::arima(resid_male_vowel, order = c(2, 0, 1))
+
+autoplot(vowel_final_female) + ggtitle("Inverse Roots For ARMA(2,4) Model (Female Vowels)")
+autoplot(vowel_final_male) + ggtitle("Inverse Roots For ARMA(2,1) Model (Male Vowels)")
+```
+
+Each circle plot shows the inverse roots of the AR and MA components for the selected ARMA model. The AR roots and MA roots should lie outside the unit circle for a causual and invertible model.
+
+Female (ARMA(2,4)): We see several points near or somewhat close to the boundary of the circle. This suggests the stationarity and invertibility of the model. 
+Male (ARMA(2,1)): Fewer total points (because of lower MA order), and they appear to lie well within the unit circle, which indicating a non-invertible fit.
+
+### Forecasting the Future
+
+```{r forecast-vowe, echo = F, warning = F, message = F}
+h <- 40
+future_trend_female_vowel <- forecast(lm_trend_female_vowel, h = h)
+future_trend_male_vowel <- forecast(lm_trend_male_vowel, h = h)
+
+plot_df_forecast_vowel <- bind_rows(
+  data.frame(year = seq(min(vowel_female$year), max(vowel_female$year) + h, by = 1), orig = c(as.numeric(ts_female_vowel), rep(NA, h)), forecasted = c(rep(NA, length(ts_female_vowel)), future_trend_female_vowel$mean), sex = "Female"),
+  data.frame(year = seq(min(vowel_male$year), max(vowel_male$year) + h, by = 1), orig = c(as.numeric(ts_male_vowel), rep(NA, h)), forecasted = c(rep(NA, length(ts_male_vowel)), future_trend_male_vowel$mean), sex = "Male")
+)
+
+ggplot(plot_df_forecast_vowel, aes(x = year, y = orig, color = sex)) +
+  geom_line() +
+  geom_line(aes(y = forecasted), linetype = "dotted") +
+  labs(x = "Year", y = "Average Number of Vowels") +
+  ggtitle("Observed Average Vowel vs. Forecast")
+```
+
+Both female and male curves show an upward trend in the forecast region, suggesting that vowel usage might continue to increase. The magnitude of the increase is driven by the shape of the quadratic trend fit and the persistence of the ARMA residual patterns.
+
+
+## Average Longest Run of Consonants 
+
+We will fit a model for females and males separately. Looking at the graphs, the time series for the average longest consonant run for female names appears to have a non-linear trend. As a result, we start by fitting a quadratic polynomial to the female name data to de-trend it. The graph below shows the original female name data versus the fitted values (dotted line) from the cubic polynomial: 
+
+```{r, echo = F}
+consonant_female <- filter(consonant_run_df, sex == "F")
+
+ts_female <- ts(consonant_female$weighted_longest_run,
+                start = min(consonant_female$year), 
+                end   = max(consonant_female$year),
+                frequency = 1)
+
+lm_trend_female <- tslm(ts_female ~ trend+I(trend^2) + I(trend^3))
+
+plot_df <- data.frame(year = seq(1880, 2017, by = 1), orig = c(ts_female), fitted = c(fitted(lm_trend_female)))
+
+ggplot(plot_df) + geom_line(aes(y = orig, x = year), color = "purple2") + geom_line(aes(y = fitted, x = year), color = "black", linetype = "dotted") + labs(x = "Year", y = "Number of Consonants") + ggtitle("Female: Observed Max Consonant Run vs. Fitted Cubic Values")
+```
+
+Next, we can plot the ACF of the residuals: 
+
+```{r}
+resid_female <- residuals(lm_trend_female)
+acf(resid_female, main  = "Female: ACF of Residuals")
+```
+This appears to exhibit some seasonality. However, since our data is annual data and not monthly or quarterly, we thought fitting a SARMA model would be an poor choice. There is no reason for naming patterns to exhibit seasonality. 
+
+We can also perform a spectral analysis on the residues of female:
+
+```{r spectralanalysis2, echo=FALSE}
+female_spec_smooth <- spectrum(resid_female,
+         spans = c(3,3), 
+         main  = "Female Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female: ",female_spec_smooth$freq[ which.max(female_spec_smooth$spec) ],"\n")
+
+
+female_spec_aic = spectrum(resid_female, method="ar", main="Spectrum of Female Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of female using AIC: ",female_spec_aic$freq[which.max(female_spec_aic$spec)],"\n")
+```
+
+For female data, the smoothed approach found a mild multi-decade "peak"($T=1/\omega\approx48$ years) but the parametric AR approach [@24project2] concluded the main power is still near frequency 0. This discrepancy often happens when the “peak” in the smoothed periodogram is subtle, possibly mixing with leftover trend or only covering 2-3 data cycles in the entire 138-year history. The AR method lumps that into a broad low-frequency band (peak at 0). Therefore, we consider the female data as no cycle.
+
+Now, we fit an $ARMA(p,q)$ model to the residuals created from the quadratic polynomial. To choose $p$ and $q$, we consider $p \in (0,5)$ and $q \in (0,5)$ and calculate the AIC for each resulting model. We use a modified version of the code shown in class [@notes531] that inserts a `NA` value for any $p,q$ combinations that produce errors or warnings. Note that we are using `arima2` [@arima2] to help avoid optimization issues. Essentially, we are fitting:
+
+$$
+Y_n = \alpha + \beta_1 X_n + \beta_2 X_n^2 + \epsilon_n
+$$
+$\alpha$, $beta_1$, and $\beta_2$ are obtained from the regression model and are 1.749, 0.004247, and -0.00002508 respectively. $\epsilon_n$ is a Gaussian ARMA process. The table below displays AIC values for different $p,q$ values for this ARMA model. 
+
+```{r, cache = T, echo = F, warning = F, message = F, include = F}
+set.seed(49282)
+detrend_female <- aic_table(resid_female, P = 5, Q = 5, D = 0)
+```
+
+```{r, echo = F}
+knitr::kable(detrend_female, caption = "AIC Table for Detrended Female Max Consonant Run Data")
+```
+In this particular case, the NAs are generated by a convergence warning. As a result, we will avoid $p, q \geq 4$. The table suggests that the best model is an $ARMA(3,1)$ model. However, if we plot the inverse roots of this model, we notice that some of the roots are on the border of the unit circle:
+
+```{r, echo = F}
+plot(arima2::arima(resid_female, order = c(3, 0, 1))) + ggtitle("Inverse Roots For ARMA(3,1) Model")
+```
+
+The same is true for an $ARMA(2,2)$ model. However, if we try an $ARMA(2,1)$ model, which also had a fairly small AIC, we no longer have this issue:
+
+```{r, echo = F}
+plot(arima2::arima(resid_female, order = c(2, 0, 1))) + ggtitle("Inverse Roots For ARMA(2,1) Model")
+```
+
+Interestingly, an $ARMA(2,1)$ model is also what the `auto.arima` model from the `forecast` package [@forecast] suggests. Given that this model does not have the invertibility problems of models with larger $p$ and $q$, we will choose this $ARMA(2,1)$ model fit to the residuals of a cubic polynomial as our final model. 
+
+Next, we plot the forecasted values for the next 10 years: 
+```{r, echo = F, warning = F, message = F}
+female_final <- stats::arima(resid_female, order = c(2, 0, 1))
+
+h <- 20
+
+future_trend <- forecast(lm_trend_female, h = h)
+fc_resid <- forecast(female_final, h = h)
+
+fc_combined <- future_trend$mean + fc_resid$mean
+
+plot_df2 <- data.frame(year = seq(1880, 2017+h, by = 1), orig = c(ts_female, rep(NA, h)), fitted = c(fitted(lm_trend_female) + fitted(female_final), rep(NA,h)), forecasted = c(rep(NA, 138), fc_combined))
+
+ggplot(plot_df2) + geom_line(aes(y = orig, x = year), color = "purple2") + geom_line(aes(y = fitted, x = year), color = "black", linetype = "dotted") + geom_line(aes(y = forecasted, x = year), color = "red", linetype = "dotted") + labs(x = "Year", y = "Number of Consonants") + ggtitle("Female: Observed Max Consonant Run vs. Forecast") 
+```
+
+The 20 year forecast shows a dramatic decrease in the average longest consonant run of female baby names. This is likely because our model is unable to extrapolate well, which is not surprising. 
+
+The cubic fit to de-trend the data indicates a large drop past 2017. However, it is unlikely that this downward trend will continue for 20 years. We suspect that the average max consonant run might exhibit cyclical behavior beyond what we are able to observe with these 138 data points. 
+
+After discovering this, we attempted to use a LOESS smoother to detrend instead. The plot below displays the observed values with the LOESS predictions. However, this looks very similar to the cubic smoother and exhibits the same decreasing behavior for the 2000s. We cannot observe the forecasted values here, so we choose to stick with the ARMA(2,1) errors and the quadratic model. Interestingly, the best model for the residuals from the LOESS smoother is also an ARMA(2,1), reinforcing this decision. 
+```{r, echo = F, warning = F, message = F}
+loess_female <- loess(weighted_longest_run ~ year, consonant_female)
+loess_female_fitted <- fitted(loess_female)
+
+plot_df2 <- data.frame(year = seq(1880, 2017, by = 1), orig = c(ts_female), fitted = loess_female_fitted)
+
+ggplot(plot_df2) + geom_line(aes(y = orig, x = year), color = "purple2") + geom_line(aes(y = fitted, x = year), color = "black", linetype = "dotted") + labs(x = "Year", y = "Number of Consonants") + ggtitle("Female: Observed Max Consonant Run vs. Fitted LOESS Values")
+
+loess_resid <- ts(consonant_female$weighted_longest_run-loess_female_fitted ,
+                start = min(consonant_female$year), 
+                end   = max(consonant_female$year),
+                frequency = 1)
+```
+
+Ultimately, we need more years of data to be able to say anything concrete about how the average longest consonant run in female baby names changes. It's interesting that both of our de-trending options treated the two separate peaks and the valley between them as noise, which would suggest a time series that only has one peak in 138 years, which might indeed be what's happening. 
+
+Next, we will look at fitting a model to the average max consonant run in male baby names. We start by fitting both a cubic estimator to detrend our data. 
+
+```{r, echo = F, warning = F, message = F}
+consonant_male <- filter(consonant_run_df, sex == "M")
+
+ts_male <- ts(consonant_male$weighted_longest_run,
+                start = min(consonant_male$year), 
+                end   = max(consonant_male$year),
+                frequency = 1)
+
+lm_trend_male <- tslm(ts_male ~ trend+I(trend^2) + I(trend^3))
+
+plot_df <- data.frame(year = seq(1880, 2017, by = 1), orig = c(ts_male), fitted = c(fitted(lm_trend_male)))
+
+ggplot(plot_df) + geom_line(aes(y = orig, x = year), color = "mediumaquamarine") + geom_line(aes(y = fitted, x = year), color = "black", linetype = "dotted") + labs(x = "Year", y = "Number of Consonants") + ggtitle("Male: Observed Max Consonant Run vs. Fitted Cubic Values")
+
+resid_male <- residuals(lm_trend_male)
+```
+
+After that, we will perform a spectral analysis on the residues of male.
+
+```{r spectralanalysis3, echo=FALSE}
+male_spec_smooth <- spectrum(resid_male,
+         spans = c(3,3), 
+         main  = "Male Residuals: Smoothed Spectrum",
+         xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male: ",male_spec_smooth$freq[ which.max(male_spec_smooth$spec) ],"\n")
+male_spec_aic = spectrum(resid_male, method="ar", main="Spectrum of Male Residuals estimated via AR model picked by AIC",xlab  = "Frequency", ylab = "Spectral Density")
+cat("The peak frequency of male using AIC: ",male_spec_aic$freq[which.max(male_spec_aic$spec)],"\n")
+```
+
+For male data, both methods point to a multi-decade cycle ($T=1/\omega\approx28$ years) for male data. This is a more consistent result, suggesting there might be a real moderate‐period fluctuation in the male longest‐consonant‐run measure.
+
+Next, we fit an ARMA model to the residuals generated from this cubic polynomial. 
+
+
+```{r, cache = T, echo = F, message = F, warning = F}
+set.seed(49282)
+detrend_male <- aic_table(resid_male, P = 5, Q = 5, D = 0)
+knitr::kable(detrend_male, caption = "AIC Table for Quadratic Detrended Male Max Consonant Run Data")
+```
+
+The AIC table suggests an ARMA(5,4) model, so we look at the inverse roots of that model: 
+```{r, echo = F, message = F, warning = F}
+plot(arima2::arima(resid_male, order = c(5, 0, 4))) + ggtitle("Inverse Roots For ARMA(5,4) Model")
+```
+
+This includes many MA and AR roots right on the border, so this is probably not the best model. We investigated more of these plots for various combinations, and settled on an $ARMA(4,0)$ model, where the roots are not on the border of invertibility: 
+
+```{r, echo = F, message = F, warning = F}
+plot(arima2::arima(resid_male, order = c(4, 0, 0))) + ggtitle("Inverse Roots For ARMA(4,0) Model")
+```
+
+This looks much better, so we choose ARMA(4,0) fit to the residuals of a cubic polynomial as our best model. The plot below shoes the original data (in teal) with the fitted values (dotted black) and a forecast for the next 20 years (dotted red). 
+
+```{r, echo = F, warning = F, message = F}
+male_final <- stats::arima(resid_male, order = c(4, 0, 0))
+
+h <- 20
+
+future_trend <- forecast(lm_trend_male, h = h)
+fc_resid <- forecast(male_final, h = h)
+
+fc_combined <- future_trend$mean + fc_resid$mean
+
+plot_df2 <- data.frame(year = seq(1880, 2017+h, by = 1), orig = c(ts_male, rep(NA, h)), fitted = c(fitted(male_final) + fitted(lm_trend_male), rep(NA,h)), forecasted = c(rep(NA, 138), fc_combined))
+
+ggplot(plot_df2) + geom_line(aes(y = orig, x = year), color = "mediumaquamarine") + geom_line(aes(y = fitted, x = year), color = "black", linetype = "dotted")+ geom_line(aes(y = forecasted, x = year), color = "red", linetype = "dotted") +  labs(x = "Year", y = "Number of Consonants") + ggtitle("Male: Observed Max Consonant Run vs. Forecast") 
+```
+
+Like the forecasting for the female names, these predict that the average longest number of consonants in a row will continue to decrease. This is likely because of the cubic fit to the data indicates a decrease. In general, forecasting the average longest number of consonants is likely not a reliable thing to forecast. We include these forecasts for exploratory purposes, but caution that they should not be considered accurate. 
+
+Ultimately, both of our analyses for the average maximum consonant run indicate a single peak occurring around the 1970s. We suspect the current downward trend will have to plateau or turn around eventually, but do not have data to back this up. In particular, we suspect that trends around the number of consonants occurring in a row might have a cyclical pattern not observable in the data set we have. There do not appear to be cycles of smaller frequencies. 
+
+# Discussion
+Our study of US baby names over 138 years reveals notable trends in naming complexity, with increases in both average name length and vowel count, suggesting a shift toward more elaborate names, while the longest consonant run exhibits a peak around the 1970s before declining. Using polynomial trends and ARMA modeling, we found that name length trends are best captured with quadratic (for females) and linear (for males) models, while vowel counts display a broad “U-shaped” pattern with no strong cyclical component. In contrast, the longest consonant run metric showed moderate evidence of a 28-year cycle for male names but remained inconclusive for female names. Spectral analysis confirmed that most fluctuations were dominated by long-term trends rather than periodic behavior. Forecasting results indicated continued increases in name length and vowel usage, but a sharp projected decline in consonant sequences, raising concerns about the reliability of extrapolating cultural patterns from historical data. These findings suggest that naming complexity evolves in different ways across various linguistic dimensions, potentially influenced by cultural and phonetic preferences. Despite the insights gained, our study is limited by the dataset’s historical scope and the challenges of modeling sociolinguistic trends. Future research could incorporate demographic and linguistic factors to refine predictive models, exploring how societal influences shape naming conventions over time.
+## Limitations
+Despite having data from 1880 to 2017, we likely needed more data points. We suspect that cycles of naming behavior may be very, very long as naming patterns change slowly. It might have also been useful to see if additional covariates, such as other data points on linguistic behaviors and demographics of babies being born, would have helped us build a better model. 
+
+# Scholarship 
+We chose a very different subject for our project than previous projects. Many past projects focused on economic or environmental data. We took a different route and chose to look at a more socially-motivated time series. This may have contributed to some of our difficulties, as data occurring naturally in the environment or in financial markets generally follows more understandable patterns. It also might change more rapidly, where changes in naming patterns occur very slowly. We also chose to look at multiple related time series rather than a single one. Our goal in doing so was to address the "complexity" of names without having to choose a single definition for "complexity". We also thought it would be interesting to compare the results of the different time series. In this sense, our project approaches our research question in a different way than most of the previous ones that set out to answer a single question about a single time series. While we believe our choice led to a more interesting project, it did mean that we had less time to devote to model fitting and diagnostics. 
+
+Like many of the past projects, we primarily used ARMA models and looked at `AIC` tables to determine the best model. We got the idea to look at the invertibility of the roots visually using the plot functionality available in `arima` and `arima2` from one of the past projects [@bitcoin]. Unlike many of the projects, we fit a polynomial trend to detrend our data before using ARMA methods. We observed this in one other project [@energy], and found one other that used LOESS smoothing [@fires], but it did not seem to be a common choice. However, for our data it was necessary. We also did some forecasting, which did not appear in many of the past projects. Ultimately, this was not very useful. We suspect that our dataset does not extrapolate well, but it was interesting to see what it predicted. 
+
+Futhermore, we used `arima2` for some of our models where most midterm projects in the past just used `arima`. This likely did not matter in our analysis, but is a useful example of how `arima2` can be used successfully and fairly seamlessly in time series analysis. We did have to use `arima` models for the forecasting but we used `arima2` for the modeling process of the longest consonant run time series. Other than the forecasting, there were no points where `arima2` was more difficult to use than `arima`, and we may have avoided optimization issues. 
+
+
+
+**<big>References</big>**.
+
+
+
+

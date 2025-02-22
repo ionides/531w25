@@ -1,0 +1,1159 @@
+---
+title: "Pre-Covid U.S. Airline Traffic Analysis"
+output:
+  html_document:
+    code_folding: "hide"
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(forecast)
+library(TSA)
+library(stats)
+library(fpp3)
+library(zoo)
+library(lmtest)
+library(tidyverse)
+library(lubridate)
+library(tseries)
+library(feasts)
+library(MASS)
+library(reshape2)
+library(scales)
+library(gridExtra)
+library(patchwork)
+library(RColorBrewer)
+
+# Load the CSV file into R directly from the github repo
+data <- read.csv(file="https://github.com/alexisedozie/stats531_midtermproject_data/raw/refs/heads/main/air%20traffic.csv")
+data <- head(data, 204) # only want to look at Jan 2003 - Jan 2020
+data$Flt <- as.numeric(gsub("[^0-9.]", "", data$Flt)) /1000 # put total number of flights in thousands
+data$month_year <- make_date(data$Year, data$Month, 1) 
+
+```
+
+# Introduction
+
+The airline industry plays an integral role in how the U.S. functions.
+It not only contributes to the continued growth of the economy, but also
+facilitates a level of global connectivity which seemed impossible a
+century ago [(1)](#my-sources). The data collected on the number of
+flights over time offers a valuable opportunity to learn the evolving
+travel patterns of the country’s citizens. Moreover, it allows for a
+deeper understanding of the impact of seasonality, economic progress,
+etc. on air travel. By analyzing how the volume of flights changes
+throughout the year and across years, interested parties such as
+stakeholders can better anticipate future demand and optimize the air
+travel process [(2)](#my-sources).
+
+The motivation of this time series data analysis project is to
+contribute to the growing pool of research determined to uncover the
+underlying patterns within airline traffic data and offer insight into
+appropriate models. The data set used for this analysis was downloaded
+from Kaggle and contains monthly U.S. airline traffic data between
+January 2003 and December 2019 [(3)](#my-sources). Specifically, for
+each month in this time period, there is a recorded value for the total
+number of flights originating in the U.S. from all commercial U.S. air
+carriers. By analyzing the data, we aim to explore trends, seasonality,
+and any other interesting patterns in the airline industry, while
+assessing how well various models explain the data.
+
+# Exploratory Data Analysis (EDA)
+
+Before beginning a detailed exploratory data analysis, the first step
+taken was to determine if there were any NA data points for any of the
+recorded months.
+
+```{r, echo=FALSE}
+# looking for NA values 
+cat("Number of NA values in the time series:", sum(is.na(data$Flt)), "\n")
+```
+
+After further investigation, there were no NA values within the time
+series data. Therefore, there was no need to perform any data imputation
+methods and EDA can continue unhindered by gaps in the data.
+
+```{r}
+data %>%
+  ggplot(aes(x = month_year, y = Flt)) +
+  geom_line(color = 'darkblue') +
+  geom_vline(xintercept = as.Date(c("2009-01-01", "2010-01-01")), linetype = "dashed", color = "red") +  
+  labs(title = "Total Number of U.S. Flights (Jan 2003 - Dec 2019)", x = "Year", y = "Total Flights (in thousands)") +
+  scale_x_date(
+    breaks = seq(as.Date("2003-01-01"), as.Date("2024-09-01"), by = "1 year"), 
+    labels = scales::date_format("%Y")
+  ) +
+  ylim(600,1000)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.caption.position = "plot",  
+        plot.caption = element_text(hjust = 0)) 
+
+
+```
+
+In the figure above, we see a line plot that visualizes the total number
+of commercial flights which originated in the U.S. (in thousands) from
+January 2003 to December 2019. This figure depicts potential
+seasonality, seen by similar patterns of increases and decreases across
+different years. More formally, the visual motif contained within the
+dashed red lines above is repeated quite similarly in other years.
+
+Unsurprisingly, due to the similar motif across the years, the average
+number of flights by month maintains the same general structure.
+
+```{r}
+# Calculate the monthly mean 
+data_summary <- data %>%
+  mutate(month = month(Month),  
+         month_name = factor(month.name[month], levels = month.name)) %>%  
+  group_by(month_name) %>%
+  summarise(Mean = round(mean(Flt, na.rm = TRUE), 2))  
+
+
+
+ggplot(data_summary, aes(x = month_name, y = Mean, group = 1)) +
+  geom_line(linewidth= 1.5, color = "gray") +  
+  geom_point(aes(color = Mean), size = 4) +  
+  scale_color_gradient(low = "#FFEB3B", high = "#D32F2F") +  
+  labs(title = "Average Number of Flights by Month", 
+       x = "Month", 
+       y = "Average Number of Flights (in thousands)", 
+       color = "Average (color gradient)") + 
+  ylim(700, 900)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.caption.position = "plot",  
+        plot.caption = element_text(hjust = 0))
+
+```
+
+The above figure depicts a line plot of the average number of flights by
+month, enhanced by a color gradient to emphasize the magnitude of the
+values relative to each other. When considering the context of the
+demand for travel based on weather conditions, these increases and
+decreases make sense. In the beginning of the year when it is cold (i.e.
+January and February), the average number of flights is low compared to
+the middle of the year. In the middle of the year (March to August),
+there is an overall increase in the average number of flights, likely
+due to the warmer weather and increased free time during periods like
+spring break and summer vacation. After this increase, there is a
+rebound back to lower averages when the weather once again grows cold.
+There is also a slight increase in December which is potentially due to
+an increased desire to travel near holidays like Christmas and New
+Years. So, it appears that the data adheres to the general connection
+made between the weather and the desire to travel [(4)](#my-sources).
+
+After seeing how the average number of flights varies based on the
+month, it was also helpful to view the overall distribution of the
+number of flights.
+
+```{r}
+# Plot the distribution
+data %>%
+  ggplot(aes(x = Flt)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "darkblue", alpha = 0.6) +
+  geom_vline(aes(xintercept = mean(Flt)), color = "red", linewidth = 1) +  # Mean line
+  geom_vline(aes(xintercept = median(Flt)), color = "red", linetype = "dashed", linewidth = 1) +  
+  labs(title = "Histogram of Total Flights", 
+       x = "Total Flights (in thousands)", 
+       y = "Count") +
+  ylim(0, 20) +
+  theme(plot.caption.position = "plot",  
+        plot.caption = element_text(hjust = 0))
+
+```
+
+```{r, echo=FALSE}
+# determine values of median and mean of the number of flights (Flt)
+
+cat("Median Number of Flights (in thousands):", median(data$Flt), "\n")
+cat("Mean Number of Flights (in thousands):", mean(data$Flt), "\n")
+```
+
+We see the distribution of the total number of flights for all the
+months of recorded data between January 2003 and December 2019. The
+dashed red line indicates the median and the solid red line the mean of
+the total number of flights. As the mean is larger than the median by
+approximately six thousand flights, there is a slight right skew
+(positive skew) in the data. However, since these are pretty close
+together considering the magnitude of the values, this should mean that
+the use of some data transformation (for example, a log transformation)
+is not entirely necessary. In the hopes of keeping our data as
+interpretable as possible by avoiding the need to discuss these values
+on the log scale, we chose to the keep the data as is.
+
+Now, we plan to explore how the mean of the number of flights changes
+over the course of our data using a rolling mean.
+
+```{r}
+# rolling mean
+
+# create time series 
+time_series <- ts(data$Flt, frequency = 12)
+
+window_size <- 12  # rolling over 12 months
+
+# Calculate rolling mean
+rolling_mean <- rollmean(time_series, window_size, fill=NA, align = "right")
+
+df <- data.frame(
+  time = data$month_year,
+  actual = as.numeric(time_series), 
+  rolling_mean = as.numeric(rolling_mean)
+)
+
+data_long <- reshape2::melt(df, id.vars = "time", 
+                            measure.vars = c("actual", "rolling_mean"),
+                            variable.name = "type", value.name = "value")
+
+
+ggplot(data_long, aes(x = time, y = value, color = type)) +
+  geom_line(linewidth = 1, na.rm = TRUE) +  
+  scale_color_manual(values = c("darkblue", "red"), 
+                     labels = c("Original Time Series", "Rolling Mean")) + 
+  labs(title = "Rolling Mean (window size = 12 months)",
+       x = "Year",  
+       y = "Total Flights (in thousands)",
+       color = "Legend") +
+  scale_x_date(
+    breaks = seq(as.Date("2003-01-01"), as.Date("2021-01-01"), by = "1 years"),
+    labels = date_format("%Y")
+  ) +
+  ylim(600, 1000)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),plot.caption.position = "plot", 
+        plot.caption = element_text(hjust = 0)) 
+
+```
+
+This plot shows the rolling mean (a.k.a the moving average) of the total
+number of flights using a window size of 12 months. In blue, we see the
+original time series data and, in red, we see the the calculated rolling
+mean. The rolling mean with a fixed window size of 12 months calculates
+the average total number of flights in the last 12 months. For this
+reason, there are no values for the rolling mean until we see data for
+at least 12 months, so the red line starts at 2004 and slides over the
+data until the end of the time series. This process helps smooth out
+short-term fluctuations in the data and reveals longer-term trends. In
+the time period between 2004 and 2008, there is an overall increasing
+rolling mean which may indicate an upward trend. However, after 2008,
+the rolling mean appears to show a downward trend until 2016. This
+suggests that there were lower-than-usual total flights in this period.
+Some possible reasons for this are the global financial crises in
+2007-2008 which reduced the demand for air travel due to economic
+hardships and rising fuel prices in 2008-2014 which forced airlines to
+raise fares or reduce flight frequencies [(5)(6)](#my-sources). Though,
+after 2016, there seems to have been a slight rebound upward which is
+possibly due to the economy stabilizing after the events of the previous
+period. This a useful plot because it raises the question on if the
+visual "trend" is actually a trend or just a trick of the eye. Later
+work in this analysis will attempt to determine which case is more
+aligned with reality.
+
+Now, we turn our attention towards determining if there is a solid
+reason to believe that there exists seasonality within the data in order
+to inform the direction of our later analysis.
+
+```{r}
+ts_data <- ts(data$Flt)
+par(mfrow=c(1, 2),  mar=c(6, 4, 4, 1))
+acf(ts_data, main="ACF", lag.max=50)
+pacf(ts_data, main="PACF", lag.max=50)
+
+```
+
+Above, we show both the ACF and PACF of the time series.
+
+First, consider the ACF. The Autocorrelation Function (ACF) plot is used
+to investigate the correlation of a time series with its own past values
+(lags) in order to identify patterns or dependencies over time
+[(7)](#my-sources). In this figure, we see a slow decay which may
+indicate the presence of a trend in the data (non-stationarity), meaning
+that values from earlier time periods are still significantly related to
+values in later periods. This suggests that the data may be following a
+long-term upward or downward trend, a point raised by the previous
+figure, and that a model with trend may be appropriate for the data. On
+the other hand, there are some significant spikes at lags of 12 which
+suggest there is seasonality, as they highlight repeating patterns
+occurring every 12 months. The combination of a slow decay and spikes at
+specific lags provides some insight into the potential of long-term
+trends and seasonal cycles in the data and will be explored more later.
+
+Now, consider the PACF. The Partial Autocorrelation Function (PACF) plot
+is used to measure the correlation of a time series with its own past
+values, while removing the influence of intermediate lags. This helps to
+identify the direct relationship between a specific lag and the current
+value [(7)](#my-sources). The dramatic drop after lag 2 implies that the
+current value of the time series is primarily influenced by its prior
+two values and suggests that an AR(2) model might be appropriate for
+capturing the short-term dependencies. However, the high values that
+appear at lags 2, 6, 7, 8, 9, 12, 13, and 14 suggest that there are
+additional seasonal effects that an AR(2) model alone might not fully
+capture. The multiple spikes imply that the time series exhibits
+multiple recurring cycles and highlights the potential complex
+seasonality of the data. Due to this, a model incorporating these
+seasonal dependencies, like SARIMA, might be the most appropriate to
+capture the underlying patterns.
+
+Now that we have entertained the general possibilities of trend,
+seasonality, etc., we will now explore if these visual findings hold
+using more rigorous and robust methods and determine which model
+specification is the most appropriate for the data.
+
+```{r, include=FALSE}
+
+df <- read_csv("https://github.com/alexisedozie/stats531_midtermproject_data/raw/refs/heads/main/air%20traffic.csv", show_col_types = FALSE)
+df <- head(data, 204)
+
+num_cols <- c("Dom_Pax", "Int_Pax", "Pax", "Dom_Flt", "Int_Flt", "Flt",
+              "Dom_RPM", "Int_RPM", "RPM", "Dom_ASM", "Int_ASM", "ASM")
+df[num_cols] <- lapply(df[num_cols], function(x) as.numeric(gsub(",", "", x)))
+
+df$Date <- as.Date(paste(df$Year, df$Month, "01", sep="-"), format="%Y-%m-%d")
+
+air_ts <- ts(df$Flt, start=c(2003,1), frequency=12)
+```
+
+## Trend and Seasonality Analysis
+
+A time series $Y_t$ can be generally decomposed into the following
+components [(1)](#my-sources2): $$ Y_t = T_t + S_t + R_t$$ where,
+
+-   $T_t$ is the trend component, which represents the long-term
+    movement of data points, showing whether the values are increasing,
+    decreasing, or remaining stable over time.
+-   $S_t$ is the seasonal component, which captures reptitive patterns
+    that occur at regular intervals due to external influences. These
+    fluctuations repeat systematically over a fixed period, such as
+    daily, monthly, or yearly,
+-   $R_t$ is the remainder (or residual) component, which represents the
+    unexplained variations in a time series after removing the trend and
+    seasonality. It consists of random noise, anomalies, and unexpected
+    fluctuations caused by unpredictable events that does not follow any
+    specific pattern.
+
+Time series decomposition aims to separate these components to analyze
+their individual contributions. This is helpful while working with
+non-stationary data, where statistical properties change over time. We
+will be using STL decomposition which uses LOESS (Locally Estimated
+Scatterplot Smoothing) for trend estimation since it more adaptable to
+complex trends and seasonal patterns [(2)](#my-sources2).
+
+```{r}
+stl_decomposed <- stl(air_ts, s.window = "periodic")
+
+autoplot(stl_decomposed) +
+  labs(title = "STL Decomposition of Total Flights", x = "Year")
+```
+
+The original time series represents the observed data, combining trend,
+seasonality, and residual noise. The data exhibits non-stationarity, as
+evidenced by the downward trend and seasonal fluctuations.
+Non-stationarity implies that the mean and variance of the series change
+over time. The variability in the data appears consistent over time,
+with no significant changes in the amplitude of fluctuations.
+
+#### Trend Component
+
+-   The trend component captures long-term changes in airline traffic.
+-   The trend initially increases from 2003 to around 2007, reaching a
+    peak. From 2008 to approximately 2015, there is a steady decline,
+    likely reflecting an external factor (e.g., economic downturn or
+    policy changes).
+-   Post-2015, the trend starts to recover, indicating potential growth
+    or stabilization.
+
+#### Remainder Component
+
+-   The remainder component represents random noise or unexplained
+    variability after removing trend and seasonality.
+-   Residuals fluctuate around zero with no discernible pattern,
+    suggesting that most of the systematic variation has been accounted
+    for by the trend and seasonal components.
+-   There are occasional spikes, which could indicate outliers or events
+    not captured by the model (e.g., unexpected shocks or anomalies).
+-   In general, the residuals are well-behaved (centered around zero),
+    suggesting that the decomposition effectively captures most of the
+    systematic variation in the data.
+
+#### Seasonal Component
+
+-   The periodicity is consistent across years, with peaks and troughs
+    repeating at regular intervals. This indicates strong additive
+    seasonality (as opposed to multiplicative seasonality, which would
+    show increasing amplitude over time).
+-   The seasonal variation accounts for approximately 5% – 8% of the
+    total traffic volume relative to the baseline. The amplitude of
+    seasonal fluctuations appears consistent over time (no visible
+    increase or decrease in peaks and troughs).
+
+**Seasonal Subseries**
+
+A seasonal subseries plot is a valuable tool to explore the seasonal
+variation in time series data. It aids in understanding how each month's
+data behaves over several years, thereby highlighting within-year
+seasonality.
+
+```{r}
+ggseasonplot(air_ts,
+           year.labels = TRUE,
+           main = "Seasonal Subseries Plot of Airline Traffic",
+           ylab = "Total Flights (in thousands)",
+           xlab = "Month")
+```
+
+-   There is a clear recurring seasonal pattern across all years.
+    Traffic is lowest in February and peaks during the summer months
+    (June to August), followed by a decline in fall and a slight
+    recovery in December. This indicates strong seasonality, likely
+    driven by factors such as increased travel demand during summer
+    vacations and holidays in December.
+-   The overall level of traffic increases over the years, as seen by
+    the upward shift of the lines for later years compared to earlier
+    ones. This suggests a long-term upward trend in airline traffic,
+    possibly due to factors like population growth or increased
+    accessibility to air travel.
+-   In this plot, the vertical distance between peaks and troughs
+    appears relatively consistent across years, regardless of the
+    overall level of traffic. For example, the difference between
+    February (low) and July (high) is similar for both high-traffic and
+    low-traffic years. This consistency suggests that the seasonality is
+    additive.
+
+We can further confirm the additive seasonality in the data with a log
+transformation test. If the seasonal pattern becomes constant after
+applying the log transformation, it suggests multiplicative seasonality
+[(3)](#my-sources2). If no change is observed, it confirms additive
+seasonality.
+
+```{r}
+stl_original <- stl(air_ts, s.window = "periodic")
+seasonal_original <- stl_original$time.series[, "seasonal"]
+
+log_ts_flt <- log(air_ts)
+stl_log <- stl(log_ts_flt, s.window = "periodic")
+seasonal_log <- stl_log$time.series[, "seasonal"]
+
+date_sequence <- seq.Date(from = as.Date("2003-01-01"), by = "month", length.out = length(seasonal_original))
+
+seasonal_df <- data.frame(
+  Date = date_sequence,
+  Seasonal_Original = seasonal_original,
+  Seasonal_Log = seasonal_log
+) %>%
+  pivot_longer(cols = c("Seasonal_Original", "Seasonal_Log"), names_to = "Type", values_to = "Seasonal")
+
+ggplot(seasonal_df, aes(x = Date, y = Seasonal, color = Type)) +
+  geom_line() +
+  labs(
+    title = "Comparison of Seasonal Components",
+    x = "Date",
+    y = "Seasonal Component",
+    color = "Data Type"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+-   The seasonal component from the original data (blue line) appears to
+    have consistent amplitude over time, regardless of the overall trend
+    in the data. This suggests that the seasonal fluctuations are
+    independent of the trend.
+-   The seasonal component from the log-transformed data (red line) is
+    much smaller in magnitude and appears nearly constant around zero.
+    This is expected because a log transformation reduces multiplicative
+    effects to additive ones.
+-   Since the seasonal patterns in both the original and log-transformed
+    data remain consistent, this confirms that the seasonality in this
+    dataset is additive, not multiplicative.
+
+### Detrending
+
+Many spectral analysis methods assume the data is stationary, so
+removing trends is crucial to meet this assumption [(4)](#my-sources2).
+Sometimes trends can obscure the underlying cyclical patterns and
+frequencies we are trying to identify in the spectrum.
+
+```{r}
+stl_decomposed <- stl(air_ts, s.window = "periodic")
+
+trend <- stl_decomposed$time.series[, "trend"]
+detrended_data <- air_ts - trend
+
+df <- data.frame(
+  Date = as.Date(as.yearmon(time(air_ts))),
+  Observed = as.numeric(air_ts),
+  Trend = as.numeric(trend),
+  Detrended = as.numeric(detrended_data)
+)
+
+ggplot(df, aes(x = Date)) +
+  geom_line(aes(y = Observed, colour = "Observed")) +
+  geom_line(aes(y = Trend, colour = "LOESS Trend")) +
+  geom_line(aes(y = Detrended, colour = "Detrended")) +
+  scale_colour_manual(
+    "",
+    breaks = c("Observed", "LOESS Trend", "Detrended"),
+    values = c("darkgray", "black", "darkblue")
+  ) +
+  labs(
+    x = "Year",
+    y = "Total Flights (in thousands)",
+    title = "Airline Traffic: Observed, Trend, and Detrended Data"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+We can see in the above plot that the observed data fluctuates while the
+LOESS trend reveals an initial increase followed by a decrease and
+slight recovery, and the detrended data highlights a consistent seasonal
+pattern after removing the overall trend and appears stationary.
+
+### Spectral Analysis
+
+Spectral analysis is a method used to examine the frequency domain
+characteristics of a time series. Instead of analyzing the data in the
+domain (where we observe values over time), spectral analysis decomposes
+the signal into its contituent frequencies, helping to identify periodic
+patterns.
+
+A time series $X_t$ can be expressed in terms of its frequency
+components using the Discrete Fourier Transform (DFT)
+[(5)](#my-sources2), $$ X(f) = \sum_{t=0}^{N-1} X_te^{-i2\pi ft} $$
+where,
+
+-   $X_t$ is the observed time series,
+-   $N$ is the total number of observations,
+-   $f$ is the frequency (measured in cycles per unit time),
+-   $i = \sqrt-1$ is the imaginary unit
+
+The power at each frequency is obtained by computing the periodogram,
+which estimates the power spectral density (PSD) of the signal. The
+periodogram is defined as [6],
+
+$$ I(f) = I(f) = \frac{1}{N} \left| X(f) \right|^2 = \frac{1}{N} \left| \sum_{t=0}^{N-1} X_t e^{-i 2\pi f t} \right|^2 $$
+
+where $I(f)$ represents the estimated spectral density at frequency $f$.
+If $I(f)$ has a peak at specific frequency $f_0$, this suggests a strong
+periodic component in the data with period $T = \frac{1}{f_0}$. Since
+the raw periodogram is noisy, smoothing is used to obtain a better
+estimate of the true spectral density function $S(f)$:
+$$ \hat{S}(f) = \sum_{j=-M}^{M} W(j) I(f_j) $$ where $W(j)$ is a
+weighting function that smooths the periodogram over nearby frequencies.
+
+```{r}
+# Compute and plot the periodogram
+par(mfrow = c(1,1), mar = c(4, 4, 4, 1))
+spectrum(detrended_data, log = "no", main = "Periodogram of Detrended Data", xlab = "Frequency (Cycles per Year)")
+```
+
+-   The above plot shows the spectral density of the detrended time
+    series data across different frequencies.
+-   The highest peak at a frequency near 1 suggests a strong periodic
+    component in the data. Other smaller peaks at higher frequencies
+    indicate additional periodic signals, but they are weaker compared
+    to the dominant one.
+
+```{r fig.width=14, fig.height=7}
+# Set up the plotting area to display two plots side-by-side
+par(mfrow = c(1, 2), oma = c(0, 0, 2, 0))
+
+# Unsmoothed Periodogram
+unsmoothed_pg <- spectrum(detrended_data,
+                          spans = NULL,  # No smoothing window (unspecified)
+                          taper = 0,     # No taper
+                          xlab = "Frequency (Cycles per Year)",
+                          sub = "",
+                          main = "Unsmoothed Periodogram")
+
+# Identify and mark the dominant frequency for the unsmoothed periodogram
+dominant_freq_unsmoothed <- unsmoothed_pg$freq[which.max(unsmoothed_pg$spec)]
+abline(v = dominant_freq_unsmoothed, lty = 2, col = "red")
+
+# Smoothed Periodogram
+smoothed_pg <- spectrum(detrended_data,
+                        spans = c(3, 5), # Simple example of a smoothing window
+                        taper = 0.1,    # Apply a taper to reduce leakage
+                        xlab = "Frequeny (Cycles per Year)",
+                        sub = "",
+                        main = "Smoothed Periodogram")
+
+# Identify and mark the dominant frequency for the smoothed periodogram
+dominant_freq_smoothed <- smoothed_pg$freq[which.max(smoothed_pg$spec)]
+abline(v = dominant_freq_smoothed, lty = 2, col = "red")
+
+# # Output dominant frequencies and corresponding periods
+# cat("Unsmoothed dominant frequency (cycles per month): ", dominant_freq_unsmoothed, "\n")
+# cat("Unsmoothed corresponding period (months): ", 1/dominant_freq_unsmoothed, "\n")
+# 
+# cat("Smoothed dominant frequency (cycles per month): ", dominant_freq_smoothed, "\n")
+# cat("Smoothed corresponding period (months): ", 1/dominant_freq_smoothed, "\n")
+```
+
+-   The unsmoothed periodogram appears nosiy, with many fluctuations in
+    spectral density. The highest peak (marked by the red dashed line)
+    suggests the dominant frequency in the data.
+-   The smoothed periodogram provides a clearer view of the dominant
+    frequency components. The smoothing reduces noise and highlights
+    significant periodicities.
+-   The large peak at frequency \~1 cycle per year confirms a strong
+    annual seasonality in the data, while additional peaks at
+    frequencies around 3 and 5 suggest secondary periodic components.
+
+## Model Selection
+
+The following model selection process follows these steps:
+
+1.  ARIMA Model Selection
+
+-   Compare ARIMA(p,1,q) models for $p,q=1,2$ based on AIC values
+-   Conduct the Box-Ljung test to assess residual independence
+
+2.  SARIMA Model Selection
+
+-   Compare SARIMA models with different seasonal parameters to
+    determine the optimal model
+
+3.  Model Diagnostics
+
+-   Check residuals for:
+    -   Constant mean & variance(homoscedasticity).
+    -   Independence (autocorrelation check).
+    -   Normality (e.g., Q-Q plot, Shapiro-Wilk test).
+
+
+#### ARIMA Model Selection
+
+Because the time series data was found to have evidence of non-stationarity, we will consider Integrated Autoregressive Moving Average (ARIMA) models which introduce the difference operator \( (1 - B)^d \) to model non-stationary time series data effectively [(1)](#my-sources3).
+
+The ARIMA(p,d,q) model includes three components:
+
+-   AR (Autoregressive) component: Captures dependencies between past
+    observations and the current value.
+-   I (Integrated): The differencing part, which removes trends or seasonality (with order \( d \)).
+-   MA (Moving Average) component: Models the relationship between past
+    forecast errors and current values.
+    
+where 
+
+-   $p$ is the number of AR terms
+-   $q$ is the number of MA terms
+-   $d$ is the order of difference (in this case, we use d=1)
+
+Mathematically, the ARMA(p, 1, q) model can be expressed as:
+
+$$
+\phi(B)((1-B)Y_n - \mu) = \psi(B)\epsilon_n
+$$
+
+where:
+
+-   $\epsilon_n \sim N(0,\,\sigma^{2})$
+-   $B$ is the backshift operator
+-   $\mu = E[Y_n]$
+-   $\phi(x) = 1 - \phi_1 x - \cdots - \phi_p x^p$
+-   $\psi(x) = 1 + \psi_1 x + \cdots + \psi_q x^q$
+
+Model selection for ARIMA(p,1,q) models involves choosing appropriate values for
+the $(p,q)$ parameters. This is typically done by comparing models based
+on their Akaike Information Criterion (AIC) values [(2)](#my-sources3).
+
+```{r arma_selection}
+# Compare AIC for AR(0-2) and MA(0-2)
+# ARMA model selection code
+
+# Compare AIC for AR(0-2) and MA(0-2)
+arma_models <- list()
+aic_values <- matrix(NA, nrow=3, ncol=3, dimnames=list(paste0("AR",0:2), paste0("MA",0:2)))
+for (p in 0:2) {
+  for (q in 0:2) {
+    arma_models[[paste(p,q,sep="-")]] <- arima(air_ts, order=c(p,1,q))
+    aic_values[p+1, q+1] <- arma_models[[paste(p,q,sep="-")]]$aic
+  }
+}
+print(aic_values)
+
+# Select best ARMA model based on AIC
+best_arma <- which(aic_values == min(aic_values), arr.ind = TRUE)
+best_arma_model <- arima(air_ts, order=c(best_arma[1]-1, 0, best_arma[2]-1))
+
+```
+
+By AIC, the selected model is ARIMA(2,1,2). Before continuing, we will consider the possibility that this low AIC is a result of overfitting and use the LRT to determine if there is a significant benefit in adding one more parameter ($p$ or $q$).
+
+(1) ARIMA(1,1,2) vs. the selected model ARIMA(2,1,2) 
+
+```{r, echo=FALSE}
+fit_null <- arima(air_ts,order=c(1,1,2))
+fit_alt <- arima(air_ts,order=c(2,1,2))
+
+LRT <- 2 * (fit_alt$loglik - fit_null$loglik)
+
+df <- 1
+
+p_value <- pchisq(LRT, df, lower.tail = FALSE)
+
+cat("LRT Statistic:", LRT, "\n", 
+    "P-value:", p_value)
+
+```
+
+(2) ARIMA(2,1,1) vs. the selected model ARIMA(2,1,2) 
+
+```{r, echo=FALSE}
+fit_null <- arima(air_ts,order=c(2,1,1))
+fit_alt <- arima(air_ts,order=c(2,1,2))
+
+LRT <- 2 * (fit_alt$loglik - fit_null$loglik)
+
+df <- 1
+
+p_value <- pchisq(LRT, df, lower.tail = FALSE)
+
+cat("LRT Statistic:", LRT, "\n", 
+    "P-value:", p_value)
+
+```
+
+At the $\alpha = 0.05$ level, we reject the null hypothesis that either the ARIMA(1,1,2) and ARIMA(2,1,1) model are sufficient and will continue on with the ARIMA(2,1,2) model selected by the AIC. 
+
+### Box-Ljung Test
+
+[(2)](#my-sources3). The Box-Ljung test is a statistical test used to
+determine whether there is significant autocorrelation in the residuals
+of a time series model. It helps assess whether a model has captured all
+meaningful information in the data.
+
+-   A high p-value ($p > 0.05$) suggests that the residuals are
+    independent, meaning the model adequately fits the data.
+-   A low p-value ($p < 0.05$) indicates that significant
+    autocorrelation remains, suggesting that the model may need
+    improvement.
+-   The Box-Ljung test is commonly used after fitting ARMA or SARIMA
+    models to validate their effectiveness.
+-   If the test fails to reject the null hypothesis ($H_0$), it implies
+    that there is no significant autocorrelation in the residuals,
+    confirming a good model fit.
+
+```{r Box-Ljung Test for ARMA }
+box_test_arma <- Box.test(residuals(best_arma_model), type="Ljung-Box")
+print(box_test_arma)
+```
+
+The Box-Ljung test indicates that the residuals did not exhibit
+significant autocorrelation, confirming the adequacy of the AIC selected model.
+
+```{r  plot function}
+# Function to plot AR and MA unit roots
+plot_unit_roots <- function(model) {
+  roots_ar <- polyroot(c(1, -model$coef[grep("ar", names(model$coef))]))
+  roots_ma <- polyroot(c(1, model$coef[grep("ma", names(model$coef))]))
+
+  par(mfrow=c(1,2))
+  plot(roots_ar, xlim=c(-1.5, 1.5), ylim=c(-1.5, 1.5), main="Inverse AR roots", xlab="Real", ylab="Imaginary")
+  abline(h=0, v=0, col="gray", lty=2)
+  symbols(0, 0, circles=1, inches=FALSE, add=TRUE, lwd=2)
+
+  plot(roots_ma, xlim=c(-1.5, 1.5), ylim=c(-1.5, 1.5), main="Inverse MA roots", xlab="Real", ylab="Imaginary")
+  abline(h=0, v=0, col="gray", lty=2)
+  symbols(0, 0, circles=1, inches=FALSE, add=TRUE, lwd=2)
+
+  par(mfrow=c(1,1))
+}
+```
+
+[(4)](#my-sources3).
+
+```{r plot AR and MA unit roots}
+plot_unit_roots(best_arma_model)
+```
+
+
+
+However, the results indicate that the inverse roots do not lie inside the unit circle, which suggests that the ARIMA(2,1,2) model is not causal or invertible, which is an undesireable property and may cause forecasting issues. For that reason, we will move on to the SARIMA models. We will keep the non-seasonal part (ARIMA(2,1,2)) which was selected by AIC, but extend it to a SARIMA model by adding seasonal terms based on the seasonality in the data. 
+
+### SARIMA Model
+
+A Seasonal ARIMA (SARIMA) model is an extension of
+the ARIMA model that incorporates seasonality into time series
+forecasting. It is expressed as:
+
+$$
+SARIMA(p,d,q)(P,D,Q)[s]
+$$
+
+where:
+
+-   $(p,d,q)$ represents the non-seasonal components:
+    -   $p$: Number of autoregressive (AR) terms.
+    -   $d$: Number of differences required to achieve stationarity.
+    -   $q$: Number of moving average (MA) terms.
+-   $(P,D,Q)$ represents the seasonal components:
+    -   $P$: Number of seasonal autoregressive (SAR) terms.
+    -   $D$: Seasonal differencing order.
+    -   $Q$: Number of seasonal moving average (SMA) terms.
+-   $[s]$ is the seasonal period (e.g., $s = 12$ for monthly data).
+
+Mathematically, a SARIMA model for non-stationary monthly data is given by [(3)](#my-sources3):
+
+$$
+\phi(B) \Phi(B^{12}) (1 - B)^d (1 - B^{12})^D (Y_n - \mu) = \psi(B) \Psi(B^{12}) \epsilon_n,
+$$
+
+where:
+
+-   $B$ is the backshift operator.
+-   $\phi(x) = 1 - \phi_1 x - \cdots - \phi_p x^p$
+-   $\psi(x) = 1 + \psi_1 x + \cdots + \psi_q x^q$
+-   $\Phi(x) = 1 - \Phi_1 x - \cdots - \Phi_P x^P$
+-   $\Psi(x) = 1 + \Psi_1 x + \cdots + \Psi_Q x^Q$
+-   $D$ controls seasonal differencing
+-   $d$ controls non-seasonal differencing
+
+The SARIMA model is particularly useful for time series with seasonal
+patterns, making it an excellent choice for applications like air
+traffic forecasting, where seasonality plays a crucial role. In this case we will extend our ARIMA(2,1,2) model and find the values of P and Q which have the lowest AIC (d=1 to deal with detrending and D=1 since we have seen evidence of yearly seasonality). 
+
+```{r sarima_model_selection}
+compute_aic_table <- function(non_seasonal_order) {
+  aic_table <- matrix(Inf, nrow=3, ncol=3, dimnames=list(paste0("SAR",0:2), paste0("SMA",0:2)))  
+  for (P in 0:2) {
+    for (Q in 0:2) {
+      suppressWarnings({
+        try({
+          model <- arima(air_ts, order=non_seasonal_order, seasonal=list(order=c(P,1,Q), period=12),
+                        method = "CSS-ML", optim.control = list(maxit = 10000, reltol = 1e-6))  
+          aic_table[P+1, Q+1] <- ifelse(is.null(model$aic), Inf, model$aic)  
+        }, silent = TRUE)
+      })
+    }
+  }
+  return(aic_table)
+}
+
+# AIC table for different non-seasonal orders
+cat("\nAIC table for SARIMA((2,1,2) × (P,0,Q)[12])...\n")
+aic_table_sarma_212 <- compute_aic_table(c(2,1,2))
+print(aic_table_sarma_212)
+
+best_sarima_model <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(2,1,1), period=12),
+                             method = "CSS-ML")
+```
+
+The SARIMA model selected for air traffic forecasting is
+SARIMA(2,1,2) × (2,1,1)[12], based on having the lowest AIC value compared to the other
+tested models. 
+
+Again, we will use the LRT to determine if the benefit from adding one more parameter is justified. 
+
+(1) SARIMA(2,1,2) × (1,1,1)[12] vs. the selected model SARIMA(2,1,2) × (2,1,1)[12]
+
+```{r, echo=FALSE}
+fit_null <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(1,1,1), period=12),
+                             method = "CSS-ML")
+fit_alt <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(2,1,1), period=12),
+                             method = "CSS-ML", optim.control = list(maxit = 10000, reltol = 1e-6))
+
+LRT <- 2 * (fit_alt$loglik - fit_null$loglik)
+
+df <- 1
+
+p_value <- pchisq(LRT, df, lower.tail = FALSE)
+
+cat("LRT Statistic:", LRT, "\n", 
+    "P-value:", p_value)
+
+```
+
+
+(1) SARIMA(2,1,2) × (2,1,0)[12] vs. the selected model SARIMA(2,1,2) × (2,1,1)[12]
+
+```{r, echo=FALSE}
+fit_null <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(2,1,0), period=12),
+                             method = "CSS-ML", optim.control = list(maxit = 10000, reltol = 1e-6))
+fit_alt <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(2,1,1), period=12),
+                             method = "CSS-ML", optim.control = list(maxit = 10000, reltol = 1e-6))
+
+LRT <- 2 * (fit_alt$loglik - fit_null$loglik)
+
+df <- 1
+
+p_value <- pchisq(LRT, df, lower.tail = FALSE)
+
+cat("LRT Statistic:", LRT, "\n", 
+    "P-value:", p_value)
+
+best_sarima_model <- arima(air_ts, order=c(2,1,2), 
+                             seasonal=list(order=c(2,1,1), period=12),
+                             method = "CSS-ML", optim.control = list(maxit = 10000, reltol = 1e-6))
+```
+
+The results of the LRT say we reject the null that the simpler models are sufficient at the $\alpha = 0.05$ level and we continue with the selected model SARIMA(2,1,2) × (2,1,1)[12]. 
+
+
+```{r plot_unit_roots}
+plot_unit_roots <- function(model) {
+  roots_ar <- polyroot(c(1, -model$coef[grep("ar", names(model$coef))]))
+  roots_ma <- polyroot(c(1, model$coef[grep("ma", names(model$coef))]))
+
+  par(mfrow=c(1,2))
+  plot(roots_ar, xlim=c(-1.5, 1.5), ylim=c(-1.5, 1.5), main="Inverse AR roots", xlab="Real", ylab="Imaginary")
+  abline(h=0, v=0, col="gray", lty=2)
+  symbols(0, 0, circles=1, inches=FALSE, add=TRUE, lwd=2)
+
+  plot(roots_ma, xlim=c(-1.5, 1.5), ylim=c(-1.5, 1.5), main="Inverse MA roots", xlab="Real", ylab="Imaginary")
+  abline(h=0, v=0, col="gray", lty=2)
+  symbols(0, 0, circles=1, inches=FALSE, add=TRUE, lwd=2)
+
+  par(mfrow=c(1,1))
+}
+
+# Plot SARIMA roots
+plot_unit_roots(best_sarima_model)
+
+
+#[(4)](#my-sources3) [(5)](#my-sources3). \# Function to plot AR and MA unit roots same
+
+
+```
+
+The Inverse AR and MA Roots graph for the selected SARIMA(2,1,2) × (2,1,1)[12] model indicates that some roots lie outside the unit circle,
+suggesting potential non-causality or non-invertibility of the model.
+
+    
+### Model Diagnostics & Residual Analysis
+
+After selecting the most appropriate SARIMA model for the data available, residuals are examined for:
+
+-   Constant variance (Homoscedasticity)
+-   Normality using the Shapiro-Wilk test
+-   Independence using the Ljung-Box test
+
+```{r, echo = FALSE}
+# Residual Analysis
+residuals_sarima <- residuals(best_sarima_model)
+time_series <- time(residuals_sarima)
+
+# 1. Constant Variance Test (Breusch-Pagan)
+bp_test <- bptest(lm(residuals_sarima ~ time_series))
+print(bp_test)
+
+ggplot(data = data.frame(Time = time_series, Residuals = residuals_sarima),
+       aes(x = Time, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "Residuals Over Time (Homoscedasticity Check)",
+       x = "Time", y = "Residuals") +
+  theme_minimal()
+
+# 2. Independence Test (Ljung-Box)
+lb_test <- Box.test(residuals_sarima, type = "Ljung-Box")
+print(lb_test)
+
+ggplot(data = data.frame(Lag = 1:length(residuals_sarima), Residuals = residuals_sarima),
+       aes(x = Lag, y = Residuals)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "Ljung-Box Test for Independence", x = "Lag", y = "Residuals") +
+  theme_minimal()
+
+# 3. Normality Test (Shapiro-Wilk)
+shapiro_test <- shapiro.test(residuals_sarima)
+print(shapiro_test)
+
+ggplot(data = data.frame(Residuals = residuals_sarima), aes(sample = Residuals)) +
+  stat_qq() +
+  stat_qq_line(color = "red") +
+  labs(title = "Q-Q Plot of Residuals (Normality Check)",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_minimal()
+```
+
+### Insights based on Residual Diagnostics
+
+Independence Check (Box-Ljung Test)
+
+The residual plot from the Box-Ljung test exhibits fluctuations around
+zero, with some spikes at specific lags, suggesting potential
+autocorrelation in the residuals.
+
+-   The p-value of the Box-Ljung test is 0.8316, which is relatively
+    large.
+    -   This indicates that there is no strong evidence to reject the
+        null hypothesis of independence in the residuals.
+    -   In other words, the residuals appear to be independent, and
+        there is no significant autocorrelation detected.
+
+Constant Variance Check (Homoscedasticity)
+
+The residual scatter plot over time suggests that the spread of
+residuals remains relatively constant, implying no strong evidence of
+heteroscedasticity.
+
+-   However, some points exhibit higher deviations, which might indicate
+    localized periods of increased variance.
+-   Additional testing (e.g., Breusch-Pagan test) may help confirm
+    homoscedasticity assumptions.
+
+Normality Check (Q-Q Plot)
+
+The Q-Q plot of residuals suggests deviations from normality,
+particularly at the tails, where residuals exhibit larger-than-expected
+deviations.
+
+-   This implies that residuals are not perfectly normally distributed,
+    which may impact inference drawn from the model.
+-   Potential solutions include:
+    -   Applying log transformations.
+    -   Using a robust SARIMA model.
+-   The SARIMA model effectively captures the main trends and
+    seasonality in air traffic data.
+-   However, residual analysis indicates some issues, including:
+    -   Autocorrelation at certain lags.
+    -   Non-normal residuals, especially at the extremes.
+
+# Conclusion
+
+The purpose of this time series data analysis was to explore the
+patterns within the air traffic data from pre-COVID 19 (specifically Jan
+2003 - Dec 2019), determine an appropriate model for the data, and
+evaluate the chosen model's ability to form a reasonable forecast. The
+first step we took was to perform EDA to determine if there was any
+reason to believe there was a trend or seasonality in the data, which we
+found to be a reasonable belief by looking at various visualizations. We
+then proceeded to use more robust methods to determine if this belief
+was simply a trick of the eye. Using the decomposition of the time
+series into $Y_t = T_t + S_t + R_t$, we determined that the data
+exhibited signs of non-stationarity (a trend) and chose to detrend so
+that we could see the underlying cyclical patterns being obscured.
+Detrending revealed a consistent seasonal pattern in the data. Using the
+spectral density of the detrended time series data, it was determined
+that there was a dominant periodicity of 1 year. This result guided our
+analysis, and eventually through exhaustive model selection methods, we
+determined that the SARIMA(2,1,2) × (2,1,1)[12] model was the most
+appropriate for our data. However, there are some issues with non-causality 
+and non-invertibility that may negatively effect forecasting. 
+
+This project added to the pool of knowledge about the trend and
+seasonality in air traffic data that were present pre-COVID 19 and
+insight into possible models that might be appropriate for this data.
+However, as much as we would like to be able to use our chosen model to
+construct accurate forecasts for the time period post 2019, further
+analysis would have to be done to handle the unexpected event of COVID
+19, which dramatically affected the course of the air traffic data.
+
+Overall, this project presented a comprehensive time series analysis of
+air traffic data pre-COVID 19 in order to increase the general
+understanding of how the airline industry behaves over time. Moreover,
+this type of analysis is incredibly important because it offers insight
+into how the airline industry can structure future improvements to
+optimize overall efficiency in regards to the volume of flights offered
+each month.
+
+## References
+
+#### References for section "Introduction" and "Exploratory Data Analysis (EDA)"
+
+::: {#my-sources}
+:::
+
+[1] Air Transport Action Group. (n.d.). Supporting economic and social
+development. Air Transport Action Group. Retrieved from
+<https://atag.org/industry-topics/supporting-economic-social-development>
+
+[2] Durgut, M. (2023, February 5). Importance of historical data in air
+traffic management. AviationFile. Retrieved from
+<https://www.aviationfile.com/importance-of-historical-data-in-air-traffic-management/>
+
+[3] Yuan, X. (2018). U.S. Airline Traffic Data. Kaggle.
+<https://www.kaggle.com/datasets/yyxian/u-s-airline-traffic-data?resource=download>
+
+[4] FasterCapital. (2024). Trend analysis: Seasonal variations – seasons
+of change: Incorporating seasonal variations into trend analysis.
+FasterCapital. Retrieved from
+<https://fastercapital.com/content/Trend-analysis--Seasonal-Variations--Seasons-of-Change--Incorporating-Seasonal-Variations-into-Trend-Analysis.html>
+
+[5] Goldman, D. (2008, July 15). Airlines face more turbulence amid high
+fuel prices. CNNMoney. Retrieved from
+<https://money.cnn.com/2008/07/15/news/economy/airlines/>
+
+[6] U.S. Government Accountability Office. (2014, April). Aviation: The
+Federal Aviation Administration's efforts to address air traffic
+controller staffing and flight delays (GAO-14-331). U.S. Government
+Accountability Office. Retrieved from
+<https://www.gao.gov/products/gao-14-331>
+
+[7] Leonie, I. (2022). Time series: Interpreting ACF and PACF. Kaggle.
+Retrieved from
+<https://www.kaggle.com/code/iamleonie/time-series-interpreting-acf-and-pacf>
+
+
+#### References for Section "Trend and Seasonality Analysis"
+
+::: {#my-sources2}
+:::
+
+[1] <https://online.stat.psu.edu/stat510/lesson/5/5.1>
+
+[2] <https://otexts.com/fpp2/stl.html>
+
+[3]
+<https://datascience.stackexchange.com/questions/46050/additive-vs-multiplicative-model-in-time-series-data>
+
+[4] <https://www.pnas.org/doi/10.1073/pnas.0701020104>
+
+[5] <https://en.wikipedia.org/wiki/Discrete_Fourier_transform>
+
+[6] <https://en.wikipedia.org/wiki/Periodogram>
+
+#### References for section "Model Selection"
+
+::: {#my-sources3}
+:::
+
+[1] Ionides, E. (2025). *Time Series Analysis - Chapter 3: Introduction
+to ARMA Models*. University of Michigan. Retrieved from
+<https://ionides.github.io/531w25/03/index.html>\
+- Used in the introduction to ARMA models section.
+
+[2] Ionides, E. (2025). *Time Series Analysis - Chapter 5: ARMA Model
+Parameter Estimation*. University of Michigan. Retrieved from
+<https://ionides.github.io/531w25/05/index.html>\
+- Used in the ARMA model selection section, specifically in parameter
+estimation.
+
+[3] Ionides, E. (2025). *Time Series Analysis - Chapter 6: SARIMA
+Models*. University of Michigan. Retrieved from
+<https://ionides.github.io/531w25/06/index.html>\
+- Used in the SARIMA modeling section, guiding the seasonal differencing
+and parameter selection.
+
+[4] Ionides, E. (2024). *Midterm Project References*. University of
+Michigan. Retrieved from
+<https://ionides.github.io/531w24/midterm_project/project05/blinded.html#References>\
+- Used for formatting the unit root test graphs, particularly
+visualization techniques adapted for ADF tests.
+
+[5] Dickey, D. A., & Fuller, W. A. (1979). *Distribution of the
+Estimators for Autoregressive Time Series with a Unit Root*. *Journal of
+the American Statistical Association, 74*(366), 427-431.\
+- Used in the stationarity testing section, applying the Augmented
+Dickey-Fuller (ADF) test.

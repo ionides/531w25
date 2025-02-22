@@ -1,0 +1,574 @@
+---
+title: "Ireland Covid Cases "
+date: "2025-02-13"
+#output: html_document
+output:
+  rmdformats::readthedown
+---
+COVID-19 Case Trends in Ireland: Vaccine Impact and Seasonal Behavior
+
+![Covid-19 Testing Site at an Airport (Burns, 2020)](/Users/nicholaskim/Documents/STAT-531/midterm/ireland_testing.jpg)
+
+## Introduction
+
+The COVID-19 pandemic has highlighted the critical need for effective public health strategies to manage infectious diseases, both in the short term and for future resilience. As countries, including Ireland, continue to respond to the ongoing effects of the pandemic, understanding trends in COVID-19 case data is essential for guiding public health interventions and long-term policy development. This report focuses on two key aspects of COVID-19 dynamics in Ireland: the seasonal behavior of the virus, with separate analyses for the pre- and post-peak periods, and the impact of vaccine rollouts on case trends.
+
+Analyzing the seasonal behavior of COVID-19 provides valuable insights into the virus’s patterns and potential periodic outbreaks, which can help inform anticipatory strategies for future waves. Following this, the examination of vaccine rollouts offers a closer look at their effectiveness in curbing case numbers and guiding policy decisions aimed at mitigating the pandemic’s impact. Together, these analyses inform both immediate response strategies and long-term planning in the management of infectious diseases.
+
+## Data preparation and EDA
+
+This study utilizes the COVID-19 SDU Acute Hospital Time Series Summary dataset, which provides a comprehensive range of COVID-19 related indicators for acute hospitals in Ireland. The dataset includes information on confirmed COVID-19 cases, new admissions, and discharges across 29 acute hospitals, offering valuable insights into the pandemic's impact on hospital services. 
+
+The data spans from mid-March 2020, capturing the progression of the pandemic and its effects on hospital operations over time. This temporal coverage allows for an in-depth analysis of trends, seasonal variations, and the impact of interventions such as vaccination rollouts. The dataset is publicly accessible through Ireland's COVID-19 Data Hub, a resource managed by the Health Service Executive (HSE). This platform consolidates various COVID-19 related data, facilitating transparency and supporting research efforts. 
+
+```{r include=FALSE}
+library(tibble)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(lubridate) 
+library(strucchange)
+library(lmtest)
+library(CausalImpact)
+
+covid <- read.csv("/Users/nicholaskim/Documents/STAT-531/midterm/COVID-19_dat.csv")
+
+# Clean and format data
+covid$Date <- as.Date(covid$Date, format="%Y/%m/%d")
+covid <- covid[, c("Date", "SUM_number_of_confirmed_covid_1")]
+names(covid)[names(covid) == 'SUM_number_of_confirmed_covid_1'] <- 'Num_cases'
+
+# Data Overview: Check structure and basic statistics
+#summary(covid)
+#str(covid)
+```
+
+```{r echo=FALSE}
+# Time Series Plot
+ggplot(covid, aes(x = Date, y = Num_cases)) +
+  geom_line(color = "#8B0000") + 
+  labs(title = "COVID-19 Confirmed Cases Over Time in Ireland",
+       x = "Date", y = "Confirmed Cases", caption = "Figure 1: Time Series of COVID-19 Cases") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold"), 
+        axis.title = element_text(size = 12), 
+        axis.text = element_text(size = 10))
+```
+
+```{r echo=FALSE}
+# Summary Statistics and Histogram of Confirmed Cases
+# summary(covid$Num_cases)
+hist(covid$Num_cases, 
+     col = "#8B0000", 
+     border = "black", 
+     main = "Histogram of COVID-19 Cases", 
+     xlab = "Confirmed Cases", 
+     ylab = "Frequency", 
+     breaks = 20)
+```
+
+Based on the dataset from the COVID-19 SDU Acute Hospital Time Series Summary, an initial exploration of the data reveals significant variations in the number of confirmed COVID-19 cases over time. The time series plot illustrates notable spikes in case numbers, particularly during early 2021, reflecting the impact of successive waves of the virus. The histogram of daily case counts further highlights the distribution of the data, with the majority of daily counts concentrated below 500 but with a few extreme outliers, where cases surge above 2,000. This suggests a right-skewed distribution, with occasional outbreaks leading to sharp increases in confirmed cases. 
+```{r echo=FALSE}
+par(mfrow=c(1,2), mar=c(4, 4, 2, 1))
+# ACF and PACF to assess temporal dependencies
+acf(covid$Num_cases, main = "ACF of COVID-19 Cases")
+pacf(covid$Num_cases, main = "PACF of COVID-19 Cases")
+```
+
+
+Building on the initial analysis, we further investigate the temporal dependencies in the COVID-19 case data using the autocorrelation function (ACF) and partial autocorrelation function (PACF) plots. The ACF plot shows a gradual decay, indicating long-range dependence in the data, typical of time series with trends or seasonality. The PACF plot reveals a significant spike at lag 1, suggesting an autoregressive component, with the influence of earlier lags diminishing. These patterns highlight the need for advanced models like ARIMA or SARIMA to capture both short-term dependencies and long-term trends in the data.
+
+```{r include=FALSE}
+# Stationarity Test: Augmented Dickey-Fuller Test
+adf_test <- adf.test(covid$Num_cases)
+```
+```{r echo=FALSE}
+print(adf_test)
+```
+
+```{r include=FALSE}
+# Decompose Time Series (Additive Decomposition)
+ts_data <- ts(covid$Num_cases, frequency = 365, start = c(2020, 1))
+decomposed <- decompose(ts_data, type = "additive")
+```
+```{r echo=FALSE}
+plot(decomposed)
+```
+Although the Augmented Dickey-Fuller (ADF) test suggests that the COVID-19 case data is stationary (p-value = 0.01), indicating that the series does not exhibit a unit root or significant non-stationarity, the seasonal decomposition of the time series offers a more nuanced view of the data. While the ADF test implies that any linear trends or unit roots have been removed, the decomposition still reveals a notable trend component, which suggests there are underlying long-term patterns that might not have been fully captured by the test.
+
+The seasonal decomposition breaks down the data into observed, trend, seasonal, and random components. The trend component shows a significant rise in case numbers through early 2022, followed by a sharp decline. This pattern likely reflects an initial period of exponential growth in cases, driven by the spread of the virus and more contagious variants, followed by a reduction as vaccination campaigns and public health measures took effect. The seasonal component shows recurring fluctuations, with consistent peaks during winter months, indicating a strong seasonal effect, potentially linked to environmental factors such as colder weather or increased indoor gatherings. The random component captures unexplained variability, highlighting irregular spikes in case numbers, which could be attributed to sudden outbreaks, reporting changes, or shifts in pandemic dynamics.
+
+These insights emphasize the complex interplay between long-term trends, seasonal cycles, and random fluctuations, underscoring the need for sophisticated modeling techniques that can account for both predictable patterns and unexpected disruptions in the data.
+
+```{r include=FALSE}
+df <- read.csv("/Users/nicholaskim/Documents/STAT-531/midterm/COVID-19_dat.csv", header = TRUE)
+df_filtered <- data.frame(as.Date(df$Date), df$SUM_number_of_confirmed_covid_1)
+colnames(df_filtered) <- c("date", "confirmed_cases")
+head(df_filtered)
+      
+```
+
+## Seasonal Analysis
+
+```{r include=FALSE}
+covid<-read.csv("/Users/nicholaskim/Documents/STAT-531/midterm/COVID-19_dat.csv")
+
+covid<-covid[,c("Date","SUM_number_of_confirmed_covid_1")]
+names(covid)[names(covid) == 'SUM_number_of_confirmed_covid_1'] <- 'Num_cases'
+
+covid$Date<-as.Date(covid$Date)
+```
+
+```{r echo=FALSE}
+ggplot(covid,aes(x=Date,y=Num_cases))+
+  geom_line() + 
+  geom_vline(xintercept = as.Date("2023-02-13"), 
+             linetype = "dashed", color = "red")+
+  labs(title = "Number of COVID cases over time in Ireland",
+       y = "Number of cases")
+```
+
+From our own experiences, we know that diseases such as the flu and influenza have a clear seasonal trend peaking in the winter months and declining over the spring and summer (CDC 2024). A natural extension is whether the COVID-19 virus also follows a seasonal trend and whether the trend has changed post and during the pandemic years.
+
+Specifically, we'll split the dataset at the date 2/13/2023, with points before being our pandemic time frame and points after being our post-pandemic. While it was officially announced that the pandemic concluded in May of 2023, we set our split in February as we need a minimum of 730 data points to run our seasonal decomposition in the post-pandemic time frame. The plot above shows where this exact split was made in our time series data
+
+From the looks of the plot, it feels as if there is some seasonal cycle in both time frames when focusing on its sharp peaks. The plot also seems to hint at the fact that the seasonal trends have shifted in these two time frames with the post-pandemic looking more stable. However, things might be more clear when looking at the ACFs.
+
+```{r echo=FALSE}
+pan <- covid[covid$Date<"2023-02-13",]
+post_pan <- covid[covid$Date>="2023-02-13",]
+
+acf_pan<-acf(pan$Num_cases,plot=FALSE)
+pacf_pan<-pacf(pan$Num_cases,plot=FALSE)
+
+acf_post_pan<-acf(post_pan$Num_cases,plot=FALSE)
+pacf_post_pan<-pacf(post_pan$Num_cases,plot=FALSE)
+
+
+par(mfrow=c(2,2))
+plot(acf_pan,main="ACF of Cases during Pandemic")
+plot(pacf_pan,main="PACF of Cases during Pandemic")
+plot(acf_post_pan,main="ACF of Cases Post Pandemic")
+plot(pacf_post_pan,main="PACF of Cases Post Pandemic")
+```
+
+While it might be hard to tell from the figure above when focusing just on the PACF plots it seems every 7th lag is significant during the pandemic and at roughly the 12th lag for the post-pandemic era. This might suggest there is a weekly seasonal trend during the pandemic and more of a biweekly trend post-pandemic. However, we must note the fact that the lags in the post-pandemic setting are not nearly as significant as its counterpart and could be due to random chance alone rather than a signal for seasonality.
+
+Taking one step further let's look at the frequency decomposition of these two time frames using the decompose function in R as another sanity check on a seasonal presence in the data.
+
+
+```{r echo=FALSE}
+ts_data_pan <- ts(pan$Num_cases, frequency = 365, start = c(2020, 3))
+
+decomposed_pan <- decompose(ts_data_pan, type = "additive")
+
+ts_data <- ts(post_pan$Num_cases, frequency = 365, start = c(2023, 12))
+
+decomposed <- decompose(ts_data, type = "additive")
+
+par(mfrow=c(1,2))
+plot(decomposed_pan)
+plot(decomposed)
+```
+
+
+From the decomposition plots, when focusing on the seasonal plot there seems to be a clear cyclical cycle present in both cases. In addition, it seems to follow our intuition that the trend during the pandemic is increasing followed by a decline post-pandemic.
+
+Using our findings from the PACF plots above we can try a seasonal difference on our data at these two lags. 
+
+```{r echo=FALSE}
+diff7 <- diff(pan$Num_cases,lag =7)
+acf_diff7<-acf(diff7,plot=FALSE)
+pacf_diff7<-pacf(diff7,plot=FALSE)
+
+diff12 <- diff(post_pan$Num_cases,lag=12)
+acf_diff12 <- acf(diff12,plot=FALSE)
+pacf_diff12 <- pacf(diff12,plot=FALSE)
+plot(diff12,type="l",main="Plot of Number of Cases Differenced every 12th Lag",ylab="Difference")
+plot(diff7,type="l",main="Plot of Number of Cases Differenced every 7th Lag",ylab="Difference")
+par(mfrow=c(1,2))
+plot(acf_diff12,main="ACF of Differenced Data Post Pan")
+plot(pacf_diff12,main="PACF of Difference Data Post Pan")
+
+par(mfrow=c(1,2))
+plot(acf_diff7,main="ACF of Differenced Data Pan")
+plot(pacf_diff7,main="PACF of Difference Data Pan")
+```
+
+A spectral analysis could be used to further confirm the change in seasonality in these two time frames.
+
+```{r include=FALSE}
+pan_spec<-spectrum(pan$Num_cases,plot=FALSE)
+max_indx<-which.max(pan_spec$spec)
+max_freq_pan<-1/(pan_spec$freq[max_indx])
+
+post_pan_spec <-spectrum(post_pan$Num_cases,plot=FALSE)
+max_indx<-which.max(post_pan_spec$spec)
+max_freq_post_pan<-1/(post_pan_spec$freq[max_indx])
+
+require(knitr)
+```
+```{r echo=FALSE}
+kable(data.frame("Pan"=max_freq_pan,
+                 "Post Pan"=max_freq_post_pan),digits=2,caption = "Table 1.1")
+
+par(mfrow=c(1,2))
+plot(pan_spec, main="During Pandemic",sub="")
+abline(v=1/7, col="red")
+plot(post_pan_spec, main = "Post Pandemic",sub="")
+abline(v=1/12, col="red")
+```
+
+While we notice that the strongest frequency doesn't lie on $\frac{1}{7}$ and $\frac{1}{12}$ respectively from Table 1.1, it does lie on the second peak for each spectral plot respectively as highlighted by the red vertical line! This further hints at the fact that these lags are significant in analyzing these time series data respectively!
+
+## Model Selection
+
+Since it seems a seasonal trend is present in the data we'll try and find the best SARMA model for both time frames using a grid search approach specified on AIC.
+
+A SARMA model is created by adding an additional seasonal term to the ARMA model. This is defined as the following:
+
+$$
+SARMA(p,q) \times (P,Q)_{m}
+$$ 
+
+The $m$ is used to specify when these seasonal terms will be applied. Since we found in our PACF plot during the pandemic in Figure 1.2 of the significance of each 7th lag our $m$ would be 7 or applied as weekly polynomial making:
+
+$$
+SARMA(p,q) \times (P,Q)_{m}
+$$ 
+$$
+\phi(B)\Phi(B^{7})(Y_{n}-\mu)=\psi(B)\Psi(B^{7})\epsilon_{n}
+$$ 
+with $\epsilon_{n}$ being white noise and 
+$$
+\mu = \mathbb{E}[Y_{n}]
+$$ 
+$$
+\phi(x) = 1-\phi_{1}x - \cdots - \phi_{p}x^{p}
+$$ 
+$$
+\psi(x) = 1 + \psi_{1}x + \cdots + \psi_{q}x^{q}
+$$ 
+$$
+\Phi(x) = 1-\Phi_{1}x - \cdots - \Phi_{P}x^{P}
+$$ 
+$$
+\Psi(x) = 1 + \Psi_{1}x + \cdots + \Psi_{Q}x^{Q}
+$$
+
+```{r echo=FALSE, warning=FALSE}
+aic_table <- function(data,P,Q,sP,sQ,per){
+table <- matrix(NA,(P+1),(Q+1))
+for(p in 0:P) {
+for(q in 0:Q) {
+table[p+1,q+1] <- arima(data,order=c(p,0,q),seasonal = list(order=c(sP,0,sQ),period=per))$aic
+}
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+table
+}
+
+grid_search_aic_table_pan <- aic_table(diff7,4,5,1,0,7)
+grid_search_aic_table_post <- aic_table(diff12,4,5,1,0,12)
+
+require(knitr)
+kable(grid_search_aic_table_pan,digits=2,caption="Table 1.2: P=1,Q=0")
+kable(grid_search_aic_table_post,digits=2,caption="Table 1.3: P=1,Q=0")
+```
+
+```{r echo=FALSE, warning=FALSE}
+grid_search_aic_table_pan <- aic_table(diff7,4,5,1,1,7)
+grid_search_aic_table_post <- aic_table(diff12,1,1,1,1,12)
+
+kable(grid_search_aic_table_pan,digits=2,caption="Table 1.4: P=1,Q=1")
+kable(grid_search_aic_table_post,digits=2,caption="Table 1.5: P=1,Q=1")
+```
+
+```{r echo=FALSE, warning=FALSE}
+grid_search_aic_table_pan <- aic_table(diff7,4,5,0,1,7)
+grid_search_aic_table_post <- aic_table(diff12,4,5,0,1,12)
+
+require(knitr)
+kable(grid_search_aic_table_pan,digits=2,caption="Table 1.6: P=0,Q=1")
+kable(grid_search_aic_table_post,digits=2,caption="Table 1.7: P=,Q=1")
+```
+
+
+From our grid search our best model is found to be SARMA(4,5)x(1,1) for the pandemic time frame and SARMA(1,1)x(1,1) in the post-pandemic time frame as they had the lowest AICs.
+
+
+## Model diagonostics
+
+Assessing the adequacy of the fitted SARMA models for both the pandemic and post-pandemic periods is essential to ensure they accurately capture the underlying patterns in the COVID-19 case data. A well-fitting model should produce residuals that exhibit no significant autocorrelation, approximate normality and lack discernible trends or patterns. To evaluate these aspects, we conducted a series of diagnostic checks, including residual analysis, ACF/PACF analysis, normality testing, and autocorrelation assessments.
+
+```{r include=FALSE}
+pan <- covid[covid$Date<"2023-02-13",]
+post_pan <- covid[covid$Date>="2023-02-13",]
+diff7 <- diff(pan$Num_cases,lag =7)
+diff12 <- diff(post_pan$Num_cases,lag=12)
+
+library(forecast)
+
+# Fit the SARMA model for the pandemic period
+sarma_pan <- arima(diff7, order=c(4, 0, 5), seasonal=list(order=c(1, 0, 1), period=7))
+
+# Fit the SARMA model for the post-pandemic period
+sarma_post_pan <- arima(diff12, order=c(1, 0, 1), seasonal=list(order=c(1, 0, 1), period=12))
+
+# Model Summary
+# summary(sarma_pan)
+# summary(sarma_post_pan)
+```
+
+```{r include=FALSE}
+library(gridExtra)
+
+# Residuals for pandemic period
+residuals_pan <- sarma_pan$residuals
+
+# Residuals for post-pandemic period
+residuals_post_pan <- sarma_post_pan$residuals
+
+# Fitted values for comparison
+fitted_pan <- fitted(sarma_pan)
+fitted_post_pan <- fitted(sarma_post_pan)
+
+# ACF and PACF for both models
+acf_pan <- acf(residuals_pan, plot=FALSE)
+pacf_pan <- pacf(residuals_pan, plot=FALSE)
+
+acf_post_pan <- acf(residuals_post_pan, plot=FALSE)
+pacf_post_pan <- pacf(residuals_post_pan, plot=FALSE)
+```
+
+### Residual Analysis
+
+```{r echo=FALSE}
+# Set up the plotting area for side-by-side plots
+par(mfrow=c(2,1), mar=c(4, 4, 2, 1))
+# Find the min and max of residuals to set the same y-axis limits
+y_limits <- range(c(residuals_pan, residuals_post_pan))
+
+# 1. Plot Residuals
+plot(residuals_pan, type="l", main="Residuals of SARMA Model (Pandemic)", ylab="Residuals", ylim=y_limits)
+plot(residuals_post_pan, type="l", main="Residuals of SARMA Model (Post-Pandemic)", ylab="Residuals", ylim=y_limits)
+```
+
+The residuals from both models exhibit the expected characteristics, showing no clear patterns or trends, which suggests the models are capturing the main data features effectively. The pandemic model, in particular, shows stable residuals with no significant outliers, indicating a good fit with minimal unexplained variation. In contrast, the post-pandemic model displays more frequent and larger outliers, signaling a weaker fit. These larger deviations suggest the model struggles to capture the underlying dynamics of the post-pandemic data.
+
+### ACF/PACF Analysis
+
+```{r echo=FALSE}
+par(mfrow=c(2,2), mar=c(4, 4, 4, 4))
+# 2. Plot ACF and PACF for Pandemic model
+plot(acf_pan, main="ACF of Residuals (Pandemic)")
+plot(pacf_pan, main="PACF of Residuals (Pandemic)")
+# 3. Plot ACF and PACF for Post-Pandemic model
+plot(acf_post_pan, main="ACF of Residuals (Post-Pandemic)")
+plot(pacf_post_pan, main="PACF of Residuals (Post-Pandemic)")
+```
+
+The ACF and PACF plots of the residuals were analyzed to assess autocorrelation. For the pandemic model, both plots show minimal autocorrelation, suggesting the model effectively captures the data's dependencies. In contrast, the post-pandemic model exhibits significant autocorrelation with several values exceeding the confidence interval, indicating that the model has not fully accounted for the dependencies in the post-pandemic data and needs further improvement.
+
+### Normality Test
+
+```{r echo=FALSE}
+par(mfrow=c(1,2), mar=c(4, 3, 2, 1))
+# 4. Plot QQ-Plot for Normality
+qqnorm(residuals_pan, main="QQ Plot of Residuals (Pandemic)")
+qqline(residuals_pan, col="#8B0000")
+
+qqnorm(residuals_post_pan, main="QQ Plot of Residuals (Post-Pandemic)")
+qqline(residuals_post_pan, col="#8B0000")
+
+# 5. Normality Test: Shapiro-Wilk
+shapiro_test_pan <- shapiro.test(residuals_pan)
+shapiro_test_post_pan <- shapiro.test(residuals_post_pan)
+
+cat("Shapiro-Wilk Test for Pandemic Residuals: p-value =", shapiro_test_pan$p.value, "\n")
+cat("Shapiro-Wilk Test for Post-Pandemic Residuals: p-value =", shapiro_test_post_pan$p.value, "\n")
+```
+Both the pandemic and post-pandemic models show clear deviations from normality, as indicated by the Shapiro-Wilk test and the QQ plots. In both models, the residuals deviate notably from the theoretical line, especially in the tails, suggesting that the models may not fully capture the underlying distribution of the data. These deviations could indicate potential model misspecification, and addressing them might improve the fit. However, the severity of the non-normality is not substantial enough to significantly impact the overall model performance.
+
+### Box-Ljung Test for Autocorrelation
+
+```{r echo=FALSE}
+# 6. Box-Ljung Test for Autocorrelation of Residuals
+box_test_pan <- Box.test(residuals_pan, lag=12, type="Ljung-Box")
+box_test_post_pan <- Box.test(residuals_post_pan, lag=12, type="Ljung-Box")
+
+cat("Box-Ljung Test for Pandemic Residuals: p-value =", box_test_pan$p.value, "\n")
+cat("Box-Ljung Test for Post-Pandemic Residuals: p-value =", box_test_post_pan$p.value, "\n")
+```
+
+The Box-Ljung test results show no significant autocorrelation in the residuals for both models. The pandemic model has a p-value of 0.9437, and the post-pandemic model has a p-value of 0.1655, both indicating that the residuals are close to white noise and that the models have captured the data's dependencies.
+
+
+## Impact of Vaccination on COVID-19 Cases in Ireland
+
+The introduction of COVID-19 vaccines was pivotal in the global effort to control the pandemic. However, a key question remains: Did the nationwide deployment of vaccines significantly alter the trajectory of confirmed COVID-19 cases in Ireland? In this section, we aim to analyze the potential causal effect of vaccination rollout on the COVID-19 case trends in Ireland using time-series analysis.
+
+To investigate this, we selected three critical vaccination dates, each marking a significant expansion in eligibility. These dates are derived from the "COVID-19 Vaccination in the Republic of Ireland" timeline, where each phase introduced vaccines to broader population segments (Wikipedia,2024). By examining the trends before and after these dates, we can assess whether vaccine availability had a measurable impact on case numbers.
+
+**Selected Vaccination Dates:**  1. December 29, 2020 – Phase 1: The first COVID-19 vaccine was administered in Ireland, marking the beginning of Phase Eligible groups: Healthcare workers, perople aged 70+, residents in long-term care facilities. 2. March 1, 2021 – Phase 2: Expansion to high-risk groups and older adults. Eligible groups: Phase 1 individuals and individuals aged 65-69 and people aged 16-69 with high-risk medical conditions 3. July 27, 2021 – Phase 3: Vaccination extended to younger populations. Eligible groups: Phase 2 individuals and individuals aged 12-15.
+
+```{r echo=FALSE}
+
+#  vaccine release dates
+vaccine_dates <- as.Date(c("2020-12-29", "2021-03-01", "2022-07-27"))
+
+# Convert dates to numeric for plotting
+vaccine_labels <- data.frame(
+  date = vaccine_dates,
+  y_position = max(df_filtered$confirmed_cases) * 0.9, 
+  label = format(vaccine_dates, "%Y-%m-%d") 
+)
+
+# Plot the trend with vaccine release dates and labels
+ggplot(df_filtered, aes(x = date, y = confirmed_cases)) +
+  geom_line(color = "darkred") + 
+  geom_vline(xintercept = as.numeric(vaccine_dates), linetype = "dashed", color = "darkgreen") +
+  geom_text(data = vaccine_labels, aes(x = date, y = y_position, label = label), 
+            angle = 45, vjust = 3, hjust = 1.5, size = 4.5, color = "darkgreen") +
+  labs(title = "COVID-19 Confirmed Cases vs Vaccine Release Dates",
+       x = "Date", y = "Confirmed Cases") +
+  theme_minimal()
+
+```
+
+The above time-series plot reveals distinct trends following each vaccination phase in Ireland. After the first rollout (2020-12-29), cases spiked; this could likely be due to the prioritization of older citizens and delayed mass distribution. The second phase (2021-03-01) saw a sharp decline, but cases later rebounded, possibly due to new variants like the alpha variant (Reynolds et al, 2022). Following the third phase (2021-07-27), cases showed a gradual and sustained decline, suggesting broader vaccine coverage contributed to long-term case reduction. As these are speculations, we will first conduct breakpoint detection to identify the key breakpoint dates in the Covid time series.
+
+### Generate the Confimed Covid-19 Time Series Breakpoints:
+
+We conducted a breakpoint detection analysis using the `strucchange` package to identify key moments where the pattern of COVID-19 cases in Ireland shifted significantly (Breakpoint, n.d.). These breakpoints represent structural changes in the time series, indicating potential turning points in the pandemic’s trajectory. If the detected breakpoints align with the vaccine rollout dates, this suggests that vaccination directly influenced case trends. However, if they do not align, it implies that other factors—such as lockdown measures, new variants, or shifts in public behavior—may have played a more dominant role in shaping the observed trends.
+
+```{r echo=FALSE}
+df_filtered$date <- as.Date(df_filtered$date)
+
+#numeric time indices
+df_filtered$time_index <- as.numeric(df_filtered$date - min(df_filtered$date) + 1)
+
+#time series object
+ts_data <- ts(df_filtered$confirmed_cases, start=c(2020, as.numeric(format(min(df_filtered$date), "%j"))), frequency=365)
+
+#Detect breakpoints (~1 means to itself i.e. the given timeseries)
+bp_model <- breakpoints(ts_data ~ 1)  
+
+#Extract breakpoints' indices and convert to actual dates
+bp_indices <- bp_model$breakpoints
+bp_dates <- df_filtered$date[bp_indices]
+
+vaccine_dates <- as.Date(c("2020-12-29", "2021-03-01", "2022-07-27"))
+
+
+# Plot the time series with both breakpoints and vaccine dates
+ggplot(df_filtered, aes(x = date, y = confirmed_cases)) +
+  geom_line(color = "darkred") +  # Main time series line
+  geom_vline(xintercept = as.numeric(bp_dates), linetype="dashed", color="darkorchid3", linewidth=1, alpha=0.7) +  # Auto-detected breakpoints
+  geom_vline(xintercept = as.numeric(vaccine_dates), linetype=5, color="darkgreen", linewidth=1, alpha=0.9) +  # Vaccine dates
+  labs(title = "COVID-19 Trend: Detected Breakpoints vs Vaccine Release Dates",
+       x = "Date", y = "Confirmed Cases") +
+  theme_minimal() +
+  annotate("text", x = vaccine_dates, y = max(df_filtered$confirmed_cases) * 0.9, label = "Vaccine Release", color = "darkgreen", angle = 270, hjust=0.2, vjust = -0.4) +
+  annotate("text", x = bp_dates, y = max(df_filtered$confirmed_cases) * 0.8, label = "Detected Breakpoint", color = "darkorchid3", angle = 90, vjust = -0.5)
+
+
+#detected breakpoints and vaccine roll-out dates
+print("Detected Breakpoints:")
+print(bp_dates)
+
+print("Original Vaccine Release Dates:")
+print(vaccine_dates)
+
+```
+
+The breakpoint detection analysis identified four major structural shifts in the COVID-19 time series: 2020-12-27, 2021-11-03, 2022-07-29, and 2024-02-02. Notably, two of these breakpoints (2020-12-27 and 2022-07-29) are just two days apart from the official vaccine rollout dates (2020-12-29 and 2022-07-27), suggesting a strong correlation between vaccine deployment and changes in COVID-19 trends. This alignment indicates that Phase 1 and Phase 3 of the vaccination program may have directly influenced the trajectory of confirmed cases. However, to move beyond correlation and establish causal significance, we will conduct a Causal Impact analysis, which will quantify the effect of these vaccine rollouts on case numbers and determine whether these observed shifts are statistically significant.
+
+### Causal Impact Analysis
+
+Causal Impact analysis, developed by Google, is a Bayesian structural time series approach designed to estimate the effect of an intervention when a clear counterfactual is unavailable (Casual Impact, n.d.). By comparing observed time series data before and after an event while accounting for trends and seasonality, this method helps quantify the causal effect of an intervention, such as policy changes or public health measures. In this study, we apply Causal Impact analysis to assess whether the rollout of COVID-19 vaccines significantly affected case trends in Ireland.
+
+```{r eval=FALSE, include=FALSE}
+#for loop to conduct casual analysis for each vaccine date 
+for (vaccine_date in vaccine_dates) {
+  bp_index <- which(df_filtered$date == vaccine_date)
+  
+  if (length(bp_index) > 0) {
+    #Define pre- and post-vaccine periods based on the breakpoint
+    pre_period <- c(1, bp_index - 1)
+    post_period <- c(bp_index, nrow(df_filtered))
+    
+    # Run Causal Impact analysis
+    impact <- CausalImpact(df_filtered$confirmed_cases, pre_period, post_period)
+    
+  
+    #cat("\nCausal Impact Analysis for Vaccine Date:", as.character(vaccine_date), "\n")
+    #print(summary(impact))
+    
+  }
+}
+
+
+```
+```{r echo=FALSE}
+
+results <- data.frame(
+  Date = c("2020-12-29", "2021-03-01", "2022-07-27"),  # Enter your dates
+  P_Value = c(0.48646, 0.38386, 0.26263),  # Enter p-values
+  Posterior_Probability_of_a_causal_effect = c("51%", "62%", "74%")  # Enter posterior probabilities
+)
+
+# Print the table
+print(results)
+
+```
+
+The Causal Impact analysis results indicate varying levels of statistical evidence for a causal effect of vaccine rollouts on COVID-19 case trends. The Phase 1 rollout (2020-12-29) shows a 51% posterior probability, suggesting weak evidence of an impact. The Phase 2 rollout (2021-03-01) has a 62% probability, indicating a moderate likelihood of influence. The Phase 3 rollout (2022-07-27) has the strongest effect, with a 74% probability, suggesting a higher confidence that the vaccine expansion contributed to the observed trend change. While the results suggest some correlation, they do not provide definitive proof of a causal relationship due to the high p-values associated with the vaccine rollout dates. This warrants further analysis and may indicate the presence of other confounding variables influencing the trend.
+
+## Conclusion
+
+Our analysis demonstrates that both SARMA models effectively capture COVID-19 case trends in Ireland, with the pandemic model showing a slightly better fit. The residual analysis indicates minimal autocorrelation, suggesting that both models are reasonable approximations of the data. However, the post-pandemic model exhibits some irregularities in its residuals, implying that it may not fully account for all underlying patterns. While the pandemic model appears more reliable, both models could benefit from further refinement, such as incorporating additional covariates or adjusting seasonal components to improve accuracy. Our seasonal analysis further supports this conclusion, showing clear signs of seasonality during the pandemic but a weaker pattern post-pandemic. The PACF plots confirm that while a weekly cycle existed during the pandemic, post-pandemic trends exhibit more variability, suggesting a shift in COVID-19 dynamics over time.
+
+Beyond seasonality, our vaccine impact analysis reveals a complex relationship between vaccination rollout and COVID-19 case trends. While breakpoints in the time series align closely with vaccine rollout dates, causal impact analysis suggests that vaccination alone did not significantly drive these changes. Other confounding factors, such as government-imposed restrictions, social behavior adjustments, and the emergence of new COVID-19 variants, likely played a crucial role in shaping infection trends. This underscores the challenge of isolating single interventions in public health data and highlights the need for multifactorial models to understand disease dynamics better. Future research could integrate policy shifts and mobility data to refine our understanding of how vaccines, alongside other measures, contributed to pandemic control.
+
+
+## Sources
+
+- Health Service Executive (HSE). (n.d.). COVID-19 SDU Acute Hospital Time Series Summary. Retrieved from https://covid-19.geohive.ie/datasets/fe9bb23592ec4142a4f4c2c9bd32f749_0/about
+
+- Health Service Executive (HSE). (n.d.). Ireland's COVID-19 Data Hub. Retrieved from https://covid19ireland-geohive.hub.arcgis.com/
+
+- Shapiro, S. S., & Wilk, M. B. (1965). An analysis of variance test for normality (complete samples). Biometrika, 52(3/4), 591-611. https://www.jstor.org/stable/2333709
+
+- Ljung, G. M., & Box, G. E. (1978). On a measure of a lack of fit in time series models. Biometrika, 65(2), 297-303. https://www.jstor.org/stable/2335718
+
+- Ionides, Edward L. “Chapter 5: Parameter estimation and model identification for ARMA models.” Chapter 5 Lecture. Chapter 5 Lecture, 8 Feb 2025, Ann Arbor, Michigan .
+
+- “Flu Season.” Centers for Disease Control and Prevention, Centers for Disease Control and Prevention, 28 Oct. 2024, <www.cdc.gov/flu/about/season.html#:\~:text=While%20influenza%20viruses%20spread%20year,varies%20from%20season%20to%20season>.
+
+- 2023, Midterm Project, <https://ionides.github.io/531w24/midterm_project/project09/blinded.html>. Accessed 12 Feb. 2025.
+
+- Burns, S. (2020, August 19). Coronavirus Q&A: Everything you need to know about testing in Ireland. The Irish Times. <https://www.irishtimes.com/news/health/coronavirus-q-a-everything-you-need-to-know-about-testing-in-ireland-1.4334062>
+
+- Wikipedia contributors. (2024, October 5). COVID-19 vaccination in the Republic of Ireland. Wikipedia. <https://en.wikipedia.org/wiki/COVID-19_vaccination_in_the_Republic_of_Ireland#Timeline>
+
+- Reynolds, L. J., Gonzalez, G., Sala-Comorera, L., Martin, N. A., Byrne, A., Fennema, S., … Meijer, W. G. (2022). SARS-COV-2 variant trends in Ireland: Wastewater-based epidemiology and clinical surveillance. Retrieved from <https://pmc.ncbi.nlm.nih.gov/articles/PMC9110007/>
+
+- Breakpoints: Dating breaks. (n.d.). Retrieved from <https://www.rdocumentation.org/packages/strucchange/versions/1.5-4/topics/breakpoints>
+
+- Casual Impact  (N.d.). Retrieved from https://cran.r-project.org/web/packages/CausalImpact/vignettes/CausalImpact.html#installing-the-package 
+
+- We utilized GenAI, such as ChatGPT, to debug code issues, including package installation errors and runtime failures, ensuring the smooth execution of our analysis.
+
+## Previous Project Comparisons
+
+Our analysis shares similarities with the Utah source regarding time series modeling and intervention analysis, but we focus specifically on the impact of vaccine rollouts on COVID-19 cases in Ireland. We employ stationarity tests, spectral analysis, and causal impact modeling to assess changes in seasonality and long-term trends. Unlike the Utah project, which emphasizes ARMA model selection, our approach incorporates breakpoint detection and compares distinct pandemic phases to understand structural shifts in the data better.
+
+The seasonality analysis heavily referenced the Sunspot analysis made by the group in the winter of 2024 in how to thoroughly investigate a seasonal trend. However, our report takes one step further in offering a possible explanation in the trend through breakpoint analysis using our prior knowledge. Our model analysis section is also a bit more fleshed out by adding a Box-Lung Test for autocorrelation, ACF/PACF, and Normality on top of a check on its residuals.  
+
+From previous peer reviews, we have learned the importance of clarifying assumptions, improving model selection rationale, and refining visualization techniques. The feedback has suggested considering alternative transformations, such as log or square root scaling, to stabilize variance and comparing different lag models using AIC or likelihood ratio tests. By incorporating these insights, we strengthen our methodology and ensure that our findings are robust and interpretable.
+
+Past Midterm Projects : 
+https://ionides.github.io/531w21/midterm_project/project16/project.html 
+https://ionides.github.io/531w24/midterm_project/project09/blinded.html

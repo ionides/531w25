@@ -1,0 +1,1022 @@
+---
+title: "Analysis of Average House Prices in Seattle"
+date: "2025-02-21"
+output:
+  html_document:
+    code_folding: hide  
+    toc: true           
+    toc_float: true     
+    number_sections: true 
+  pdf_document:
+    toc: true           
+  word_document:
+    toc: true          
+---
+
+```{r, echo=FALSE, include = FALSE, warning = FALSE, message = FALSE }
+library(tidyverse)
+library(forecast)
+library(tseries)
+library(zoo)
+library(lmtest)
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(tidyr)
+library(doParallel)
+library(foreach)
+require(knitr)
+```
+
+```{r aic_table_codes, include = FALSE, warning = FALSE, message = FALSE }
+aic_table <- function(data,P,Q, D=1){
+  table <- matrix(NA,(P+1),(Q+1))
+  for(p in 0:P) {
+    for(q in 0:Q) {
+       table[p+1,q+1] <- arima(data,order=c(p,D,q))$aic
+    }
+  }
+  dimnames(table) <- list(paste("AR",0:P, sep=""),
+    paste("MA",0:Q,sep=""))
+  table
+}
+
+sar_aic_table <- function(data, P, Q, a_order = c(2, 1, 2), Ds=1) {
+  table <- matrix(NA, nrow = P + 1, ncol = Q + 1)
+
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      fit <- try(
+        arima(data,
+              order = a_order,
+              seasonal = list(order = c(p, Ds, q), period = 12)
+        ),
+        silent = TRUE
+      )
+
+      if (!inherits(fit, "try-error")) {
+        table[p + 1, q + 1] <- fit$aic
+      } else {
+        table[p + 1, q + 1] <- NA
+      }
+    }
+  }
+
+  dimnames(table) <- list(
+    paste("SAR", 0:P, sep = ""),
+    paste("SMA", 0:Q, sep = "")
+  )
+
+  return(table)
+}
+
+reg_aic_table <- function(data, P, Q, Dr=0){
+  time <- seq_along(data)
+  table <- matrix(NA,(P+1),(Q+1))
+  for(p in 0:P) {
+    for(q in 0:Q) {
+       table[p+1,q+1] <- arima(data, order = c(p, Dr, q), xreg = time)$aic
+    }
+  }
+  dimnames(table) <- list(paste("AR",0:P, sep=""),
+    paste("MA",0:Q,sep=""))
+  table
+}
+
+sarma_reg_aic_table <- function(data, P, Q, a_order = c(3, 0, 0), Ds=0) {
+  time <- seq_along(data)
+  table <- matrix(NA, nrow = P + 1, ncol = Q + 1)
+
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      fit <- try(
+        arima(data,
+              order = a_order,
+              seasonal = list(order = c(p, Ds, q), period = 12),
+        xreg=time),
+        silent = TRUE
+      )
+
+      if (!inherits(fit, "try-error")) {
+        table[p + 1, q + 1] <- fit$aic
+      } else {
+        #cat("Failed for p =", p, "q =", q, "\n")
+        #cat("Error message:", fit, "\n")    
+        table[p + 1, q + 1] <- NA
+      }
+    }
+  }
+
+  dimnames(table) <- list(
+    paste("SAR", 0:P, sep = ""),
+    paste("SMA", 0:Q, sep = "")
+  )
+
+  return(table)
+}
+```
+
+# Introduction
+
+Housing prices represent a crucial economic indicator that significantly influences both investment decisions and consumer behavior. In this study, we analyze a univariate time series of monthly average housing prices in Seattle, obtained from [Zillow Research Data](https://www.zillow.com/research/data/)$^{[7]}$. The data we are using reports the average monthly prices of houses between the 33rd and 67th percentiles, thus providing an indicator of the typical middle-income house price in the Seattle Metropolitan area. Although the original dataset spans from February 1996 to December 2024 with 348 records, its extensive duration and the occurrence of multiple historical events such as the Dot-Com Bubble Burst (2000–2001) and the Great Recession (2007-2009) makes comprehensive analysis extremely challenging. Therefore, we focus on the most recent decade, from January 2015 to December 2024 with 120 records, to capture current market dynamics. The plot of the sliced data is shown as below. It reveals a clear upward trend with potential seasonal patterns and significant market shifts, particularly during the 2020-2022 period. The median housing price in Seattle in the recent decade is \$517,473 as shown in the below summary table.
+
+```{r read_data, echo=FALSE, warning = FALSE, message = FALSE }
+seattle_data <- read.csv("Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_month.csv")
+seattle_data <- subset(seattle_data, RegionName == "Seattle, WA")
+seattle_data <- seattle_data[ , -c(1:5)]
+setDT(seattle_data)
+seattle_data <- melt(seattle_data, id.vars = NULL, variable.name = "Date", value.name = "HousingPrice")
+seattle_data$Date <- as.Date(as.character(seattle_data$Date), format="X%Y.%m.%d")
+raw_housing <- seattle_data
+seattle_data <- seattle_data[seattle_data$Date > as.Date("2014-12-31"), ]
+ggplot(seattle_data, aes(x=Date, y=HousingPrice)) + geom_line() + labs(title="Housing Price in Seattle", x="Date", y="Price")
+```
+
+```{r, echo=FALSE}
+summary(seattle_data$HousingPrice)
+```
+
+In the later sections, our comprehensive analysis will offer valuable insights into both historical trends and potential future market behavior. We begin with exploratory data analysis of the housing prices in Section 2. We provide two complementary perspectives on the periodic behavior. We employ Seasonal and Trend decomposition to capture how additive components evolve over time, and spectral analysis to identify dominant cycles in the frequency domain. Subsequently, we perform model selection by fitting both SARIMA and Regression model with SARMA errors in Section 3. The model parameters (lag orders and differencing terms) are tuned by the Akaike Information Criterion (AIC) and further model diagnostics. Notably, the formal analysis is base on log-transformed housing prices because we find that a log-transformation of the housing prices can improve model fitting performance. The analyses based on the raw data are provided in the appendix. Lastly, we compare the two selected models based on their forecasting performance using rolling cross-validation in Section 4. The two selected models are SARIMA and Linear Regression with ARMA errors. In the end, we answer the following questions in this work:
+
+1.  Do house prices in Seattle exhibit a long-term, non-constant trend component?
+2.  Is there a yearly periodic cycle in house prices, where the prices differ based on the month with a visible pattern?
+3.  Are there any anomalies in the overall trend of the data, such as sudden drops caused by external factors?
+4.  Which SARIMA or regression with SARMA-based errors model(s) best explain the data?
+5.  In terms of forecasting, what is the optimal model to use within the class of SARIMA or regression with SARMA errors?
+
+# Exploratory Data Analysis (EDA)
+
+In this section, our objective is to discover the key characteristics of housing prices in Seattle, such as the presence of trends or seasonality. This analysis will help us in model selection, as the choice of model heavily relies on these features.
+
+In below, we are plotting the entire data from February 1996 to December 2024 to show why we consider working on the part after January 2015.
+
+```{r, echo=FALSE, warning = FALSE, message = FALSE}
+ggplot(raw_housing, aes(x=Date, y=HousingPrice)) + geom_line() + labs(title="Housing Price in Seattle", x="Date", y="Price")
+```
+
+As you can see, the Great Recession (2007-2009) results in a sudden and severe drop of housing prices, making the comprehensive analysis extremely difficult without the inclusion of various external factors. As we are more concerned with the behavior of the housing prices in Seattle during the times of normality (without such extreme events), we will consider the part after January 2015.
+
+As a start, let's start working on the decomposition of the data.
+
+## Time Series Decomposition
+
+In the decomposition of time series data into trend, seasonality and random components, we use the `decompose()` function of `stats` package. Let's summarize what `decompose()` does based on the documentation$^{[5]}$. Basically, it seperates a time series using moving averages to find these components. First, it uses a moving average to derive and eliminate the trend from the original data. Next, it finds the seasonal part by averaging the remaining values for each time point in the seasonal cycle. Finally, the random or irregular part is calculated by taking out both the trend and seasonal estimations from the original series.
+
+As we have a monthly data and the time-series data as seen in the plot already shows yearly periodic patterns, we take the seasonal cycle to be 12 months. However, later in this section, by the periodogram analysis, we see that the highest peak is at the frequency of $1/12$ cycles per month. So, our choice of seasonal cycle is well-grounded.
+
+```{r, echo=FALSE}
+seattle_ts <- ts(seattle_data$HousingPrice, frequency = 12, start = c(2015, 1))
+decomposed <- decompose(seattle_ts)
+plot(decomposed, col = "blue")
+```
+
+Now, the decomposition plot reveals several key components of the Seattle housing market from 2015 to 2024:
+
+1.  A strong upward trend, particularly accelerating during 2020-2022, with a sudden drop in 2022.
+2.  Clear seasonal patterns that are repeating annually.
+3.  Random fluctuations showing higher volatility during 2021-2022.
+
+The linear looking trend and seasonality components suggests the use of differencing in the model selection phase or the use of time as regressor. In the model selection part, we considered both of these possibilities.
+
+In our exploration of the Seattle housing market's decline in 2022, we identified a combination of factors contributing to the decline in home prices. Most importantly among these was the spike in inflation rates paired with rising mortgage rates, which diminished the affordability for potential buyers, thereby decreasing the demand for housing$^{[10]}$. This resulted in the sudden drop of the prices.
+
+For the seasonal fluctuations, let's go into more detail what we have in there.
+
+## Seasonal Pattern Analysis
+
+In below, we basically print the values for the estimated seasonal part.
+
+```{r, echo=FALSE}
+seasonal <- decomposed$seasonal
+random <- decomposed$random
+
+seasonal_pattern <- matrix(seasonal[1:12], ncol=1)
+rownames(seasonal_pattern) <- month.abb
+colnames(seasonal_pattern) <- "Seasonal Effect"
+print(seasonal_pattern)
+```
+
+In summary, the printed seasonal values shows varying monthly effects with peak season and off season:
+
+-   Peak season (April-July): High price period, with June showing the maximum prices (+\$13,904)
+
+-   Stagnant-season (Aug-Oct): Prices that are close to the detrended mean
+
+-   Off-season (November-February): Significantly less prices, with January showing the lowest prices (-\$13,885)
+
+This basically shows that house prices vary based on whether we are in the peak season or off-season with almost \$26k difference in the extremes. This is considerably a highly volatile case.
+
+## Periodogram Analysis
+
+In the beginning, we assumed that we have cycles of 12 months. Here, we are basically showing that this is well-grounded in that the data has cycles of 12 months. To do that, we are using the `spec.pgram` function$^{[6]}$. It basically estimates the periodogram of a time series utilizing Fast Fourier Transform and may also apply smoothing through Daniell smoothers, which are basically moving averages that assign half-weight to the boundary values. To have a better estimate, we are using the optional smoothing.
+
+```{r, echo=FALSE}
+seattle_ts <- ts(seattle_data$HousingPrice, frequency = 12, start = c(2015, 1))
+
+spectrum <- spec.pgram(seattle_ts, spans = c(5,5), log = "yes", plot = TRUE, taper = 0.1, 
+                      main = "Smoothed Periodogram of Seattle Housing Prices", xlab = "Frequency", ylab = "Spectrum (in log scale)", sub = "Cycles per Month")
+
+# vertical line at frequency 1/12
+abline(v = 1/12, col = "red", lty = 2)
+
+# Finding dominant frequencies
+spec_df <- data.frame(
+    frequency = spectrum$freq,
+    spectrum = spectrum$spec
+)
+```
+
+The periodogram analysis clearly shows the presence of a $12$-month seasonal cycle, the highest peak at the frequency marked by the red dashed line $(1/12)$. This cyclical pattern implies that annual seasonality is an important component of price variations in the Seattle housing market.
+
+## ACF Analysis
+
+We also consider checking the ACF to infer anything beyond our above analysis.
+
+```{r}
+acf(seattle_data$HousingPrice, main="ACF of Original Series", lag.max=36)
+```
+
+The ACF analysis shows strong autocorrelation values across all lags above. The autocorrelation values decrease slowly and remain well above the significance lines, suggesting that the series is non-stationary with a non-constant trend, which we also observe by looking at the time series plot. Beyond this, ACF plot does not give any other useful information.
+
+## Variance Analysis
+
+As we discussed in the *Seasonal Pattern Analysis* section, the data exhibits highly volatile patterns depending on off or peak season. Here, we go into detail of this and this will motivate the log transformation of this data to reduce such volatilities.
+
+```{r, echo=FALSE}
+# calculating yearly variances for original data
+yearly_var_original <- sapply(2015:2024, function(year) {
+  var(subset(seattle_data$HousingPrice, 
+             format(seattle_data$Date, "%Y") == as.character(year)))
+})
+
+# log transform 
+log_seattle <- log(seattle_data$HousingPrice)
+
+# calculating yearly variances for logged data
+yearly_var_log <- sapply(2015:2024, function(year) {
+  var(subset(log_seattle, 
+             format(seattle_data$Date, "%Y") == as.character(year)))
+})
+
+variance_comparison <- data.frame(
+  Year = 2015:2024,
+  Original_Variance = yearly_var_original,
+  Log_Variance = yearly_var_log
+)
+
+par(mfrow = c(2,1))
+plot(yearly_var_original, type = "l", main = "Original Data Variance by Year",
+     xlab = "Year", ylab = "Variance", xaxt = "n")
+axis(1, at = 1:10, labels = 2015:2024)
+
+plot(yearly_var_log, type = "l", main = "Log-Transformed Data Variance by Year",
+     xlab = "Year", ylab = "Variance", xaxt = "n")
+axis(1, at = 1:10, labels = 2015:2024)
+```
+
+The variance analysis demonstrates that original data shows significant variance instability, with a notable increase during 2020-2022 period. In contrast, log transformed data shows more consistent variance across all years with substantially reduced fluctuations. This comparison supports the need for log transformation in our data preprocessing step, making the data more suitable for ARIMA modelling.
+
+All in all, based on these findings, our EDA reveals:
+
+1.  An annual seasonal cycle with month-to-month patterns through the periodogram analysis
+
+2.  A strong almost-linear upward trend, especially peaking during 2020-2022, as seen in the decomposition analysis
+
+3.  Seasonal patterns with peak prices in summer (June: +\$13,904) and lowest in winter (January: -\$13,885)
+
+4.  Significant volatility in the original data, which can be stabilized through log transformation as shown with our variance analysis
+
+These suggest that a SARIMA model with log-transformed data would be appropriate for our analysis, as it can effectively capture both the seasonal patterns and the underlying trend while also dealing with the high variance issues through log transformation.
+
+Additionally, we conducted an analysis using the raw data without applying a log transformation, and the Q-Q plot of the residuals revealed heavy-tailed behavior, further demonstrating the necessity for the log transformation. If interested, please see the Appendix. At the end of the Appendix, you can find our final SARIMA model with raw data and the correpsponding Q-Q plot of the residuals.
+
+In below, you can see the log transformed visualization of housing prices. This is the data that we will analyze throughout the rest of the project.
+
+```{r logged, echo=FALSE}
+seattle_data$logHousingPrice <- log(seattle_data$HousingPrice)
+ggplot(seattle_data, aes(x=Date, y=logHousingPrice)) + geom_line() + labs(title="Housing Price", x="Date", y="Price (Log Transformed)") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Model Selection
+
+In the case of having data that shows trends and seasonality components as observed in the exploratory data analysis, we have two options:
+
+1.  We can use a SARIMA model, which incorporates differencing and through this differencing, we may expect to construct a stationary SARIMA model.
+
+2.  We can use regression with SARMA errors.
+
+In both cases, we will demonstrate the need for seasonal modeling and hence why we use SAR(I)MA rather than AR(I)MA, although from the trend and seasonality decomposition in EDA, such a need is intuitive. The reason why we are considering two models is that having an optimal model is crucial to making inferences and forecasts based on that model. In the end, we will compare these models' forecast performance and show that both of these models are capable in different scenarios.
+
+## Model Selection: SARIMA
+
+Now, let's start considering a SARIMA model for our data. As a non-constant, linear-looking trend is clearly non-stationary, we will first consider the first-order differencing.
+
+```{r logdiff, echo=FALSE,warning=FALSE, message = FALSE}
+seattle_data[, logDiff := c(NA, diff(logHousingPrice))]
+ggplot(seattle_data, aes(x=Date, y=logDiff)) +
+  geom_line() +
+  labs(title="Log Differences of Housing Price Trends in Seattle",
+       x="Date", y="Log Difference of Housing Price") +
+  geom_hline(yintercept=0, linetype="dashed", color="red")
+```
+
+Although the plot above seems to be trend stationary, we still observe yearly periodic patterns. This is expected, as we have already discovered that the data exhibits yearly periodicity in the EDA. By checking the ACF,
+
+```{r acf, echo=FALSE, warning=FALSE, message = FALSE}
+acf(seattle_data$logDiff, na.action = na.pass, main="ACF of Logarithmic Differences in Seattle Data")
+```
+
+We confirm our visual inspection. The ACF demonstrates a clear positive autocorrelation at a lag of 12 and clear negative autocorrelation at a lag of 6. This agrees with the sinusoidal-looking periodicity we discovered in the EDA. For example, summers and winters are negatively correlated, whereas summers are positively correlated with the same season 12 months ahead.
+
+However, to confirm this, let's start our analysis with an ARIMA model without including the seasonality component. Note that we are applying ARIMA to the logged data, not the differenced version of the logged data. This is important as in this case, the AIC and likelihood computations also incorporate the inclusion of differencing. We will also use this model as the baseline ARIMA model while incorporating the seasonal component later. We are basically following the method outlined by Schumway and Stoffer$^{[8, \text{Section 3.9}]}$ to select SARIMA models.
+
+The ARIMA($p,d,q$) model with intercept $\mu$ can be written as$^{[2,\text{ Section 2.1}]}$: $$\phi(B)[(1 - B)^d\,Y_n \;-\;\mu] \;=\;\psi(B)\,\epsilon_n$$ where $\{\epsilon_n\}$ is white (usually also Gaussian) noise, $\phi(B)$ and $\psi(B)$ are the AR and MA polynomials with the backshift operator as $B$. The $d$ is the differencing order, which we took to be $1$ in our analysis based on our differencing analysis.
+
+Our first statistic of consideration is Akaike's Information Criterion (AIC). It balances model accuracy against complexity and given by the formula:
+
+$$AIC = 2k - 2\ell$$
+
+where $k$ is the number of parameters and $\ell$ is the maximum log likelihood value$^{[1, \text{ Section 2.2}]}$. AIC is a useful tool to choose a model that provides a good predictive capacity, and hence we use it to select the optimal ARIMA orders $(p,d,q)$. Lower AIC value usually means that the model in consideration is more capable in that regard. However, it is not our only consideration and we will support our initial insight from AIC with further investigation.
+
+Now, let's consider the ARIMA$(p,1,q)$ order models on the log transformed time series data.
+
+```{r aic_table_log, warning = FALSE, message = FALSE}
+seattle_data_aic_table <- aic_table(seattle_data$logHousingPrice,4,5)
+kable(seattle_data_aic_table,digits=2)
+```
+
+By examining the AIC table, we identify ARIMA$(2,1,0)$ and ARIMA$(3,1,3)$ as good potential candidates. We refrain from using higher order terms in our analysis as the table clearly demonstrates inconsistencies regarding AIC values. For example, the ARIMA$(3,1,3)$ model has $AIC = -915.27$, whereas the ARIMA$(4,1,3)$ model has $AIC = -908.45$. This is mathematically improbable as we would expect a difference of at most $2$ higher than the AIC of ARIMA$(3,1,3)$. Similarly, comparisons between ARIMA$(3,1,3)$-ARIMA$(4,1,3)$, ARIMA$(3,1,4)$-ARIMA$(4,1,4)$, and ARIMA$(3,1,5)$-ARIMA$(4,1,5)$ show the same type of inconsistency. Given the AIC inconsistencies, and also satisfied with the AIC gaps between smaller models and larger ones (while also applying the principle of Occam's Razor), we favor the smaller models. Thus, we will consider ARIMA$(2,1,0)$ and ARIMA$(3,1,3)$ below.
+
+Now, let's fit both of these models. As ARIMA$(2,1,0)$ is nested within ARIMA$(3,1,3)$, the likelihood ratio test is applicable. We will consider ARIMA$(2,1,0)$ as the null hypothesis.
+
+```{r}
+arima210 = arima(seattle_data$logHousingPrice,order=c(2,1,0))
+arima210
+```
+
+Here, we have a log likelihood of $460.18$. Now, let's also fit the ARIMA$(3,1,3)$ model.
+
+```{r}
+arima313 = arima(seattle_data$logHousingPrice,order=c(3,1,3))
+arima313
+```
+
+Now, we have a log likelihood of $464.63$. Now, apply the likelihood ratio test with hypotheses$^{[1]}$:
+
+$$H_0: ARIMA(2,1,0)\text{ models the data good enough }$$ $$H_A: ARIMA(3,1,3) \text{ models the data better than } ARIMA(2,1,0)$$
+
+We have the test statistic:
+
+$$LR = 2(l_2 - l_1)$$
+
+where
+
+-   $l_2$ = log likelihood of ARIMA(3,1,3)
+
+-   $l_1$ = log likelihood of ARIMA(2,1,0)
+
+Under the null hypothesis, LR follows $\chi^2$ with degree of freedom = $4$ (difference in number of parameters)$^{[1]}$. By using that, we calculate the $p-value$
+
+```{r}
+l1 <- logLik(arima210)
+l2 <- logLik(arima313)
+lstat <- 2*(l2 - l1)
+p_value <- pchisq(lstat, 4, lower.tail = FALSE)
+cat("p value is: ", p_value)
+```
+
+We have a $p-value$ of $0.06368565$. Hence, we cannot reject the null hypothesis of ARIMA$(2,1,0)$. ARIMA$(2,1,0)$ seems to be the best model so far. As a sanity check, we also consider fitting ARIMA$(3,1,4)$, which had the lowest AIC values in the table despite inconsistencies.
+
+```{r, warning = FALSE, message = FALSE}
+arima314 = arima(seattle_data$logHousingPrice,order=c(3,1,4))
+arima314
+```
+
+Realize that ARIMA$(3,1,4)$ produces NA-valued ma1 standard error, and we see that ma2, ma3, and ma4 are empty. So, we do not trust that model.
+
+All in all, we consider ARIMA$(2,1,0)$ as our best model here. Now, let's check if it is an invertible model.
+
+```{r}
+plot(arima210,type="both")
+```
+
+We see that the inverse roots are well inside the unit circle, indicating the invertibility of the model. Now, consider the residuals of the model:
+
+```{r}
+plot(arima210$resid, main = "Residuals of ARIMA(2,1,0)", ylab = "Residual")
+```
+
+The plot is fairly ambiguous. However, there seems to be a periodic pattern in the residuals. To confirm our intuitive guess, let's plot the sample ACF of the residuals.
+
+```{r}
+acf(arima210$resid, lag.max = 72, main = "ACF of Residuals for ARIMA(2,1,0)")
+```
+
+The ACF demonstrates clear autocorrelation at the lags that are multiples of 12, essentially showing that our ARIMA model is incapable of modeling those seasonal correlations in the data. Thus, we need to add the seasonal component ourselves by using a SARIMA model. From the ACF plot and the EDA, we know that we have a period of 12 months. Now, let's fit a SARIMA model by also considering the seasonal dependencies. The SARIMA$(p,d,q)(P,D,Q)_{12}$ is given by$^{[2, \text{Section 2.2}]}$
+
+$$\phi(B) \Phi(B^{12}) [(1-B)^d (1-B^{12})^D Y_n - \mu] = \psi(B) \Psi(B^{12}) \epsilon_n$$
+
+Here, $\{\epsilon_n\}$ represents a white noise process, the intercept $\mu$ corresponds to the average of the differenced process $\{(1-B)^d(1-B^{12})^D Y_n\}$. Additionally, the ARMA polynomials are denoted as $\phi(x)$, $\Phi(x)$, $\psi(x)$, and $\Psi(x)$ $^{[2, \text{Section 2.2}]}$.
+
+We will start with seasonal differencing of one because, when we apply the seasonal differencing in addition to the regular differencing, which we employed before, we get:
+
+```{r}
+seasonal_diff_ts <- diff(seattle_data$logHousingPrice, lag=12)
+seasonal_diff_ts <- diff(seasonal_diff_ts)
+a = acf(seasonal_diff_ts, lag.max = 72, main = "ACF of Differenced Series")
+```
+
+showing a decaying sinusoidal pattern, compared to consistent peaks at the multiples of 12 in the just differenced case. Furthermore, in economics and business, it is common to use the SARIMA$(0,1,1)(0,1,1)_{12}$ model to forecast monthly time series data$^{[2]}$, which has seasonal and standard differencing properties. Hence, it is also natural for us to incorporate the seasonal differencing term from that perspective.
+
+Now, let's compute the AIC table to determine the orders of SAR and SMA terms.
+
+```{r log_sar_aic_table_code, warning = FALSE, message = FALSE}
+log_sarma_aic_table <- sar_aic_table(seattle_data$logHousingPrice, 3, 3, c(2,1,0), Ds=1)
+kable(log_sarma_aic_table, digits = 2)
+```
+
+From the AIC table, we identify SARIMA$(2,1,0)(0,1,1)_{12}$ and SARIMA$(2,1,0)(0,1,3)_{12}$ to be the potential candidates. Now, to decide, let's employ a likelihood ratio test as SARMA$(2,1,0)(0,1,1)_{12}$ is nested in SARIMA$(2,1,0)(0,1,3)_{12}$.
+
+```{r}
+sarima210_011 = arima(seattle_data$logHousingPrice,order=c(2,1,0), seasonal = list(order = c(0, 1, 1),
+period = 12))
+sarima210_011
+```
+
+```{r}
+sarima210_013 = arima(seattle_data$logHousingPrice,order=c(2,1,0), seasonal = list(order = c(0, 1, 3),
+period = 12))
+sarima210_013
+```
+
+We apply a likelihood ratio test under the null hypothesis of SARIMA$(2,1,0)(0,1,1)_{12}$, with the null hypotheses of $SARIMA(2,1,0)(0,1,1)_{12}$ and alternative hypothesis of $SARIMA(2,1,0)(0,1,3)_{12}$. Under the null hypothesis, we expect to see
+
+$$LR = 2(l_2 - l_1) \sim \chi^2(2)$$
+
+```{r}
+l1 <- logLik(sarima210_011)
+l2 <- logLik(sarima210_013)
+lstat <- 2*(l2 - l1)
+p_value <- pchisq(lstat, 2, lower.tail = FALSE)
+cat("p value is: ", p_value)
+```
+
+However, $p$-value is well above the 0.05 threshold. So, we fail to reject the null hypothesis of SARIMA$(2,1,0)(0,1,1)_{12}$. SARIMA$(2,1,0)(0,1,1)_{12}$ model seems to be our best model so far. Now, let's also check the roots of it as a sanity check to ensure there are no issues with causality or invertibility.
+
+```{r log_roots_sarima}
+ar_roots <- polyroot(c(1, -coef(sarima210_011)[1:2]))  
+sma1 <- polyroot(c(1, coef(sarima210_011)[3]))
+cat("AR roots: ", ar_roots, "\nSMA root:", sma1 )
+```
+
+All roots are outside the unit circle, indicating that we have no issues with invertibility or causality. Now, let's check the residuals:
+
+```{r}
+plot(sarima210_011$resid)
+```
+
+Except for one outlier at the beginning, the residuals seem to be centered around zero, and there is no obvious pattern in the plot. To verify, let's also check the ACF plot of the residuals.
+
+```{r l_s_acf_resid}
+acf(sarima210_011$residuals, lag.max = 72, main = "Residuals of SARIMA(2,1,0)x(0,1,1)", ylab = "Residual")
+```
+
+As shown above, the plot confirms that the residuals are modeled well by i.i.d. white noise, supporting our model definition. Additionally, the Q-Q plot basically shows that the residuals, except for the extreme parts of the left tail coming from the outlier in the residuals, are well modeled by the normal distribution.
+
+```{r}
+qqnorm(sarima210_011$resid, main = "Normal Q-Q Plot of Residuals")
+qqline(sarima210_011$resid, col = "red")
+```
+
+Now, let's apply the Shapiro-Wilk test$^{[3]}$ to check the normality of the residuals. This test is one of the most commonly used tests to check normality and we are omitting the details as it is unrelated to time-series dicussion. You can refer to the explanation here$^{[3]}$ for further details.
+
+```{r shapiro}
+residuals_data <- residuals(sarima210_011)
+
+shapiro_test_result <- shapiro.test(residuals_data)
+shapiro_test_result$p.value
+```
+
+We have the Shapiro test rejecting the null hypothesis that residuals come from a normal distribution. However, the Shapiro test is very sensitive to outliers.
+
+Thus, considering the Q-Q plot as well, we are satisfied with the overall model definition. Now, let's plot the fitted values of our model.
+
+```{r}
+fitted_values <- fitted(sarima210_011)
+
+plot(
+  seattle_data$Date, 
+  seattle_data$logHousingPrice, 
+  type = "o",                         
+  main = "Seattle Housing Prices with Fitted Values",
+  xlab = "Year",
+  ylab = "Price (in log scale)"
+)
+
+lines(
+  seattle_data$Date,
+  fitted_values,
+  col = "red"
+)
+```
+
+The ACF plot is already confirming that the residuals are white noise distributed. However, to be sure, let's apply the Ljung-Box test$^{[4]}$ to the residuals.
+
+$$H_0: \text{Residuals are independently distributed (white noise)}$$
+
+$$H_A: \text{Residuals are not independently distributed}$$
+
+we have the test statistic
+
+$$Q = n(n+2)\sum_{k=1}^h \frac{\hat{\rho}_k^2}{n-k} \sim \chi^2(h-m)$$
+
+where,
+
+-   $n$ = sample size
+
+-   $h$ = lag order (12 in this case)
+
+-   $m$ = number of parameters estimated
+
+```{r}
+Box.test(resid(sarima210_011),type="Ljung",lag=12,fitdf=1)
+```
+
+The $p$-value is far above the 0.05 threshold, supporting our observation of i.i.d. residuals.
+
+In the end, we have a SARIMA$(2,1,0)(0,1,1)_{12}$ that models the data effectively. However, as we described, we can also model our data using regression with SARMA errors. Below, we analyze that situation. In the end, we compare both of these models and evaluate their strengths and weaknesses.
+
+## Model Selection: Regression with SARMA Errors
+
+Let's start considering a SARMA model for our data. As a non-constant, linear-looking trend with respect to time in months is clear, we investigate whether we can model this behavior with the regression parameter as our time. To avoid any scale issues due to the date representation in R, we encode the dates starting from $1 \cdots n$, where $1$ corresponds to the first date in months in the data, and $n$ corresponds to the last date in months in the data.
+
+Let's start our analysis by fitting a regression model with ARMA errors as we did above.
+
+```{r, warning = FALSE, message = FALSE }
+seattle_data_aic_table <- reg_aic_table(seattle_data$logHousingPrice,4,5)
+kable(seattle_data_aic_table,digits=2)
+```
+
+Note the inconsistencies in the table with respect to the higher order terms, particularly with AR$(4)$ variation models. For example, the pairs $\{(3,2), (4,2)\}, \{(3,3), (4,3)\}, \{(3,5), (4,5)\}$ are some examples showing mathematically impossible AIC values, likely due to the optimization dynamics of the algorithm. Because of this, we are favoring the lower order models. Particularly, ARMA(3,0) has the lowest AIC in the table. After that, ARMA$(4,0)$ has the second lowest AIC value. Thus, we are going to compare these models under the null hypothesis of ARMA$(3,0)$.
+
+Now, let's start fitting a regression model with ARMA$(3,0)$ errors, with the regression parameter as time.
+
+```{r}
+time <- seq_along(seattle_data$logHousingPrice)
+reg_arma_30 = arima(seattle_data$logHousingPrice,order=c(3,0,0), xreg=time)
+reg_arma_30
+```
+
+We have the time coefficient as $0.0069$, which is plausible considering the scale of the log-transformed data. Now, let's demonstrate the significance of the time coefficient by a statistical test. We have the null hypothesis as $\beta_{\text{time}} = 0$. Then, the $z$-statistic is given by $$z = \frac{\hat{\beta}_{\text{time}}}{\text{SE}(\hat{\beta}_{\text{time}})} = 11.5$$ which has a $p$-value extremely small, close to 0. Note that this $p$-value is based on the standard normal distribution (assuming that the large sample size for ARMA errors allows them to be approximately normal). Hence, time has a statistically significant impact on the log-transformed house prices.
+
+Now, let's also fit a regression model with ARMA$(4,0)$ errors.
+
+```{r}
+reg_arma_40 = arima(seattle_data$logHousingPrice,order=c(4,0,0), xreg=time)
+reg_arma_40
+```
+
+Now, let's apply a likelihood ratio test under the null hypothesis of a regression with ARMA$(3,0)$ errors. Note that the regression model with ARMA$(3,0)$ errors is nested within the model with ARMA$(4,0)$ errors. Under the null hypothesis,
+
+$$LR = 2(l_2 - l_1) \sim \chi^2(1)$$
+
+```{r}
+l1 <- logLik(reg_arma_30)
+l2 <- logLik(reg_arma_40)
+lstat <- 2*(l2 - l1)
+p_value <- pchisq(lstat, 1, lower.tail = FALSE)
+cat("p value is: ", p_value)
+```
+
+We have a $p$-value of 0.585, meaning that we fail to reject the null hypothesis of regression with ARMA$(3,0)$ errors. Hence, we consider regression with ARMA$(3,0)$ errors to be a good candidate. Let's proceed with model diagnostics.
+
+```{r}
+plot(reg_arma_30, type="both")
+```
+
+Note that all roots are outside the unit circle, indicating that we have no issues with non-invertibility. Now, let's also visualize the model residuals.
+
+```{r}
+plot(reg_arma_30$resid, main = "Residuals of Regression with ARMA(3,0) Errors", ylab = "Residual")
+```
+
+Although the plot looks ambiguous, there seems to be a seasonal component with a periodicity of 12 remaining in the residuals. To verify, let's check the ACF of the residuals.
+
+```{r}
+acf(reg_arma_30$residuals, lag.max = 72, main = "ACF of Residuals for Regression with ARMA(3,0) Errors")
+```
+
+The ACF plot confirms that there is high correlation at the lags that are multiples of $12$, confirming our suspicion that the residuals demonstrate periodic behavior. Hence, just like our SARIMA analysis, we should include the seasonal component into the model.
+
+Now, let's evaluate multiple order models of regression with SARMA$(3,0)(p,q)_{12}$ errors and summarize their AIC values.
+
+```{r, warning = FALSE, message = FALSE }
+seattle_sarma_reg_aic_table <- sarma_reg_aic_table(seattle_data$logHousingPrice, 4, 3)
+kable(seattle_sarma_reg_aic_table, digits = 2)
+```
+
+Note that NA values are not fitted due to the non-stationary seasonal AR part from the ARIMA function. Although we tried different optimizers and optimization objectives, the pattern persists. Thus, we presume that this is a byproduct of the data rather than the optimization algorithm.
+
+When we investigate the table, we identify SARMA$(3,0)(3,0)_{12}$ and SARMA$(3,0)(4,0)_{12}$ as good candidates. We will compare both of these models under the null hypothesis of SARMA$(3,0)(3,0)_{12}$. Let's first fit a SARMA$(3,0)(3,0)_{12}$ model with a period of $12$.
+
+```{r}
+reg_sarma30_30 <- arima(
+  seattle_data$logHousingPrice,
+  order    = c(3, 0, 0),
+  seasonal = list(order = c(3, 0, 0), period = 12),
+  xreg     = time
+)
+reg_sarma30_30
+```
+
+The z-statistic for the regression coefficient $\hat{\beta}_{\text{time}}$ is significant, as $z = \frac{0.0068}{0.0009} = 7.555556$, showing that time has a statistically significant impact on log-transformed house prices.
+
+Now, let's fit a regression model with SARMA$(3,0)(4,0)_{12}$ errors.
+
+```{r}
+reg_sarma30_40 <- arima(
+  seattle_data$logHousingPrice,
+  order    = c(3, 0, 0),
+  seasonal = list(order = c(4, 0, 0), period = 12),
+  xreg     = time
+)
+reg_sarma30_40
+```
+
+By applying a likelihood ratio test under the null hypothesis of regression with SARMA$(3,0)(3,0)_{12}$ errors, we fail to reject the null hypothesis of regression with SARMA$(3,0)(3,0)_{12}$ errors.
+
+```{r}
+l1 <- logLik(reg_sarma30_30)
+l2 <- logLik(reg_sarma30_40)
+lstat <- 2*(l2 - l1)
+p_value <- pchisq(lstat, 1, lower.tail = FALSE)
+cat("p value is: ", p_value)
+```
+
+In the end, the regression model with SARMA$(3,0)(3,0)_{12}$ errors seems to be the best model so far. By checking the roots of the AR and SAR polynomials,
+
+```{r}
+ar_roots <- polyroot(c(1, -coef(reg_sarma30_30)[1:3]))  
+sar_roots <- polyroot(c(1, -coef(reg_sarma30_30)[4:6]))
+cat("AR roots: ", ar_roots, "\nSAR root:", sar_roots)
+```
+
+we note that all roots are outside the unit circle. Therefore, we do not have any invertibility issues.
+
+```{r}
+plot(reg_sarma30_30$resid, main="Regression with SARMA(3,0)x(3,0) Errors", ylab = "Residual")
+```
+
+Note that the residuals are centered around $0$ and seem not to show any patterns. Also, compared to our fitted SARIMA model, we do not seem to have any outliers. To confirm whether the residuals are distributed according to i.i.d. white noise, let's also check the ACF.
+
+```{r reg_s_acf_resid}
+acf(reg_sarma30_30$residuals, lag.max = 72, main = "Regression with SARMA(3,0)x(3,0) Errors")
+```
+
+By considering the overall ACF, except for a couple of spikes close to the threshold, we see that the ACF confirms that the residuals come from i.i.d white noise. However, to confirm the independence of the residuals, as we see a couple of spikes near the threshold, we apply the Ljung-Box test.
+
+```{r}
+Box.test(resid(reg_sarma30_30),type="Ljung",lag=36,fitdf=1)
+```
+
+We obtain a p-value of $0.1316$ with $\text{lag} = 36$, confirming our observation that the residuals are independently distributed. Now, let's also examine the residuals using a Q-Q plot.
+
+```{r}
+qqnorm(reg_sarma30_30$resid, main = "Normal Q-Q Plot for Regression with SARMA(3,0)x(3,0) Errors")
+qqline(reg_sarma30_30$resid, col = "red")
+```
+
+The Q-Q plot shows that the residuals are normally distributed, except for a couple of outliers. To assess the significance of these outliers, we perform a Shapiro-Wilk normality test.
+
+```{r}
+residuals_data <- residuals(reg_sarma30_30)
+shapiro_test_result <- shapiro.test(residuals_data)
+shapiro_test_result$p.value
+```
+
+We obtain a p-value of $0.1931$. Hence, we fail to reject the null hypothesis of normality for the residuals. Overall, our analysis confirms that the residuals are i.i.d. and normally distributed.
+
+Now, let's visualize the fitted values from the regression model with SARMA$(3,0)(3,0)_{12}$ errors.
+
+```{r}
+fitted_values <- fitted(reg_sarma30_30)
+
+plot(seattle_data$Date, seattle_data$logHousingPrice, type = "o", main = "Seattle Housing Prices with Fitted Values", xlab = "Year", ylab = "Price (in log scale)")
+
+lines(seattle_data$Date, fitted_values, col = "red")
+```
+
+Thus, based on the overall model diagnostics, we conclude that the regression model with SARMA$(3,0)(3,0)_{12}$ adequately describes the data.
+
+# Final Model: Comparison of SARIMA and Regression with SARMA Errors
+
+In the end, we have two models that describe Seattle's housing prices well:
+
+1.  SARIMA$(2,1,0)(0,1,1)_{12}$
+2.  Regression model with SARMA$(3,0)(3,0)_{12}$ errors with the regression variable as time in months
+
+These two models are incomparable by their AIC or likelihood values, as the likelihood calculations are incomparable due to the differenced versus the regressed nature of how we built up these models. However, comparing these models is also valuable for decision-making. For example, forecasting future house prices in Seattle is invaluable to real estate investors and the policymakers in the local government of Seattle.
+
+In the analysis below, we demonstrate that the SARIMA$(2,1,0)(0,1,1)_{12}$ model is a better forecasting model when we have a limited amount of observations. In contrast, the regression model with SARMA$(3,0)(3,0)_{12}$ errors performs better when we have a larger number of observations. Specifically, we employ one-step-ahead cross-validation using the `tsCV` package.
+
+The `tsCV()` function in the forecast package$^{[9]}$ implements rolling cross-validation for time series models. For each time step $t$ beyond the initial window, which we specify in the initialization, it fits the specified model to observations up to $t-1$ time step, generates an $h$-step forecast, measures the error against the actual value at time $t$, and thus produces a sequence of forecast errors, giving a realistic view of the out-of-sample performance of the model at various points in time.
+
+In our case, the regression model with SARMA$(3,0)(3,0)_{12}$ errors has an SAR order of $3$ with a period of $12$, requiring at least $3 \times 12 = 36$ observations in the data for a sensible fit. In contrast, the SARIMA$(2,1,0)(0,1,1)_{12}$ model, having an MA order of $1$ and incorporating seasonal differencing, requires at least $24$ observations in the past. Overall, when we have more than $48$ observations, the regression model with SARMA$(3,0)(3,0)_{12}$ errors outperforms the SARIMA$(2,1,0)(0,1,1)_{12}$ model.
+
+Below, we calculate the cross-validation scores with initial lengths of $\text{initial} \in \{24, 36, 48, 60\}$ and $h=1$. Note that, we employ a CPU level parallelization through `foreach()` and `doParallel()` functions as noted by$^{[2]}$. To debug the parallelized code, we used ChatGPT$^{[14]}$. In the end, unparallelized working code is written by us and we used ChatGPT to help us parallelize it.
+
+```{r}
+y <- seattle_data$logHousingPrice
+time <- seq_along(seattle_data$logHousingPrice)
+
+sarma_reg_forecast <- function(x, h, xreg, newxreg) {
+  forecast(
+    Arima(x, order=c(3,0,0), seasonal=list(order=c(3,0,0), period=12), xreg=xreg),
+    xreg=newxreg
+  )
+}
+
+sarimafit_forecast <- function(x, h){
+  forecast(
+    Arima(x, order=c(2,1,0), seasonal=list(order=c(0,1,1), period=12)),
+    h=h
+  )
+}
+
+# We will run the cross-validation for different initial sizes
+initial_values <- c(24, 36, 48, 60)
+
+# Detecting number of cores available
+num_cores <- parallel::detectCores(logical = TRUE) - 1   
+
+# Creating and registering parallel cluster
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+results <- foreach(init = initial_values, .combine = rbind, .packages = c("forecast")) %dopar% {
+  
+  cv_errors_sarma_reg <- tsCV(y, sarma_reg_forecast, h = 1, xreg = time, initial = init)
+  cv_errors_sarimafit <- tsCV(y, sarimafit_forecast, h = 1, initial = init)
+  
+  rmse_sarma_reg <- sqrt(mean(cv_errors_sarma_reg^2, na.rm = TRUE))
+  rmse_sarimafit <- sqrt(mean(cv_errors_sarimafit^2, na.rm = TRUE))
+  mae_sarma_reg  <- mean(abs(cv_errors_sarma_reg), na.rm = TRUE)
+  mae_sarimafit  <- mean(abs(cv_errors_sarimafit), na.rm = TRUE)
+  
+  data.frame(
+    initial = init,
+    RMSE_SARMAReg = rmse_sarma_reg,
+    RMSE_SARIMA   = rmse_sarimafit,
+    MAE_SARMAReg  = mae_sarma_reg,
+    MAE_SARIMA    = mae_sarimafit
+  )
+}
+
+stopCluster(cl)
+
+results_long <- pivot_longer(results, cols = -initial, names_to = "MetricModel", values_to = "Value")
+```
+
+```{r}
+ggplot(results_long, aes(x = factor(initial), y = Value, fill = MetricModel)) +
+  geom_col(position = "dodge") +
+  scale_y_reverse(limits = c(0.006, 0)) +  
+  labs(
+    x = "Initial Length",
+    y = "Error",
+    title = "RMSE and MAE for Different Initial Lengths"
+  ) +
+  theme_minimal()
+```
+
+Above we are using Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) to measure the accuracy of predictions in rolling window cross validation. It is known that RMSE squares the errors before averaging, which exaggarates larger errors, whereas MAE averages the absolute differences directly, thus treating all errors equally. Thus, MAE is more robust to outliers. Overall, they are given by the formulas$^{[15]}$
+
+1.  $\text{RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2}$ where $y_i$ are the actual observed values, $\hat{y}_i$ are the predicted values, and $n$ is the number of observations.
+
+2.  $\text{MAE} = \frac{1}{n} \sum_{i=1}^{n} |y_i - \hat{y}_i|$ where $y_i$ are the actual observed values, $\hat{y}_i$ are the predicted values, and $n$ is the number of observations.
+
+Based on these metrics, the plot demonstrates that with an initial length of $24$, the SARIMA$(2,1,0)(0,1,1)_{12}$ performs better than the regression model with SARMA$(3,0)(3,0)_{12}$ errors. With an initial length of $36$, the performance of the regression and SARIMA models is close; however, we can say the regression model slightly outperforms the SARIMA model. With increased lengths of $48$ and $60$, we observe a significant improvement in performance with the regression model with SARMA$(3,0)(3,0)_{12}$ errors.
+
+The conclusion of this analysis is that with 120 months of observations, using the regression model with SARMA$(3,0)(3,0)_{12}$ errors results in better forecasts when there are a large number of observations. However, it is also important to recognize that the SARIMA$(2,1,0)(0,1,1)_{12}$ model performs better with a limited number of observations. For instance, the subprime mortgage crisis followed by the 2008 crisis contributed to a decline in house prices in subsequent years$^{[2]}$. By 2015, when the effects of the crisis had diminished, there would be very limited data available for forecasting. In such cases, the SARIMA$(2,1,0)(0,1,1)_{12}$ model would be useful.
+
+However, in our scenario, we do not face such limitations and have access to data from the previous 120 months, which shows no significant changes. Therefore, we will use the entire dataset to forecast the next 24 months. Such forecasts are invaluable to policymakers in the local government of Seattle and to real estate investors.
+
+```{r}
+reg_sarma30_30 = Arima(
+  seattle_data$logHousingPrice,
+  order    = c(3, 0, 0),
+  seasonal = list(order = c(3, 0, 0), period = 12),
+  xreg     = time
+)
+
+n <- length(seattle_data$logHousingPrice)
+future_time <- matrix((n + 1):(n + 24))
+
+fc <- forecast(reg_sarma30_30, xreg = future_time, h = 12)
+autoplot(fc) +
+  ggtitle("12-Month Forecast from SARMA(3,0)(3,0)_12 with Time as Regressor") +
+  xlab("Time") +
+  ylab("Housing Price (log transformed)")
+```
+
+We see from the forecast that the next 24 month's house prices has an increasing linear trend with periodic behavior. Note that the use of Autoplot is inspired by project report$^{[11]}$.
+
+# Conclusion
+
+Our EDA revealed a strong seasonal structure in housing prices using both decomposition and ACF plots. Specifically, we observed negative correlation between summer and winter prices which suggests that price movements in these seasons tend to follow opposite trends. A dominant 12-month periodicity, as confirmed in the frequency domain analysis, also indicates a clear annual seasonality in the data. Furthermore, we also realized a linear looking trend in the data, with a sudden price decline in 2022, which we explained through external factors.
+
+Given the strong seasonal nature of the data, SARIMA emerged as a natural modeling choice. Through extensive experimentation, we determined that applying a log transformation to the data reduced skewness in residuals and thus improved model stability and forecasting performance. Seasonal differencing at a 12-month lag was necessary to remove the annual cyclic component.
+
+To evaluate forecasting accuracy, we compared SARIMA$(2,1,0)(0,1,1)_{12}$ against a Regression model with SARMA$(3,0)(3,0)_{12}$ errors. Using rolling cross-validation, we found that for smaller datasets ($\leq$ 48 observations), SARIMA performed better, likely due to its simpler structure, fewer estimated parameters and less dependence on past values. For larger datasets ($>$ 48 observations), the regression model with SARMA errors outperformed SARIMA in terms of forecasting accuracy. The difference arises probably because the regression-based approach accounts for the time dependent trend directly, whereas integrated approach relies on differencing to mitigate the effect of trend.
+
+These findings provide valuable insights for policy makers, consumers and real estate investors. When data availability is limited, SARIMA provides a reliable and interpretable model for short-term forecasting. When sufficient historical data is available, a regression model with SARMA errors is a more robust choice, as it effectively separates trend and probabilistic seasonal effects. Also, incorporating transformations (such as log-transformation) and carefully analyzing seasonal components is crucial for improving time series model performance. Given these insights, future research could explore more advanced models that incorporate exogenous variables such as economic indicators and interest rates.
+
+# Comparision with Previous Projects
+
+Our data has not been studied by by previous projects. To the best of our knowledge, we are the first ones in this course to study the Zillow data and more specifically the house prices in Seattle Metropolitan Area. However, reading the previous projects and their peer reviews helped in improving our project. For example, the use of `autoplot()` to visualize the forecast is inspired by Project 1 in Winter 24$^{[11]}$. Furthermore, reading peer reviews also helped us in understanding the lacking aspects of their project. For example, we use `decompose()` function just like them. However, reading a review of Project 1$^{[11, \text{ bullet 3}]}$ suggesting them to discuss the details of such methods led us to discuss the functioning of our methods more extensively. In below, we critically compare our work with two existing works: 
+
+## Comparison 1
+
+In Project 5 in Winter 24$^{[12]}$, they used STL decomposition `stl()` but we used `decompose()`. The difference is that `stl()` allows for seasonal patterns to change over time, while `decompose()` assume fixed seasonal pattern throughout the series. The key consideration is whether our data’s seasonal pattern is truly evolving or if it remains relatively stable over time. The vehicle sales data in project 5 and our housing price data all tend to exhibit seasonal patterns driven by consistent. For our case, a fixed seasonal component is often easier to incorporate into forecasting models. When the seasonality is consistent, using a fixed pattern can improve the reliability of forecasts, reducing the risk of overfitting that might arise from allowing the seasonal component too much flexibility. So it is not necessary to use `stl()` for our case.
+
+## Comparison 2
+
+In previous 531 project 14 in Winter 24$^{[13]}$, They used the log transform because it handles non-stationary data or reflects percent changes in finance. While, they didn’t give direct evidence that log transformation is essential for their specific dataset. In contrast, Our project takes data-driven approach to determine whether the log transform actually improves the analysis. We use plots and tests to see if it reduces high variance, reduce the effect of extreme outliers, and brings the residual of data closer to normality. By doing this, we show that using a log transform is not just a standard finance related technique, but is in fact well-supported by the behavior of our dataset. However, considering that real estate is also big part of investment, such observation is also expected and natural.
+
+
+# References
+
+[1]  Edward Ionides. Stats 531 WN2025 - Chapter 5 Lecture Notes.
+
+[2]  Edward Ionides. Stats 531 WN2025 - Chapter 6 Lecture Notes.
+
+[3]  Shapiro-Wilk Test: <https://en.wikipedia.org/wiki/Shapiro–Wilk_test>
+
+[4]  Ljung-Box Test: <https://en.wikipedia.org/wiki/Ljung–Box_test>
+
+[5]  <https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/decompose>
+
+[6]  <https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/spec.pgram>
+
+[7]  Zillow Research Data: <https://www.zillow.com/research/data/>
+
+[8]  Shumway, R. H., & Stoffer, D. S. (2017). Time Series Analysis and Its Applications (4th ed). Springer.
+
+[9]  <https://www.rdocumentation.org/packages/forecast/versions/8.23.0/topics/tsCV>
+
+[10] <https://en.wikipedia.org/wiki/Subprime_mortgage_crisis>
+
+[11] <https://ionides.github.io/531w24/midterm_project/project01/blinded.html>
+
+[12] <https://ionides.github.io/531w24/midterm_project/project05/blinded.html>
+
+[13] <https://ionides.github.io/531w24/midterm_project/project14/blinded.html>
+
+[14] ChatGPT: <https://chatgpt.com>
+
+[15] <https://gmd.copernicus.org/articles/15/5481/2022/>
+
+*Use of GenAI:* We used ChatGPT$^{[14]}$ in a supporting role. In the parallelization of the validation code, we needed its help in debugging. Also, we used ChatGPT to proof-read some of our sentences with the prompt "Just detect and fix the grammar errors without modifying the structure of the sentence". Thus, the original structure of the sentence and words stayed intact while if needed grammar errors or typos are recognized by ChatGPT. 
+
+# Appendix
+
+In this part, we are studying the raw-data without log-transformation. The conclusion of this study is that we need log transformation. Otherwise, the residuals depicted on the Q-Q plot violates the normality assumptions significantly. As we have done extensive model diagnostics, some details are omitted here. We will just give the conclusion.
+
+```{r}
+# ACF analysis
+acf(seattle_ts, main = "ACF of Original Series")
+```
+
+Similar to the log-transformed data, the raw data also shows a slowly decreasing ACF pattern. This clearly indicates non-stationarity and the presence of a trend in the mean.
+
+Then we investigate whether the first-order differenced raw data with lag=1 is stationary. The ACF plot below shows a significant sinusoidal pattern with a period of around 12 months, indicating strong seasonal behavior. The slow decay also suggests a non-stationary series with periodic fluctuations. In each cycle, the autocorrelation at the middle of the year is the opposite to that at the end or beginning of the year. This corresponds to the fact that the housing market conditions are different in summer and winter.
+
+```{r}
+diff_ts <- diff(seattle_data$HousingPrice)
+acf(diff_ts, main = "ACF of Differenced Series", lag.max = 72)
+```
+
+This observation motivates us to further examine the effect of second-order differencing with larger lags on the raw data. The new ACF plots for differenced data with lags of 12, 24, and 36 are shown below. Compared to the ACF plot with first-order differencing, the sinusoidal patterns in these plots are less pronounced, indicating that most of the serial correlation has been removed and that differencing with larger lags has improved stationarity. Among the three, lag 36 is the most effective, as it nearly eliminates all long-term dependence. However, some short-term dependencies remain and are difficult to remove entirely. We plan to investigate this further in future studies.
+
+```{r}
+for (newlag in c(12, 24, 36)){
+  seasonal_diff_ts <- diff(seattle_data$HousingPrice, lag=newlag)
+  seasonal_diff_ts <- diff(seasonal_diff_ts)
+  acf(seasonal_diff_ts, lag.max = 72, main = paste0("ACF of Differenced Series lag=",newlag))
+  }
+```
+
+We now have a relatively stationary differenced raw data series. Then we can start the analysis by fitting an ARIMA model. The AIC table is shown as below. We find that ARIMA$(2,1,0)$ is the best model here. ARIMA$(2,1,2)$ is also close to the best model. We then use likelihood ratio test to compare these two models and the details are omitted.
+
+```{r, warning = FALSE, message = FALSE }
+seattle_data_aic_table <- aic_table(seattle_data$HousingPrice,4,5)
+kable(seattle_data_aic_table,digits=2)
+```
+
+```{r arimafit}
+arimafit = arima(seattle_data$HousingPrice,order=c(2,1,2))
+arimafit
+
+```
+
+The log likelihood test reveals that ARIMA$(2,1,2)$ is better than ARIMA$(2,1,0)$
+
+```{r roots}
+ar_roots <- polyroot(c(1, -coef(arimafit)[1:2]))  
+ma_roots <- polyroot(c(1, coef(arimafit)[2:3]))
+print(ar_roots)
+print(ma_roots)
+```
+
+The model is invertible and adheres to causality.
+
+```{r residuals}
+plot(arimafit$resid)
+```
+
+The residuals show significant correlations at the multiples of 12.
+
+```{r acf_resid}
+acf(arimafit$residuals, lag.max = 72, main = "ACF of Residuals")
+```
+
+We see heavy tails in the Q-Q plot. This is a typical pattern that motivates researchers to use log-transformed data.
+
+```{r}
+qqnorm(arimafit$resid)
+qqline(arimafit$resid, col = "red")
+```
+
+Now that we identified the ARIMA order model, let's also find the seasonal part of it. Here we fix ARIMA(2, 1, 2) which is selected by the previous analysis, and only find the optimal parameters $P$ and $Q$ for the seasonal part. By the AIC criteria in the below table, we find that $(0,1,1)$ part for the seasonal part makes sense.
+
+```{r, warning = FALSE, message = FALSE }
+sar_aic_table <- function(data, P, Q, a_order = c(2, 1, 2), Ds=1) {
+  table <- matrix(NA, nrow = P + 1, ncol = Q + 1)
+
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      fit <- try(
+        arima(data,
+              order = a_order,
+              seasonal = list(order = c(p, Ds, q), period = 12)
+        ),
+        silent = TRUE
+      )
+
+      if (!inherits(fit, "try-error")) {
+        table[p + 1, q + 1] <- fit$aic
+      } else {
+        table[p + 1, q + 1] <- NA
+      }
+    }
+  }
+
+  dimnames(table) <- list(
+    paste("SAR", 0:P, sep = ""),
+    paste("SMA", 0:Q, sep = "")
+  )
+
+  return(table)
+}
+
+seattle_data_sarma_aic_table <- sar_aic_table(seattle_data$HousingPrice, 3, 3)
+kable(seattle_data_sarma_aic_table, digits = 2)
+```
+
+Then we fit SARIMA$(2,1,2)(0,1,1)_{12}$ and obtain the following estimated statistics.
+
+```{r}
+sarimafit = arima(seattle_data$HousingPrice,order=c(2,1,2), seasonal = list(order = c(0, 1, 1), period = 12))
+sarimafit
+```
+
+The AR roots, MA roots and SMA roots all suggest the SARIMA$(2,1,2)(0,1,1)_{12}$ model is causal and invertible. <!-- With log likelihood test SMA$1$ is better than SAR$1$MA$1$. And SMA$2$ and SMA$3$ are non-invertible. -->
+
+```{r}
+ar_roots <- polyroot(c(1, -coef(sarimafit)[1:2]))  
+ma_roots <- polyroot(c(1, coef(sarimafit)[3:4]))
+sma_roots <- polyroot(c(1, coef(sarimafit)[5]))
+cat("AR roots: ", ar_roots)
+cat("\nMA roots: ", ma_roots)
+cat("\nSMA roots: ", sma_roots)
+```
+
+Lastly, we check the residual of this model. We examine three types of residual related plots. They are shown as follows.
+
+1.  The residual plot looks stationary with mean 0 now, except some larger stochastic conditional noise during the COVID-19 Pandemic (2021-2022).
+2.  The residual ACF plot suggests it is white noise because it only exibits strong correlation when lag=0.
+3.  The qq plot of the residual shows a heavy tailed distribution as it is clearly shown by leftmost and rightmost residuals on the plot. This is a typical pattern of using the original data. We have shown log-transformation can alleviate this pattern in the formal analysis, please refer to Section 3.
+
+```{r}
+plot(seattle_data$Date, sarimafit$resid, type="l", col="blue",
+     xlab="Date", ylab="Residuals", main="SARIMA Residuals")
+```
+
+```{r}
+acf(sarimafit$residuals, lag.max = 72, main = "ACF of Residuals")
+```
+
+```{r}
+qqnorm(sarimafit$resid)
+qqline(sarimafit$resid, col = "red")
+```

@@ -1,0 +1,1216 @@
+---
+title: "Examining Forecasting Obstacles for Water Level in Lake Malawi"
+subtitle: "STATS 531/631 Midterm Report - Winter 2025"
+author: ''
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    df_print: paged
+    mathjax: "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
+  html_notebook: default
+header-includes: \usepackage{hyperref, amsmath, amssymb, mathtools, amsthm, bbm, dsfont,
+  xcolor, gensymb}
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_library, echo=FALSE}
+suppressMessages(library(forecast))
+suppressMessages(library(kableExtra))
+suppressMessages(library(gt))
+# Load necessary libraries
+suppressPackageStartupMessages({
+  library(readr)
+  library(tidyverse)  # Contains dplyr for data manipulation
+  library(ggplot2)
+  library(lubridate)
+  library(gridExtra)
+  library(moments)
+  library(dplyr)
+  library(forecast)
+  library(grid)
+  library(tseries)
+
+
+})
+```
+
+
+
+\newcommand\prob{\mathbb{P}}
+\newcommand\E{\mathbb{E}}
+\newcommand\var{\mathrm{Var}}
+\newcommand\cov{\mathrm{Cov}}
+\newcommand\Sum[2]{\displaystyle\sum_{#1}^{#2}}
+\newcommand\Ex[1]{\mathbb{E}\left[#1\right]}
+\newcommand\V[1]{\mathbb{V}\left[#1\right]}
+\newcommand\Cov[1]{\text{Cov}\left(#1\right)}
+\long\def\muHat{\hat{\mu}}
+\long\def\s{\text{ }}
+\long\def\ddd{,\ldots,}
+\newcommand\paren[1]{\left(#1\right)}
+\newcommand\AsRequired{\text{, as required\textsubscript{\qedsymbol}}}
+\newcommand\ttvec[2]{\begin{bmatrix} #1 \\ #2  \end{bmatrix}}
+\newcommand\txtmat[4]{\begin{bmatrix} #1 & #2 \\ #3 & #4  \end{bmatrix}}
+\newcommand\N[2]{\mathcal{N}\left(#1,\s #2\right)}
+\newcommand\set[1]{\left\{ #1 \right\}}
+
+
+
+
+
+
+
+
+
+# Introduction
+
+Lake Chilwa, a 1,750 km² lake in Malawi, experiences unpredictable dry spells, occasionally drying out completely, located about 50 km east of Lake Malawi.  This variability disrupts fisheries, threatens biodiversity, and reduces water availability for agriculture, posing challenges for local communities [@Njaya2011]. Furthermore, the difficulty in predicting its water levels makes it hard for residents to plan for these fluctuations, increasing their vulnerability to droughts and resource shortages [@Chiwaula]. Wishing to study this phenomenon but lacking sufficient data for Lake Chilwa, we turn our attention to Lake Malawi, hoping to uncover insights that may inform future research and management strategies for Lake Chilwa [@lancaster1979physical].
+
+Lake Malawi, Africa’s third-largest lake, is shared by Malawi, Mozambique, and Tanzania. It provides vital water for hydropower, farming, and household use [@Mbaye2015]. Covering 28,800 km² with a depth of up to 785 meters, the lake is home to many unique fish species, especially Cichlids [@Mbaye2015]. However, the lake’s water levels often change due to weather patterns and natural water movements.
+Rainfall, evaporation, and runoff are the main factors affecting the lake’s water levels [@Kumambala2010]. Rain adds water, while evaporation, worsened by climate change, reduces it [@Kumambala2010]. Runoff from the 126,500 km² surrounding area brings more water into the lake and the Shire River is the only outflow of the lake [@Mtilatila2020]. In the past, water levels have varied greatly, causing long droughts between 1915 and 1935 and severe floods in the late 1970s [@Kumambala2010],[@Mtilatila2020]. 
+
+This study will use data from the Climate Engine website[^R1] and the Malawi government[^SOURCE1] to explore which of the water level components: precipitation, evaporation, or runoff causes the greatest difficulty in predicting water levels. In water-scarce regions, simply confirming that water levels are difficult to predict may offer little practical value. However, because water levels function within a largely closed system, pinpointing which components contribute most to forecasting challenges can provide deeper insight into the underlying sources of uncertainty. This understanding may help improve water management strategies in areas facing water insecurity.
+
+Subsequently, we seek to forecast these three variables and evaluate the quality of the forecast models produced. To contextualize the performance of these forecasts, it is important to consider their implications for predicting water level. By assessing both the predictive accuracy of a forecast and the relationship between the underlying variable and water level, we can better understand the extent to which forecast errors can impact water level projections.
+
+[^R1]: https://www.climateengine.org/
+[^SOURCE1]: Evaporation, precipitation, and runoff were obtained via Climate Engine. However, water level (not publicly available) was obtained via the Malawi government. We thank<br />
+Mexford Chimwemwe Mulumpwa<br />
+Department of Aquaculture and Fisheries<br />
+Lilongwe University of Agriculture and Natural Resources<br />
+P.O. Box 219<br />
+Lilongwe 3<br />
+for the water level data.
+
+## Exploratory Data Analysis
+
+
+
+```{r read_in_1, echo=FALSE, warning=FALSE}
+# Prepare and mutate data for plotting
+x <- read.csv("Lake_Malawi_Data.csv")
+x$Date <- as.Date(x$Date, format="%m/%d/%y")
+x <- x %>%
+  mutate(year = as.numeric(year(Date)),
+         month = month(Date, label = TRUE))
+#x$year <- ifelse(x$year>90, 1900+x$year, 2000+x$year)
+
+# Create plots for Water Levels, Precipitation, Evaporation, and Runoff
+g1 <- ggplot(x, aes(x = Date, y = W_level_mm)) +
+  geom_line(color = "blue", size = 1) +
+  labs(title = "Graph 1: Water Levels ", x = "Year", y = "Water Level (mm)") +
+  theme_minimal()
+
+g2 <- ggplot(x, aes(x = Date, y = Precip)) +
+  geom_line(color = "green", size = 1) +
+  labs(title = "Graph 2: Precipitation ", x = "Year", y = "Precipitation (mm)") +
+  theme_minimal()
+
+g3 <- ggplot(x, aes(x = Date, y = Evap)) +
+  geom_line(color = "red", size = 1) +
+  labs(title = "Graph 3: Evaporation Over Time", x = "Year", y = "Evaporation (mm)") +
+  theme_minimal()
+
+g4 <- ggplot(x, aes(x = Date, y = Nat_runof)) +
+  geom_line(color = "purple", size = 1) +
+  labs(title = "Graph 4: Natural Runoff Over Time", x = "Year", y = "Natural Runoff (mm)") +
+  theme_minimal()
+
+# Arrange all plots using gridExtra
+grid.arrange(g1, g2, g3, g4, ncol = 2)
+```
+
+
+
+```{r rachel_output_tab, echo=FALSE}
+
+
+# Initialize the data frame
+output_table <- as.data.frame(matrix(NA, nrow = 8, ncol = 5))
+colnames(output_table) <- c("Measure", "Water Level", "Evaporation", "Precipitation", "Natural Runoff")
+output_table$Measure <- c("Mean", "Median", "SD", "Minimum", "Maximum", "IQR", "Skewness", "Kurtosis")
+
+# Compute statistics for each variable
+
+# Water Level
+output_table[1, "Water Level"] <- mean(x$W_level_mm, na.rm = TRUE)
+output_table[2, "Water Level"] <- median(x$W_level_mm, na.rm = TRUE)
+output_table[3, "Water Level"] <- sd(x$W_level_mm, na.rm = TRUE)
+output_table[4, "Water Level"] <- min(x$W_level_mm, na.rm = TRUE)
+output_table[5, "Water Level"] <- max(x$W_level_mm, na.rm = TRUE)
+output_table[6, "Water Level"] <- IQR(x$W_level_mm, na.rm = TRUE)
+output_table[7, "Water Level"] <- skewness(x$W_level_mm, na.rm = TRUE)
+output_table[8, "Water Level"] <- kurtosis(x$W_level_mm, na.rm = TRUE)
+
+# Evaporation
+output_table[1, "Evaporation"] <- mean(x$Evap, na.rm = TRUE)
+output_table[2, "Evaporation"] <- median(x$Evap, na.rm = TRUE)
+output_table[3, "Evaporation"] <- sd(x$Evap, na.rm = TRUE)
+output_table[4, "Evaporation"] <- min(x$Evap, na.rm = TRUE)
+output_table[5, "Evaporation"] <- max(x$Evap, na.rm = TRUE)
+output_table[6, "Evaporation"] <- IQR(x$Evap, na.rm = TRUE)
+output_table[7, "Evaporation"] <- skewness(x$Evap, na.rm = TRUE)
+output_table[8, "Evaporation"] <- kurtosis(x$Evap, na.rm = TRUE)
+
+# Precipitation
+output_table[1, "Precipitation"] <- mean(x$Precip, na.rm = TRUE)
+output_table[2, "Precipitation"] <- median(x$Precip, na.rm = TRUE)
+output_table[3, "Precipitation"] <- sd(x$Precip, na.rm = TRUE)
+output_table[4, "Precipitation"] <- min(x$Precip, na.rm = TRUE)
+output_table[5, "Precipitation"] <- max(x$Precip, na.rm = TRUE)
+output_table[6, "Precipitation"] <- IQR(x$Precip, na.rm = TRUE)
+output_table[7, "Precipitation"] <- skewness(x$Precip, na.rm = TRUE)
+output_table[8, "Precipitation"] <- kurtosis(x$Precip, na.rm = TRUE)
+
+# Natural Runoff
+output_table[1, "Natural Runoff"] <- mean(x$Nat_runof, na.rm = TRUE)
+output_table[2, "Natural Runoff"] <- median(x$Nat_runof, na.rm = TRUE)
+output_table[3, "Natural Runoff"] <- sd(x$Nat_runof, na.rm = TRUE)
+output_table[4, "Natural Runoff"] <- min(x$Nat_runof, na.rm = TRUE)
+output_table[5, "Natural Runoff"] <- max(x$Nat_runof, na.rm = TRUE)
+output_table[6, "Natural Runoff"] <- IQR(x$Nat_runof, na.rm = TRUE)
+output_table[7, "Natural Runoff"] <- skewness(x$Nat_runof, na.rm = TRUE)
+output_table[8, "Natural Runoff"] <- kurtosis(x$Nat_runof, na.rm = TRUE)
+
+# Print the output table
+for (col in colnames(output_table)) {
+  if (col!="Measure") {
+    output_table[[col]] <- format(round(output_table[[col]],2), nsmall=2)
+  }
+}
+knitr::kable(output_table, 
+             caption = "<center><b>Descriptive Statistics for Different Variables (mm)<center><b>") %>%
+  kable_styling(full_width=FALSE, position = "center")
+```
+
+### Lake Malawi Water Level Patterns (Graph 1)
+The time series of Lake Malawi water levels from 1992 to 2017 reveals patterns of fluctuation driven by rainfall, evaporation, outflow, and natural runoff. Research suggests these fluctuations are significantly influenced by climatic variability, such as changes in rainfall patterns linked to phenomena like the El Niño-Southern  Oscillation [@Nicholson2017]. Peaks occur during periods of heavy rain or flooding, often associated with La Niña events, while declines occur with droughts, particularly during El Niño years. Additionally, high evaporation rates due to regional climatic conditions contribute to these trends [@Kumambala2010]. The average water level of 473,473 mm, closely aligned with the median of 473,485 mm, suggests a symmetrical distribution with moderate variability (standard deviation of 641.53 mm). The interquartile range (IQR) of 939.58 mm highlights significant spread, while the low skewness (0.023) and moderate kurtosis (2.32) indicate a nearly normal distribution with occasional extremes. 
+
+
+### Lake Malawi Precipitation Patterns (Graph 2)
+Lake Malawi experiences distinct seasonal precipitation patterns, with rainfall peaking during wet months and dropping significantly in dry periods. From 1992 to 2017, the lake’s precipitation followed an annual cycle, influenced by broader climatic factors such as the Intertropical Convergence Zone [@Nicholson2017]. The average monthly rainfall of 98.03 mm, with a median of 36.51 mm, suggests a right-skewed distribution where occasional heavy rainfall events contribute to overall precipitation. A standard deviation of 109.77 mm highlights the high variability, while a skewness of 0.81 and kurtosis of 2.30 indicate occasional extreme rainfall events [@Jury2002]. The interquartile range (IQR) of 192.03 mm further emphasizes the wide seasonal fluctuations in precipitation. This variability aligns with previous studies on Lake Malawi’s climate, which show that precipitation is a key driver of hydrological changes in the region [@Bootsma2003]. 
+
+
+### Evaporation Patterns (Graph 3)
+Lake Malawi's evaporation follows a seasonal cycle, peaking in warmer months and declining in cooler periods due to temperature fluctuations. From 1992 to 2017, the mean evaporation of 85.44 mm closely aligns with the median of 75.59 mm, indicating a relatively balanced distribution. However, the standard deviation of 57.90 mm and an IQR of 115.22 mm highlight significant variability, with occasional high-evaporation months but few extreme outliers (skewness = 0.23, kurtosis = 1.50) [@Bhave2020]. Evaporation is a major contributor to water loss in Lake Malawi, often exceeding the Shire River outflow, making it a crucial factor in water balance modeling [@Mtilatila2020]. Climate change has intensified evaporation trends due to rising temperatures and changing wind patterns, further impacting water availability for hydropower, agriculture, and local communities [@Lyons2015]. These findings align with past studies on Malawi’s climate, which emphasize the growing importance of adaptive water management strategies to mitigate evaporation-driven declines in lake levels [@Jury2014].
+
+
+### Natural Runoff Patterns (Graph 4)
+The natural runoff time series from 1992 to 2017 shows repeating cycles, with peaks following heavy rainfall and low runoff during dry periods, reflecting regional rainfall patterns and influencing Lake Malawi’s water levels. The mean runoff of 27.85 mm is significantly higher than the median of 2.22 mm, indicating a highly skewed distribution where low runoff is common, but extreme runoff events occasionally occur [@Bhave2020]. The standard deviation of 51.24 mm and IQR of 22.29 mm highlight substantial variability, while a skewness of 2.34 and kurtosis of 8.76 confirm frequent extreme values. The minimum runoff is 0 mm, while the maximum reaches 322.92 mm, reflecting the sporadic nature of intense runoff periods [@Jury2014]. These extreme fluctuations directly impact Lake Malawi’s water balance, influencing both seasonal water levels and long-term hydrological trends. Increased runoff can lead to flooding, while prolonged low-runoff periods contribute to drought conditions, both of which pose challenges for hydropower generation and water resource management [@Lyons2015]. 
+
+
+
+```{r, warning=FALSE, echo=FALSE}
+library(ggplot2)
+# Ensure 'year' is extracted as a numeric vector
+x <- x %>%
+  mutate(year = as.numeric(year(Date)),  # Extract year as numeric
+         month = month(Date, label = TRUE))  # Extract month as factor
+
+ggplot(x, aes(x = month, y = W_level_m, group = year, color = as.factor(year))) +
+  geom_line(alpha = 0.7) +
+  labs(title = "Graph 5: Lake Malawi Water Levels by Month",
+       x = "Month",
+       y = "Water Level (m)",
+       color = "Year") +
+  theme_minimal()
+
+```
+
+
+
+### Lake Malawi Water Level by Month (Graph 5)
+
+Each month, Lake Malawi’s water levels fluctuate in response to precipitation, evaporation, and regulated outflows. During the rainy season (December–April), increased precipitation and runoff cause water levels to rise, peaking in March and April as the Intertropical Convergence Zone (ITCZ) shifts southward, bringing heavy rainfall [@Nicholson2017]. As rainfall decreases in May, the lake enters the cool-dry season (May–August), where lower temperatures slow evaporation, but minimal inflows result in a gradual decline [@Kumambala2010]. The most significant drop occurs between September and November, coinciding with peak evaporation rates, minimal precipitation [@Bootsma2013LakeME]. Climate variability further influences these patterns, with El Niño events reducing wet-season rainfall, leading to weaker peaks, while La Niña enhances precipitation, resulting in higher-than-average water levels [@Jury2014]. Rising temperatures are causing more evaporation, increasing water loss in the dry season and making the lake more vulnerable to climate changes [@Lyons2015].
+
+
+
+
+
+
+
+
+```{r Define_Model_Fitting, echo=FALSE}
+fit_all_models <- function(data, P, Q, arima2=FALSE, extra_parms=FALSE, seed=NULL,
+                           seasonal=list(order = c(0L, 0L, 0L), period = NA)){
+  aic_table <- matrix(NA,(P+1),(Q+1))
+  ARMA_models <- NULL
+  for(p in 0:P) {ARMA_models[[toString(p)]] <- NULL}
+  for(p in 0:P) {for(q in 0:Q) {
+    if (!is.null(seed)) {set.seed(seed)}
+    if (arima2) {
+      if (extra_parms) {
+        arma_pq <- 
+          tryCatch({suppressWarnings(arima2::arima(data, order=c(p,0,q), seasonal=seasonal,
+                                                   diffuseControl=FALSE, max_repeats = 25, 
+                                                   max_iters = 200, 
+                                                   optim.control = list(maxit = 1000)))
+          }, error=function(e){tryCatch({
+            suppressWarnings(arima2::arima(data, order=c(p,0,q), seasonal=seasonal,
+                                           diffuseControl=FALSE, max_repeats = 25, 
+                                           max_iters = 200, 
+                                           optim.control = list(maxit = 1000), 
+                                           method="ML"))}, 
+            error=function(ee){list(aic=NA)})})
+      } else {
+        arma_pq <- 
+          tryCatch({suppressWarnings(arima2::arima(data, order=c(p,0,q), 
+                                                   seasonal=seasonal))
+          }, error=function(e){tryCatch({
+            suppressWarnings(arima2::arima(data, order=c(p,0,q), seasonal=seasonal,
+                                           method="ML"))}, 
+            error=function(ee){list(aic=NA)})})
+      }
+    } else {
+        arma_pq <- 
+          tryCatch({suppressWarnings(stats::arima(data, order=c(p,0,q), 
+                                                  seasonal=seasonal))
+          }, error=function(e){tryCatch({
+            suppressWarnings(stats::arima(data, order=c(p,0,q), seasonal=seasonal,
+                                          method="ML"))}, 
+            error=function(ee){list(aic=NA)})})
+    }
+  aic_table[p+1,q+1] <- arma_pq$aic
+  ARMA_models[[toString(p)]][[toString(q)]] <- arma_pq
+  }}
+  Output <- list(aic_table=aic_table,
+                 ARMA_models=ARMA_models)
+  return(Output)
+}
+
+
+
+print_aic_table <- function(aic_table, caption="", subcaption=NULL,
+                            digits=2) {
+  full_caption <- paste0("<center><b>", caption, "<center><b>")
+  formatted_table <- aic_table
+  dimnames(formatted_table) <- 
+    list(paste("AR", 0:(nrow(aic_table)-1), sep=""), 
+         paste("MA", 0:(ncol(aic_table)-1), sep="")) 
+  if (is.null(subcaption)) {
+    knitr::kable(formatted_table, digits=digits, caption=full_caption)
+  } else {
+    knitr::kable(formatted_table, digits=digits, caption=full_caption) %>%
+      kable_styling() %>%
+      add_footnote(subcaption, notation="alphabet")
+  }
+}
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+```
+
+
+```{r Data_Read_In_Model_Fit, echo=FALSE}
+data_raw <- read.csv("Lake_Malawi_Data.csv")
+data_raw$Month <- c(1:nrow(data_raw))
+data_raw$Year <- ifelse(as.numeric(substrRight(data_raw$Date,2))>90, 
+                        as.numeric(paste0("19",substrRight(data_raw$Date,2))),
+                        as.numeric(paste0("20",substrRight(data_raw$Date,2))))
+
+# Define training data
+last_month <- 254
+
+#Evaporation
+evap_train <- data_raw$Evap[1:last_month]
+log_evap_train <- log(evap_train)
+
+#https://robjhyndman.com/hyndsight/transformations/
+
+#Precipitation
+precip_train <- data_raw$Precip[1:last_month]
+precip_shift_1 <- (quantile(precip_train, .25)[[1]]/quantile(precip_train, .75)[[1]])^2
+precip_shift_2 <- min(precip_train[precip_train!=0])/2
+
+log_precip_train_1 <- log(precip_shift_1 + precip_train)
+log_precip_train_2 <- log(precip_shift_2 + precip_train)
+
+
+#Runoff
+runoff_train <- data_raw$Nat_runof[1:last_month]
+runoff_shift_1 <- (quantile(runoff_train, .25)[[1]]/quantile(runoff_train, .75)[[1]])^2
+runoff_shift_2 <- min(runoff_train[runoff_train!=0])/2
+
+log_runoff_train_1 <- log(runoff_shift_1 + runoff_train)
+log_runoff_train_2 <- log(runoff_shift_2 + runoff_train)
+
+
+```
+
+
+```{r Run_All_ARMA_Models, echo=FALSE}
+# NOTE: Running this will take roughly 9 hours. We ran it (and stored results) to
+#       allow for sensible run times after initial run
+run_analyses <- FALSE
+if (run_analyses) {
+  evap_models <- list(
+    raw = fit_all_models(data=evap_train, P=3, Q=4, arima2=FALSE, 
+                         extra_parms=FALSE, seed=657,
+                         seasonal=list(order=c(1,0,0), period=12)),
+    arima2 = fit_all_models(data=evap_train, P=3, Q=4, arima2=TRUE, 
+                            extra_parms=FALSE, seed=657,
+                            seasonal=list(order=c(1,0,0), period=12)),
+    arima2p = fit_all_models(data=evap_train, P=3, Q=4, arima2=TRUE, 
+                             extra_parms=TRUE, seed=657,
+                             seasonal=list(order=c(1,0,0), period=12)),
+    arima2_101 = fit_all_models(data=evap_train, P=3, Q=4, arima2=TRUE, 
+                                extra_parms=FALSE, seed=657,
+                                seasonal=list(order=c(1,0,1), period=12)),
+    arima2_101p = fit_all_models(data=evap_train, P=3, Q=4, arima2=TRUE, 
+                                 extra_parms=TRUE, seed=657,
+                                 seasonal=list(order=c(1,0,1), period=12)),
+    arima2_log = fit_all_models(data=log_evap_train, P=3, Q=4, arima2=TRUE, 
+                                extra_parms=TRUE, seed=657,
+                                seasonal=list(order=c(1,0,0), period=12)),
+    arima2_log_101 = fit_all_models(data=log_evap_train, P=3, Q=4, arima2=TRUE, 
+                                    extra_parms=TRUE, seed=657,
+                                    seasonal=list(order=c(1,0,1), period=12))
+  )
+  saveRDS(evap_models, "evap_models.RDS")
+
+  precip_models <- list(
+    arima2 = fit_all_models(data=precip_train, P=3, Q=4, arima2=TRUE, 
+                            extra_parms=TRUE, seed=657,
+                            seasonal=list(order=c(1,0,0), period=12)),
+    arima2_101 = fit_all_models(data=precip_train, P=3, Q=4, arima2=TRUE, 
+                                extra_parms=TRUE, seed=657,
+                                seasonal=list(order=c(1,0,1), period=12)),
+    arima2_log_v1 = fit_all_models(data=log_precip_train_1, P=3, Q=4, arima2=TRUE, 
+                                   extra_parms=TRUE, seed=657,
+                                   seasonal=list(order=c(1,0,0), period=12)),
+    arima2_log_101_v1 = fit_all_models(data=log_precip_train_1, P=3, Q=4, arima2=TRUE, 
+                                       extra_parms=TRUE, seed=657,
+                                       seasonal=list(order=c(1,0,1), period=12)),
+    arima2_log_v2 = fit_all_models(data=log_precip_train_2, P=3, Q=4, arima2=TRUE, 
+                                   extra_parms=TRUE, seed=657,
+                                   seasonal=list(order=c(1,0,0), period=12)),
+    arima2_log_101_v2 = fit_all_models(data=log_precip_train_2, P=3, Q=4, arima2=TRUE, 
+                                       extra_parms=TRUE, seed=657,
+                                       seasonal=list(order=c(1,0,1), period=12))
+  )
+  saveRDS(precip_models, "precip_models.RDS")
+  
+  
+  runoff_models <- list(
+    arima2 = fit_all_models(data=runoff_train, P=3, Q=4, arima2=TRUE, 
+                            extra_parms=TRUE, seed=657,
+                            seasonal=list(order=c(1,0,0), period=12)),
+    arima2_101 = fit_all_models(data=runoff_train, P=3, Q=4, arima2=TRUE, 
+                                extra_parms=TRUE, seed=657,
+                                seasonal=list(order=c(1,0,1), period=12)),
+    arima2_log_v1 = fit_all_models(data=log_runoff_train_1, P=3, Q=4, arima2=TRUE, 
+                                   extra_parms=TRUE, seed=657,
+                                   seasonal=list(order=c(1,0,0), period=12)),
+    arima2_log_101_v1 = fit_all_models(data=log_runoff_train_1, P=3, Q=4, arima2=TRUE, 
+                                       extra_parms=TRUE, seed=657,
+                                       seasonal=list(order=c(1,0,1), period=12)),
+    arima2_log_v2 = fit_all_models(data=log_runoff_train_2, P=3, Q=4, arima2=TRUE, 
+                                   extra_parms=TRUE, seed=657,
+                                   seasonal=list(order=c(1,0,0), period=12)),
+    arima2_log_101_v2 = fit_all_models(data=log_runoff_train_2, P=3, Q=4, arima2=TRUE, 
+                                       extra_parms=TRUE, seed=657,
+                                       seasonal=list(order=c(1,0,1), period=12))
+  )
+  saveRDS(runoff_models, "runoff_models.RDS")
+
+} else {
+  evap_models <- readRDS("evap_models.RDS")
+  precip_models <- readRDS("precip_models.RDS")
+  runoff_models <- readRDS("runoff_models.RDS")
+}
+```
+
+
+
+
+# Model Fitting
+
+In this section, we explore modeling the trajectory of evaporation, precipitation, and natural runoff in the Lake Malawi region. While we have data through August 2017, we will only use data through the end of 2013 for model building. We will then use data from 2014-2017 as test data to obtain error estimates for our forecasts, discussed more in the section below.
+
+For illustrative purposes, we document the model-building for the evaporation data. We built models precipitation and natural runoff using similar model-building strategies.
+
+## Evaporation
+
+
+```{r plot_evap, echo=FALSE, include=FALSE}
+
+plot(Evap~Month, data=data_raw[1:last_month,], type="l", xaxt="n", 
+     xlab="Year", ylab="Evaporation (mm)")
+title("Evaporation in Lake Malawi Region (Measured Monthly)")
+
+default_ticks <- axTicks(1)
+year_labels <- data_raw$Year[pmin(default_ticks+1, nrow(data_raw))]
+axis(1, at=default_ticks, labels=year_labels)
+
+# Having a ton of trouble getting this plot to print in the knitted document
+#suppressMessages(dev.flush())
+#print(recordPlot())  
+invisible(capture.output(dev.flush()))
+
+```
+
+We begin with a quick examination of the evaporation trend, shown in Graph 3 above. In this graph, we observe a clearly periodic relationship. As one may expect, we observe these annual oscillations for precipitation and runoff as well, with the periods corresponding to the seasonality of the water cycle ("wet/dry seasons") [@Chou2013]. Subsequently, we consider seasonal ARMA models. As in class, we will begin by exploring models of the form $SARMA(p,q)\times (1,0)_{12}$.[^G1] We explore Akaike information criterion (AIC) values for such models in the table below (using `stats::arima()`` for model fitting).
+
+[^G1]: Note: We could have examined a (smoothed) periodogram to confirm that the dominant oscillations took the form of annual cycles. However, the data shows such strong annual seasonality (backed by scientific/cultural consensus) that we did not feel a data-driven exploration would be valuable here.
+
+
+```{r print_evap_aic_raw, results='asis', echo=FALSE}
+print_aic_table(aic_table=evap_models$raw$aic_table, 
+                caption="stats::arima()-Produced AIC Table for Evaporation",
+                subcaption = "All models contain a $(1,0)_{12}$ seasonal term.", 
+                digits=2)
+```
+
+
+In this table, we see some inconsistent AIC values. For example, the $SARMA(2,2)\times(1,0)_{12}$ model fit has estimated AIC 2051.01, whereas the $SARMA(2,3)\times(1,0)_{12}$ model fit has estimated AIC 2064.84. Assuming proper maximization, the latter should have an AIC of *at most* two more than the former. Given this is not the case, we conclude that `stats::arima` is not maximizing the likelihood properly. Subsequently, we turn to the `arima2` package [@arima2].
+
+
+
+```{r print_evap_aic_arima2, results='asis', echo=FALSE}
+print_aic_table(aic_table=evap_models$arima2$aic_table, 
+                caption="arima2::arima()-Produced AIC Table for Evaporation",
+                subcaption = "All models contain a $(1,0)_{12}$ seasonal term.", 
+                digits=2)
+```
+
+As before, we observe issues with AIC consistency. As a result, we turn our attention to the technical details of the likelihood optimization. We now fit SARMA models as follows:[^G2]
+
+[^G2]: On the advice of Jesse Wheeler.
+
+```{r arima2_proper_fit_example, eval=FALSE}
+sarma_model_fit <- arima2::arima(x = time_series_data, order = c(p,0,q), 
+                                 seasonal = list(order=c(P,0,Q), period=12),
+                                 diffuseControl = FALSE, max_repeats = 25, 
+                                 max_iters = 200, 
+                                 optim.control = list(maxit=1000))
+```
+
+Here, setting `diffuseControl=FALSE` rejects the default method of ignoring the likelihood values of the initial observations if they're controlled by the diffuse prior (i.e., have a Kalman gain of at least `1e4`).[^G3]
+We also use `optim.control = list(maxit=1000)` to allow each run of the `optim()` function to use more iterations to reach an estimated optimal value (default 100). We also increase the maximum number of random restarts for the CSS-ML method by setting `max_iters=200` and we increase the threshold for the number of consecutive random restarts that don't improve the likelihood by setting `max_repeats=25`.[^G4]
+
+[^G3]: See https://www.rdocumentation.org/packages/arima2/versions/3.3.0/topics/arima
+[^G4]: For the purposes of AIC tables, we used the above method as the initial approach. If this failed, then we also set `method="ML"`, which uses a maximum likelihood fitting method (rather than using conditional-sum-of-squares to find starting values for the likelihood maximization).
+
+
+This generated the following table:
+```{r print_evap_aic_arima2p, results='asis', echo=FALSE}
+print_aic_table(aic_table=evap_models$arima2p$aic_table, 
+                caption="arima2::arima()-Produced AIC Table for Evaporation\n(With Adjusted Optimization Parameters)",
+                subcaption = "All models contain a $(1,0)_{12}$ seasonal term.", 
+                digits=2)
+```
+
+Again, we observe some inconsistent AIC values - particularly surrounding the $SARMA(2,3)\times(1,0)_{12}$ model. We investigate the (inverted) roots of this SARMA model below.
+
+```{r roots_23, echo=FALSE}
+plot(evap_models$arima2p$ARMA_models$`2`$`3`)
+#title("Inverted Roots of SARMA(2,3) X (1,0)_12 - Evaporation")
+```
+
+
+As we can see above, there are multiple roots on the unit circle (for both the AR and MA polynomials), likely contributing to the persistent numerical issues shown above. We explored simpler models (plots omitted for conciseness); however, we continued to observe a unit root for the MA polynomial whenever $q>0$. Taking the lowest AIC of the models without MA unit roots resulted in the $SARMA(1,0)\times(1,0)_{12}$ model (which did not have any roots on/in the unit circle). However, when we examine the sample autocorrelation of this model below, we observe a spike for 12 month lags.
+
+```{r ARMA10_ACF, echo=FALSE}
+evap_arma_10 <- evap_models$arima2p$ARMA_models$`1`$`0`
+acf(evap_arma_10$residuals, main="ACF of SARMA(1,0) X (1,0)_12 Residuals - Evaporation")
+```
+
+This indicated that there was still seasonality in the residuals of the model. Therefore, we explored adding an MA term to the seasonal component of our SARMA model. I.e., we turned attention to models of the form $SARMA(p,q)\times(1,1)_{12}$. Taking the model with the lowest AIC (among $p\in\{0, ..., 3\}, q\in\{0,..., 4\})$, gave $SARMA(1,2)\times(1,1)_{12}$.[^G5][^G6] We observe that this largely flattened the autocorrelation at lag 12. While there is *some* potential periodicity in the residual correlation, this has largely been reduced and we proceed. 
+
+[^G5]: Full table omitted for brevity.
+[^G6]: This model did not have any AR/MA roots on/in the unit circle.
+
+```{r AIC_Table_SARMA_wMA, include=FALSE}
+print_aic_table(aic_table=evap_models$arima2_101p$aic_table, 
+                caption="arima2::arima()-Produced AIC Table for Evaporation\n(With Adjusted Optimization Parameters)",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+```
+
+```{r arma_12_11_plots, echo=FALSE}
+evap_arma_12_11 <- evap_models$arima2_101$ARMA_models$`1`$`2`
+acf(evap_arma_12_11$residuals, main="ACF of SARMA(1,2) X (1,1)_12 Residuals - Evaporation")
+```
+
+While the fitted model appears to describe the data well, we observe that a Normal QQ plot shows highly non-normal behavior of the residuals of this model.
+
+```{r plot_figs_12_11, fig.width=10, fig.height=5, echo=FALSE}
+par(mfrow=c(1,2))
+ts.plot(evap_train, fitted(evap_arma_12_11), col = c("black", "red"), 
+        lty = 1:3, ylab = "Evaporation", main = "Fitted Values from SARMA(1,2)X(1,1)_12")
+mtext("For the fitted values plot, the black line represents observed data, the red dashed line represents fitted values.", 
+      side=1, line=4, adj=0, cex=0.8)
+qqnorm(evap_arma_12_11$residuals, pch = 1, frame = FALSE)
+qqline(evap_arma_12_11$residuals, col = "steelblue", lwd = 2)
+```
+
+
+As suggested in class, we thus explore a log transformation. Thus, we consider models of the form $SARMA(p,q)\times(1,1)_{12}$ for $\log(Evaporation)$. Using AIC (with the diagnostic specifications discussed above) suggested that $SARMA(2,0)\times(1,1)_{12}$ would be an appropriate model.[^G7] We examine the sample ACF, fitted values and the normality of the residuals below.
+
+[^G7]: The models $SARMA(2,4)\times(1,1)_{12}$, $SARMA(3,1)\times(1,1)_{12}$, and $SARMA(2,1)\times(1,1)_{12}$ had lower AIC values; however, all had unit roots in the AR and/or MA polynomials.
+
+```{r AIC_Table_SARMA_wMA_log, include=FALSE}
+print_aic_table(aic_table=evap_models$arima2_log_101$aic_table, 
+                caption="arima2::arima()-Produced AIC Table for Log Evaporation\n(With Adjusted Optimization Parameters)",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+log_evap_24_11 <- evap_models$arima2_log_101$ARMA_models$`2`$`4`
+plot(log_evap_24_11)
+log_evap_31_11 <- evap_models$arima2_log_101$ARMA_models$`3`$`1`
+plot(log_evap_31_11)
+log_evap_21_11 <- evap_models$arima2_log_101$ARMA_models$`2`$`1`
+plot(log_evap_21_11)
+#Winner winner chicken dinner
+log_evap_20_11 <- evap_models$arima2_log_101$ARMA_models$`2`$`0`
+plot(log_evap_20_11)
+```
+
+
+
+```{r plot_figs_20_11_log, fig.width=10, fig.height=5, echo=FALSE}
+
+log_evap_20_11 <- evap_models$arima2_log_101$ARMA_models$`2`$`0`
+par(mfrow=c(1,2))
+
+
+ts.plot(log_evap_train, fitted(log_evap_20_11), col = c("black", "red"), 
+        lty = 1:3, ylab = "Log Evaporation", main = "Fitted Values from SARMA(2,0)X(1,1)_12")
+mtext("For the fitted values plot, the black line represents observed data, the red dashed line represents fitted values.", 
+      side=1, line=4, adj=0, cex=0.8)
+qqnorm(log_evap_20_11$residuals, pch = 1, frame = FALSE)
+qqline(log_evap_20_11$residuals, col = "steelblue", lwd = 2)
+```
+
+
+```{r plot_figs_20_11_log_acf, echo=FALSE}
+acf(log_evap_20_11$residuals, main="ACF of SARMA(1,2) X (1,1)_12 Residuals - Log Evaporation")
+```
+
+
+As we can see above, the model fits the log evaporation data well and the sample autocorrelation shows little evidence of problematic autocorrelation in the residuals. Furthermore, while the QQ plot does not show perfect alignment with normal quantiles, we see that the log transformation has largely alleviated the non-normality in the residuals. Given these observations, we select this model for our time series analysis of evaporation.
+
+
+```{r store_evap_model, echo=FALSE}
+final_evap_model <- log_evap_20_11
+```
+
+
+## Precipitation and Natural Runoff
+
+
+```{r Precipitation_Exploration, include=FALSE}
+# First confirm that adding the MA term helps the AIC
+precip_models$arima2_log_101_v1$aic_table - precip_models$arima2_log_v1$aic_table
+precip_models$arima2_log_101_v2$aic_table - precip_models$arima2_log_v2$aic_table
+# It mostly does - if we had selected a model that saw a close AIC between the 
+# two, we'd investigate further
+
+# Examine AICs under the different log transformations
+print_aic_table(aic_table=precip_models$arima2_log_101_v1$aic_table, 
+                caption="Log Precipitation Model AICs - Transform 1",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+
+print_aic_table(aic_table=precip_models$arima2_log_101_v2$aic_table, 
+                caption="Log Precipitation Model AICs - Transform 1",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+
+# Iteratively try lower AIC values, stop when we get a model with stable roots
+precip_model_transform1_1 <- precip_models$arima2_log_101_v1$ARMA_models$`2`$`2`
+plot(precip_model_transform1_1)
+
+precip_model_transform2_1 <- precip_models$arima2_log_101_v2$ARMA_models$`3`$`3`
+plot(precip_model_transform2_1)
+
+# precip_model_transform1_2 has "good" roots, precip_model_transform2_2 doesn't
+precip_model_transform1_2 <- precip_models$arima2_log_101_v1$ARMA_models$`3`$`1`
+plot(precip_model_transform1_2)
+
+precip_model_transform2_2 <- precip_models$arima2_log_101_v2$ARMA_models$`2`$`2`
+plot(precip_model_transform2_2)
+```
+
+
+```{r explore_chosen_precip_model, include=FALSE}
+log_precip1_31_11 <- precip_models$arima2_log_101_v1$ARMA_models$`3`$`1`
+acf(log_precip1_31_11$residuals, main="ACF of SARMA(3,1) X (1,1)_12 Residuals - Transformed")
+
+# We're not able to capture the negative peaks well; however, I think this shouldn't be a huge issue
+# since this isn't a big "miss" in actual mm
+ts.plot(log_precip_train_1, fitted(log_precip1_31_11), col = c("black", "red"), 
+        lty = 1:3, ylab = "Transformed Precipitation", main = "Fitted Values from SARMA(3,1)X(1,1)_12")
+mtext("For the fitted values plot, the black line represents observed data, the red dashed line represents fitted values.", 
+      side=1, line=4, adj=0, cex=0.8)
+qqnorm(log_precip1_31_11$residuals, pch = 1, frame = FALSE)
+qqline(log_precip1_31_11$residuals, col = "steelblue", lwd = 2)
+
+
+```
+
+```{r Runoff_Exploration, include=FALSE}
+# First confirm that adding the MA term helps the AIC
+runoff_models$arima2_log_101_v1$aic_table - runoff_models$arima2_log_v1$aic_table
+runoff_models$arima2_log_101_v2$aic_table - runoff_models$arima2_log_v2$aic_table
+# It mostly does - if we had selected a model that saw a close AIC between the 
+# two, we'd investigate further
+
+# Examine AICs under the different log transformations
+print_aic_table(aic_table=runoff_models$arima2_log_101_v1$aic_table, 
+                caption="Log Runoff Model AICs - Transform 1",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+
+print_aic_table(aic_table=runoff_models$arima2_log_101_v2$aic_table, 
+                caption="Log Runoff Model AICs - Transform 2",
+                subcaption = "All models contain a $(1,1)_{12}$ seasonal term.", 
+                digits=2)
+
+# As before, iteratively try lower AIC values, stop when we get a model with stable roots
+# We try to go "simpler" each round
+runoff_model_transform1_1 <- runoff_models$arima2_log_101_v1$ARMA_models$`2`$`2`
+plot(runoff_model_transform1_1)
+
+runoff_model_transform2_1 <- runoff_models$arima2_log_101_v2$ARMA_models$`2`$`2`
+plot(runoff_model_transform2_1)
+
+# Round 2
+runoff_model_transform1_2 <- runoff_models$arima2_log_101_v1$ARMA_models$`3`$`1`
+plot(runoff_model_transform1_2)
+
+runoff_model_transform2_2 <- runoff_models$arima2_log_101_v2$ARMA_models$`3`$`1`
+plot(runoff_model_transform2_2)
+
+# Round 3
+runoff_model_transform1_3 <- runoff_models$arima2_log_101_v1$ARMA_models$`1`$`1`
+plot(runoff_model_transform1_3)
+
+runoff_model_transform2_3 <- runoff_models$arima2_log_101_v2$ARMA_models$`1`$`1`
+plot(runoff_model_transform2_3)
+
+# Round 4
+# Both have "good" roots - the first one has roots that are *slightly* further
+# away from the unit circle so we'll go with it (also we went with Transformation 1)
+# for the precipitation model, so it will be nice to be consistent
+runoff_model_transform1_4 <- runoff_models$arima2_log_101_v1$ARMA_models$`2`$`0`
+plot(runoff_model_transform1_4)
+
+runoff_model_transform2_4 <- runoff_models$arima2_log_101_v2$ARMA_models$`2`$`0`
+plot(runoff_model_transform2_4)
+```
+
+```{r explore_chosen_runoff_model, include=FALSE}
+log_runoff1_20_11 <- runoff_models$arima2_log_101_v1$ARMA_models$`2`$`0`
+acf(log_runoff1_20_11$residuals, main="ACF of SARMA(2,0) X (1,1)_12 Residuals - Transformed")
+
+# We're not able to capture the negative peaks well; however, I think this shouldn't be a huge issue
+# since this isn't a big "miss" in actual mm
+# Here, we do see some pretty bad QQ behavior at the tail end; however, hopefully this won't be a 
+# large issue in terms of "miss" in terms of mm (rather than transformed mm)
+ts.plot(log_runoff_train_1, fitted(log_runoff1_20_11), col = c("black", "red"), 
+        lty = 1:3, ylab = "Transformed Runoff", main = "Fitted Values from SARMA(2,0)X(1,1)_12")
+mtext("For the fitted values plot, the black line represents observed data, the red dashed line represents fitted values.", 
+      side=1, line=4, adj=0, cex=0.8)
+qqnorm(log_runoff1_20_11$residuals, pch = 1, frame = FALSE)
+qqline(log_runoff1_20_11$residuals, col = "steelblue", lwd = 2)
+
+
+```
+
+
+
+```{r store_precip_runoff_models, echo=FALSE}
+# Precip: Log transformed (v1), SARMA(3,1)X(1,1)_12
+final_precip_model <- precip_models$arima2_log_101_v1$ARMA_models$`3`$`1`
+# Precip: Log transformed (v1), SARMA(2,0)X(1,1)_12
+final_runoff_model <- runoff_models$arima2_log_101_v1$ARMA_models$`2`$`0`
+```
+
+We underwent a similar process as above for fitting models to the precipitation and runoff data. One key difference was that these time series had values of 0 for some months (i.e., $precipitation_n, runoff_n\geq 0$, whereas $evaporation_n>0$). This prevented directly log-transforming the time series. As advised by [@Hyndman], we explored two different transformations (both of the form $\tilde{y}_n=\log(y_n+\lambda))$):
+
+- $\lambda_1$: The square of the first quartile of the time series divided by the third quartile.
+- $\lambda_2$: One half the smallest non-zero value of the time series.
+
+
+Having explored models under both transformations, we saw that the best-performing models (in line with the process we saw above for evaporation) for both precipitation and natural runoff used the $\lambda_1$ transformation. This gave $\lambda_{1,precip}\approx -0.00056, \lambda_{1,runoff}\approx 0.00003.$ 
+
+```{r print_lambdas, include=FALSE}
+precip_shift_1
+runoff_shift_1
+```
+
+
+Using the same decision-making process as above, we modeled $\log(Precip_n + \lambda_{1,precip})$ using a $SARMA(3,1)\times(1,1)_{12}$ model, and $\log(Runoff_n + \lambda_{1,runoff})$ using a $SARMA(2,0)\times(1,1)_{12}$ model.
+
+
+# Model Evaluation
+
+As discussed above, our primary research question involved analyzing whether any of evaporation, precipitation, or natural runoff were singularly difficult to predict (which would help explain the unpredictability in water level). We will use mean absolute error (MAE) as the primary metric to assess "unpredictability." I.e., for each variable, we
+
+- Calculate the residuals (in natural units)[^G8] of the rolling one-step-ahead forecasts of the models above *on the test data* (i.e., measurements taken in 2014 and beyond).
+- Take the average absolute residual over the test set.
+
+
+[^G8]: I.e., we invert the transformations.
+
+Note that, by "rolling one-step-ahead forecasts," we mean that we try to predict the next month's evaporation/precipitation/runoff given all previous months' measurements (although we do not re-fit any SARMA models in this process). Furthermore, by restricting this analysis to the test data (which was not used to train the model), the observed MAE should be a consistent estimator for $\mathbb{E}\left[|\hat{Y}_n-Y_n|\right]$.
+
+```{r Calculate_MAE, echo=FALSE}
+Calculate_MAE <- function(train_data, test_data, test_data_raw=NULL,
+                          trained_arma_model, lambda=0, log=TRUE) {
+  arma_model <- trained_arma_model
+  current_series <- train_data
+  # Initialize storage for predictions
+  rolling_forecasts <- c()
+
+  for (t in (1:length(test_data))) {
+    forecasted_value <- predict(arma_model, n.ahead = 1)$pred
+    rolling_forecasts <- c(rolling_forecasts, forecasted_value)
+    
+    # Update the model by appending the actual observation
+    current_series <- ts(c(current_series, test_data[t]))
+    # Update ARMA model state without re-fitting
+    arma_model <- Arima(current_series, model = arma_model)
+  }
+  
+  # Invert the forecasts
+  if (log) {nat_forecasts <- exp(rolling_forecasts) - lambda
+  }
+  # Grab natural version of test data (Default is just the inputted test data)
+  if (is.null(test_data_raw)) {test_data_raw <- test_data}
+  
+  # Take absolute residuals
+  abs_resids <- abs(nat_forecasts-test_data_raw)
+  Output <- list(
+    MAE=mean(abs_resids),
+    resids=nat_forecasts-test_data_raw,
+    forecast=list(nat=nat_forecasts, transformed=rolling_forecasts)
+  )
+  return(Output)
+}
+
+
+test_rows <- ((last_month+1):nrow(data_raw))
+
+test_evap <- log(data_raw[test_rows, "Evap"])
+test_evap_raw <- data_raw[test_rows, "Evap"]
+
+test_precip <- log(data_raw[test_rows, "Precip"] + precip_shift_1)
+test_precip_raw <- data_raw[test_rows, "Precip"]
+
+test_runoff <- log(data_raw[test_rows, "Nat_runof"] + runoff_shift_1)
+test_runoff_raw <- data_raw[test_rows, "Nat_runof"]
+
+
+
+evap_MAE_output <- Calculate_MAE(train_data=log_evap_train, 
+                                 test_data=test_evap, test_data_raw=test_evap_raw,
+                                 trained_arma_model=final_evap_model, 
+                                 lambda=0, log=TRUE)
+
+precip_MAE_output <- Calculate_MAE(train_data=log_precip_train_1, 
+                                   test_data=test_precip, 
+                                   test_data_raw=test_precip_raw,
+                                   trained_arma_model=final_precip_model, 
+                                   lambda=precip_shift_1, log=TRUE)
+runoff_MAE_output <- Calculate_MAE(train_data=log_runoff_train_1, 
+                                   test_data=test_runoff, 
+                                   test_data_raw=test_runoff_raw,
+                                   trained_arma_model=final_runoff_model, 
+                                   lambda=runoff_shift_1, log=TRUE)
+
+```
+
+
+This analysis gives the following MAE values:
+```{r MAE_table, echo=FALSE}
+MAE_table <- data.frame(Evaporation=round(evap_MAE_output$MAE,2),
+                        Precipitation=round(precip_MAE_output$MAE,2),
+                        Runoff=round(runoff_MAE_output$MAE,2))
+knitr::kable(MAE_table, 
+             caption = "<center><b>Mean Absolute Error (MAE) for Different Variables (mm)<center><b>") %>%
+  kable_styling(full_width=FALSE, position = "center")
+```
+
+
+
+The table above suggests that evaporation is the most predictable of the three variables, whereas precipitation is the least. We see this in the plots below, as the fitted model has difficulties forecasting the magnitude of the seasonal peaks for precipitation. 
+
+
+```{r all_preds, include=FALSE}
+ts.plot(ts(test_evap_raw), ts(evap_MAE_output$forecast$nat), col = c("black", "red"), 
+        lty = 1:3, ylab = "Evaporation (mm)", main = "Test Data Performance - Evaporation")
+
+ts.plot(ts(test_precip_raw), ts(precip_MAE_output$forecast$nat), col = c("black", "red"), 
+        lty = 1:3, ylab = "Precipitation (mm)", main = "Test Data Performance - Precipitation")
+
+ts.plot(ts(test_runoff_raw), ts(runoff_MAE_output$forecast$nat), col = c("black", "red"), 
+        lty = 1:3, ylab = "Runoff (mm)", main = "Test Data Performance - Runoff")
+```
+
+
+```{r plot_predictions, fig.width=10, fig.height=5, echo=FALSE}
+# Set up a side-by-side plotting layout
+par(mfrow = c(1,2), oma = c(0, 0, 2, 0))  # oma adds space for a shared title
+
+ts.plot(ts(test_evap_raw), ts(evap_MAE_output$forecast$nat), col = c("black", "red"), 
+        lty = 1:3, ylab = "Evaporation (mm)", main = "Evaporation") 
+
+default_ticks_new <- axTicks(1)
+year_labels <- data_raw$Year[test_rows][(default_ticks_new+1)]
+#axis(1, at = default_ticks_new, labels = FALSE)
+#axis(1, at = default_ticks_new, labels = year_labels) 
+ts.plot(ts(test_precip_raw), ts(precip_MAE_output$forecast$nat), col = c("black", "red"), 
+        lty = 1:3, ylab = "Precipitation (mm)", main = "Precipitation")
+#axis(1, at = default_ticks_new, labels = FALSE)
+#axis(1, at = default_ticks_new, labels = year_labels) 
+mtext("Test Data Performance", side = 3, outer = TRUE, line = 0.5, cex = 1.5)
+
+# Add a shared legend outside the plot area
+par(mfrow = c(1,1))  # Reset layout
+par(xpd = NA)
+legend("bottom", inset=c(0,-.4), legend = c("Observed Data", "Forecasted Data"), 
+       col = c("black", "red"), lty = c(1, 2), horiz = TRUE, bty = "n", cex = 1.2)
+
+```
+
+
+# Regression
+
+```{r reg_data_read_in, echo=FALSE}
+data <- read.csv("Lake_Malawi_Data.csv")
+data$Date <- as.Date(data$Date, format="%m/%d/%Y")
+data <- data[, c('Date', 'W_level_mm', 'Precip', 'Evap', 'Nat_runof')]
+```
+
+```{r ashwin_grid_search, echo=FALSE}
+
+### Grid Search Function
+
+find_best_arima <- function(number_of_p_values, d_value, number_of_q_values, seasonal_order, seasonal_period) {
+  aic_matrix <- matrix(NA, nrow = number_of_p_values + 1, ncol = number_of_q_values + 1, 
+                       dimnames = list(0:number_of_p_values, 0:number_of_q_values))
+  best_aic <- Inf
+  best_pq <- c(0, 0)
+
+  for (p in 0:number_of_p_values) {
+    for (q in 0:number_of_q_values) {
+      tryCatch({
+        model <- arima(data$W_level_mm, 
+                       xreg = data[, c('Precip', 'Evap', 'Nat_runof')], 
+                       order = c(p, d_value, q), 
+                       seasonal = list(order = seasonal_order, period = seasonal_period),
+                       optim.control = list(maxit = 1000))
+        aic_value <- model$aic
+        aic_matrix[p + 1, q + 1] <- aic_value  
+        if (aic_value < best_aic) {
+          best_aic <- aic_value
+          best_pq <- c(p, q)
+        }
+      }, error = function(e) {
+        cat("Error with (p =", p, ", q =", q, "):", conditionMessage(e), "\n\n")
+      })
+    }
+  }
+
+  aic_df <- as.data.frame(aic_matrix)
+  colnames(aic_df) <- paste0("MA", 0:(ncol(aic_df) - 1))
+  aic_df <- cbind(AR = paste0("AR", 0:(nrow(aic_df) - 1)), aic_df)
+  seasonal_label <- paste0("(", seasonal_order[1], ", ", 
+                           seasonal_order[2], ", ",
+                           seasonal_order[3], ")_{",
+                           seasonal_period, "}")
+  aic_table <- aic_df %>%
+    gt() %>%
+    tab_header(
+      title = md(paste0("**stats::arima()-Produced AIC Table for Signal Plus Noise Model**"))
+    ) %>%
+    fmt_number(columns = -AR, decimals = 2) %>%
+    cols_label(AR = "") %>%
+    tab_source_note(
+      md(paste0("^a All models contain a $", seasonal_label, "$ seasonal term."))
+    ) %>%
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_column_labels(everything())
+    ) %>%
+    tab_options(
+      table.width = pct(100),
+      column_labels.font.weight = "bold",
+      data_row.padding = px(8),
+      table.font.size = 14
+    )
+  
+  return(list(best_pq = best_pq, best_aic = best_aic, aic_matrix = aic_table))
+}
+
+```
+
+As discussed above, we wish to contextualize our MAE estimates. For example, just because precipitation saw the highest MAE of the three variables considered, that does not immediately imply the inability to predict precipitation undermines the ability to predict water level. However, if precipitation were difficult to predict *and* precipitation was highly associated with water level, the evidence for such a claim strengthens.
+
+In this section, we explore regression analysis involving the fitting of SARIMA models with precipitation, evaporation, and natural runoff as  regressors to explain variations in Lake Malawi’s water level. The approach began with modeling without differencing. After observing suboptimal results, differencing was introduced to stabilize the series and improve model reliability. Model selection prioritized the lowest AIC values, with inverse roots plots and residual diagnostics used to assess stability and stationarity.
+
+Initially, we fit SARIMA models without differencing. A grid search was conducted across various $(p, q)$ pairs and seasonal orders of (1,0,1), (0,0,1), and (1,0,0). Among these, the seasonal order of (1,0,1) yielded the lowest AIC values. Consequently, we focus on this seasonal order and present its corresponding AIC table below.
+
+```{r, echo=FALSE}
+### Grid Search for Best (p, q) with seasonal (1,0,1)
+run_analyses <- FALSE
+if (run_analyses) {
+  result_S101 <- find_best_arima(4, 0, 4, c(1, 0, 1), 12)
+  saveRDS(result_S101, "result_S101_Ashwin.RDS")
+} else {result_S101 <- readRDS("result_S101_Ashwin.RDS")}
+result_S101$aic_matrix
+```
+
+
+In this table, we observe that the best-performing model is SARMA(2,0) × (1,1)<sub>12</sub> with the lowest AIC value of 3484.076, followed closely by SARMA(1,2) × (1,1)<sub>12</sub> with an AIC of 3484.506. Generally, adding a single parameter should increase the AIC by no more than two units and larger deviations may indicate potential maximization or evaluation errors during model fitting. However, certain transitions in the table deviate from this expectation. Despite these irregularities, the AIC values around the (2,0) region remain consistently low, reinforcing the choice of SARMA(2,0) × (1,1)<sub>12</sub> as the best model.
+
+
+```{r fit_arima_200_11_model, echo=FALSE}
+arima_200x101 <- arima(data$W_level_mm, 
+                       order = c(2,0,0), 
+                       seasonal = list(order = c(1,0,1), period = 12), 
+                       xreg = data[, c("Precip", "Evap", "Nat_runof")], 
+                       method = "ML")
+plot(arima_200x101)
+```
+
+
+Despite the favorable AIC, we observe that the inverse roots plot for the SARMA(2,0) × (1,1)<sub>12</sub> model showed roots lying on the unit circle, indicating potential for non-stationarity. As discussed above, inverse roots plot is a diagnostic tool used to assess the stationarity and invertibility of ARMA models. For a model to be stationary and invertible, all *inverse* roots should lie inside the unit circle. Roots on or near the boundary suggest the model may not adequately capture the underlying process, potentially leading to unreliable forecasts. 
+
+
+## Differencing
+
+In our analysis, recognizing the non-stationarity present in the initial models, we applied differencing to stabilize the mean and variance, thereby enhancing the interpretability of the regression coefficients. This approach aligns with the findings of @Kamalov2021, who advocate for differencing as a means to achieve stationarity in time series data, ensuring that the models accurately reflect the underlying hydrological processes. In modeling Lake Malawi’s water level, differencing is justified for the following reasons:
+
+- Long-term Trend Removal: The lake’s water levels show persistent trends from climatic or land-use changes. First differencing removes these long-term shifts, allowing regression coefficients to capture relevant short-term variations rather than spurious relationships.
+
+- Seasonal Effects: Distinct wet and dry seasons influence water levels annually. Seasonal differencing (lag of 12 months) accounts for these predictable cycles, enabling the model to focus on irregular fluctuations and the direct effects of precipitation, evaporation, and runoff.
+
+- In hydrological studies, according to @Wilson2016, failing to difference when data exhibit trends and seasonality can lead to models that overstate or misrepresent the influence of variables like precipitation or evaporation. For Lake Malawi, which is sensitive to seasonal rains and evaporation cycles, proper differencing ensures that regression results reflect real-time relationships rather than long-term shifts or seasonal patterns.
+
+```{r, echo=FALSE}
+diff_final <- diff(diff(data$W_level_mm, differences=1), lag=12)
+plot(diff_final, type="l", main="First + Seasonal Differenced W_level_mm")
+```
+
+The plot of the first and seasonal differenced water level data shows fluctuations centered around a stable mean with no visible trend, indicating that differencing successfully removed non-stationarity. The variability appears consistent over time, suggesting the variance has been stabilized. Unlike the original series, this differenced series focuses on short-term changes. The absence of persistent upward or downward movements and the uniform spread of values justify the use of both first and seasonal differencing, making the data suitable for SARIMA modeling.
+
+```{r reg_111_aic, echo=FALSE}
+
+### Grid Search for Best (p, q) with differencing and seasonal (1,1,1)
+run_analyses <- FALSE
+if (run_analyses) {
+  result_S111 <- find_best_arima(4, 1, 4, c(1, 1, 1), 12)
+  saveRDS(result_S111, "result_S111_Ashwin.RDS")
+} else {result_S111 <- readRDS("result_S111_Ashwin.RDS")}
+result_S111$aic_matrix %>%
+    tab_source_note(
+      md(paste0("^b NA values correspond to models with failed convergence due to non-finite difference value."))
+    )
+```
+
+Using differencing, a second grid search was conducted using seasonal order (1,1,1). The SARIMA(1,1,0) × (1,1,1)<sub>12</sub> model had the lowest AIC value of 3,316.78 and was selected as the final model.
+
+```{r arima_110x111_fit, echo=TRUE,results='hide'}
+arima_110x111 <- arima(data$W_level_mm, 
+                       order = c(1,1,0), 
+                       seasonal = list(order = c(1,1,1), period = 12), 
+                       xreg = data[, c("Precip", "Evap", "Nat_runof")], 
+                       method = "ML", optim.control = list(maxit = 1000))
+```
+
+```{r plot_arima_110x111, echo=FALSE}
+# arima2 objects have more pleasant plots
+arima_110x111_for_plot <- arima2::arima(data$W_level_mm, 
+                       order = c(1,1,0), 
+                       seasonal = list(order = c(1,1,1), period = 12), 
+                       xreg = data[, c("Precip", "Evap", "Nat_runof")], 
+                       method = "ML", optim.control = list(maxit = 1000))
+plot(arima_110x111_for_plot)
+```
+
+
+The inverse roots plot for the fitted SARIMA(1,1,0) × (1,1,1)<sub>12</sub> model shows a single inverse AR root well inside the unit circle, which indicates that the model is stationary after applying both first and seasonal differencing. This confirms that the differencing effectively addressed non-stationarity and that the AR component is stable. The absence of roots near or on the boundary suggests that the model should produce reliable forecasts without explosive behavior or persistent trends. This observation aligns with the findings of @Ikughur2015, which emphasized the importance of residual analysis in time series modeling and forecasting. Their study demonstrated that models with residuals exhibiting white noise characteristics—indicative of uncorrelated and homoscedastic residuals—tend to provide more accurate and reliable forecasts.
+
+
+```{r plot_reg_models, echo=FALSE}
+
+par(mfrow=c(1,2))
+plot(resid(arima_110x111))
+qqnorm(resid(arima_110x111))
+qqline(resid(arima_110x111))
+
+```
+
+The diagnostic plots were used to assess the adequacy of the fitted SARIMA(1,1,0) × (1,1,1)<sub>12</sub> model.
+
+The residual time series plot (left) shows residuals fluctuating around zero, indicating no obvious trend or seasonality. However, there are some large spikes early in the series, suggesting possible outliers or periods of volatility.
+
+The Normal Q-Q plot (right) checks the normality of residuals. While most points lie along the 45-degree line, deviations occur at the tails, indicating mild departures from normality. Such deviations are common but should be noted when making probabilistic forecasts.
+
+
+```{r, echo=FALSE}
+
+acf(resid(arima_110x111))
+
+```
+
+The ACF plot of residuals shows that most autocorrelations lie within the significance bounds. The absence of significant spikes suggests the model has adequately captured the data's temporal dependence structure.
+
+Considering the combination of stable residuals, minimal autocorrelation, and reasonably normal error distribution, the SARIMA(1,1,0) × (1,1,1)<sub>12</sub> model provides a good balance of interpretability and predictive performance. Despite minor imperfections, these diagnostics indicate no major issues that would necessitate a more complex model, justifying its selection as the final model.
+
+
+## Coefficients
+
+```{r, echo=FALSE}
+
+final_model <- arima_110x111
+coeff_precip <- coef(final_model)["Precip"]
+coeff_evap <- coef(final_model)["Evap"]
+coeff_nat_runof <- coef(final_model)["Nat_runof"]
+
+coefficients <- data.frame(
+  Feature = c("Precipitation", "Evaporation", "Natural Runoff"),
+  Coefficient = c(coeff_precip, coeff_evap, coeff_nat_runof),
+  SE=c(final_model[["var.coef"]][4,4]^.5, 
+       final_model[["var.coef"]][5,5]^.5, 
+       final_model[["var.coef"]][6,6]^.5)
+)
+
+coefficients %>%
+  gt() %>%
+  tab_header(
+    title = "Model Coefficients"
+  ) %>%
+  fmt_number(
+    columns = c("Coefficient", "SE"),
+    decimals = 4
+  ) %>%
+  cols_label(
+    Feature = "Feature",
+    Coefficient = "Coefficient",
+    SE = "Standard Error",
+  ) %>%
+  tab_options(
+    table.border.top.color = "black",
+    table.border.bottom.color = "black",
+    column_labels.font.weight = "bold",
+    table.font.size = 18
+  )
+
+```
+
+
+In the table above, we observe all coefficients are negative - i.e., increases in precipitation, evaporation, and natural runoff for a given month are associated with decreased water levels that month. These results were initially surprising. While we hypothesized evaporation and runoff would be associated with decreased water levels (given they involve water leaving a system), precipitation would seem to logically be connected with increased water levels.
+
+
+Upon further examination, we see a relatively large standard error for the effect of precipitation (compared with its coefficient). This raised the question of whether precipitation was a material predictor of water level (regardless of sign). Wanting a hypothesis test that reflected profile likelihood-based CIs, we used a likelihood ratio test for the following:
+$$H_0: \beta_{precipitation} = 0,\text{ } H_0: \beta_{precipitation} \neq 0.$$
+```{r LRTs, echo=FALSE}
+features1 <- c('Evap', 'Nat_runof')
+features2 <- c('Precip', 'Evap', 'Nat_runof')
+
+null_model <- arima(data$W_level_mm, 
+                     order = c(1,1,0), 
+                     seasonal = list(order = c(1,1,1), period = 12), 
+                     xreg = data[, c("Evap", "Nat_runof")], 
+                     method = "ML", optim.control = list(maxit = 1000))
+alt_model <-  arima(data$W_level_mm, 
+                     order = c(1,1,0), 
+                     seasonal = list(order = c(1,1,1), period = 12), 
+                     xreg = data[, c("Precip", "Evap", "Nat_runof")], 
+                     method = "ML", optim.control = list(maxit = 1000))
+full_null_model <- arima(data$W_level_mm, 
+                     order = c(1,1,0), 
+                     seasonal = list(order = c(1,1,1), period = 12),
+                     method = "ML", optim.control = list(maxit = 1000))
+
+logLik_null <- logLik(null_model)[1]
+logLik_alt <- logLik(alt_model)[1]
+logLik_full_null <- logLik(full_null_model)[1]
+
+p_1 <- pchisq(q=2*(logLik_alt-logLik_null), df=1, lower.tail=FALSE)
+p_2 <- pchisq(q=2*(logLik_alt-logLik_full_null), df=3, lower.tail=FALSE)
+```
+
+The difference in log-likelihoods between the two models was $\approx 0.014$, inducing a p-value of $\approx 0.869$. Subsequently, we would not reject the null hypothesis that precipitation does not have a linear association with water level.
+
+As a sanity check, we also examined whether or not all three variables were associated with water level (jointly testing $\beta_{precipitation}, \beta_{evaporation}, \beta_{runoff}=0$). We did so via likelihood ratio test, as above, and obtained a p-value of $\approx 0.003$. Therefore, we would conclude that these three variables *together* provide explanatory value.[^A1]
+
+[^A1]: Note that we would still reject the null here when using a Bonferroni-adjusted testing threshold ($\alpha'=0.025$) to account for having run two hypothesis tests above.
+
+
+
+
+# Conclusions
+
+After attempting to forecast evaporation, precipitation, and natural runoff in the Lake Malawi region, we found that precipitation was the most difficult variable of the three to forecast. However, quite surprisingly, we found that precipitation had little association with water level. Weighting the MAE for each variable by its impact on water level, reveals the following.
+
+```{r MAE_table_wgt, echo=FALSE}
+MAE_table_wgt <- 
+  data.frame(var=c("Evaporation", "Precipitation", "Runoff"),
+             raw=c(round(evap_MAE_output$MAE,2),
+                   round(precip_MAE_output$MAE,2),
+                   round(runoff_MAE_output$MAE,2)),
+             wgt=c(abs(round(coefficients$Coefficient[2]*evap_MAE_output$MAE,2)),
+                   abs(round(coefficients$Coefficient[1]*precip_MAE_output$MAE,2)),
+                   abs(round(coefficients$Coefficient[3]*runoff_MAE_output$MAE,2))))
+colnames(MAE_table_wgt) <- c("Variable", "Raw MAE", "Weighted MAE")
+knitr::kable(MAE_table_wgt, 
+             caption = "<center><b>Mean Absolute Error Weighted by Impact (mm)<center><b>") %>%
+  kable_styling(full_width=FALSE, position = "center")
+```
+
+While evaporation was the easiest to predict and precipitation the most difficult, weighting by their influence on water level shows that forecasting errors for evaporation pose a more significant challenge to predicting water levels than those for precipitation.
+
+
+Again, we found this quite surprising. However, further research provided context and intuition for the observed patterns. As noted in [@Mtilatila_2022], the Malawian government installed a barrage in the 1960s to regulate outflow for agricultural and hydroelectric purposes, directly influencing lake levels. This artificial intervention likely disrupted the natural relationship between precipitation and water level; for example, following heavy rainfall, the government may release more water from the lake, weakening the direct link between precipitation and water level.[^C1] Given this regulatory context, we caution against extrapolating our findings beyond Lake Malawi.
+
+More broadly, our findings underscore the importance of considering human interventions when modeling hydrological systems. While traditional forecasts often emphasize precipitation as a key driver of water levels, our results highlight the need for a more nuanced approach—one that accounts for both environmental processes and regulatory controls. Future research should further explore how such interventions shape hydrological dynamics, particularly in regions where water management plays a critical role in resource allocation.
+
+
+
+[^C1]: It may be difficult to quantify this exactly, as the government has not always followed their stated outflow policy [@Mtilatila_2022].
+
+
+
+
+
+
+# Scholarship: Comparison with Past Projects and Lessons from Peer Review
+Our project builds on previous DATASCI/STATS 531/631 projects, specifically 
+
+1. *Precipitation in Detroit* (Winter 2024)[^R2]
+
+2. *CO2 Emissions in the US* (Winter 2024)[^R3]
+
+Like (1) above, we explore time series models for hydrological systems. However, this project focused on establishing a formal, data-driven, approach to constructing a seasonal model (e.g., exploring a smoothed periodogram to investigate plausible periods of seasonality). In contrast, as discussed above, we chose to rely on scientific literature/domain knowledge and assume yearly fluctuations (furthermore, this pattern was clear in the data). Furthermore, we explored several different aspects of the local water cycle, whereas (1) primarily discussed precipitation. Additionally, we found log transforming our precipitation data to be useful in model building, whereas this was not the case in (1).
+
+Like (2) above, we consider data partitions for our analysis. However, the motivation behind the data splitting in (2) appears to be analysis of persistence of a trend. I.e., they claim to observe different trends in recent years compared with the initial years in their data; subsequently, they investigate the sensitivity of their findings to the choice of "start year" for their training data. On the other hand, as discussed in the **Model Evaluation** section, we partition the data to achieve a test/train split. This choice allows us to use our observed MAE values as valid estimators of true model accuracy. Furthermore, as suggested in the peer review for (2), we chose to investigate different seasonal $(P,Q)_{12}$ structures to help address residual heteroscedasticity.
+
+Beyond these two projects in particular, we find similarities with our project and most past projects in our focus on ARMA/SARMA modeling, with AIC-based approaches for model selection. Our project mainly deviates from most others in the following senses:
+
+- Motivation for the research question (looking at components of the variable of interest to investigate potential forecasting obstacles).
+
+- Specific focus on how `optim()` maximizes the likelihood in model fitting, and consequences of modifying default approaches.
+
+- Explicit analysis of forecasting metrics of our models.
+
+[^R2]: https://ionides.github.io/531w24/midterm_project/project05/blinded.html
+
+[^R3]: https://ionides.github.io/531w24/midterm_project/project06/blinded.html
+
+
+
+
+
+
+# References
+
+*ChatGPT was used to help polish individual sentences/paragraphs.*

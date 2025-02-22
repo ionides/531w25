@@ -1,0 +1,564 @@
+<h1><b>Time Series Analysis of Bitcoin and NASDAQ Composite Prices</b></h1>
+
+<i>Blinded.</i>
+
+---
+
+<h2><b>1. Introduction</b></h2>
+
+Bitcoin and the NASDAQ Composite represent two distinct asset classes: cryptocurrency and traditional equities, respectively. 
+Bitcoin is characterized by its high volatility and decentralized nature, while the NASDAQ, a stock market index, 
+primarily tracks the performance of the technology sector. Understanding the relationship between these two assets is crucial for investors 
+seeking to diversify their portfolios across both traditional and emerging markets. 
+Specifically, analyzing the correlation between Bitcoin and the NASDAQ Composite can offer valuable insights into the investor base of Bitcoin. 
+It may reveal whether Bitcoin investors are traditional market participants who also engage in stock market investments or a distinct group of early-stage 
+investors drawn solely to the innovative potential of this new technology.
+
+This analysis investigates whether Bitcoin and NASDAQ prices exhibit correlated movements over time. 
+Such a correlation could indicate shared market sentiment or highlight divergent behaviors during periods of economic change. 
+We hypothesize that the prices of the NASDAQ Composite and Bitcoin are positively correlated. This assumption is based on the premise that 
+investors who are drawn to Bitcoin are likely to have a strong understanding of the technology sector and may already be invested in technology 
+companies listed on the NASDAQ. By exploring this relationship, we aim to shed light on the broader dynamics between traditional equities and emerging 
+digital assets.
+
+Drawing on monthly data from January 2012 to February 2025, our study builds on these foundational ideas by applying time series methods. We perform log transformations and differencing to stabilize variance and achieve stationarity, and we use LOESS smoothing to decompose the data into trend, noise, and cyclical components. An ARIMA-based framework is also employed to model the short-term dynamics of the differenced series. These methods enhance our analysis and provide a clear diagnostic framework to examine our hypothesis. Through this approach, we aim to provide further insight into whether the observed price movements are driven by shared market sentiment or are coincidental, ultimately informing investors about potential diversification strategies in a changing financial landscape.
+
+---
+
+<h2><b>2. Methodology</b></h2>
+
+<h3><b>2.1 Data Source</b></h3>
+
+Data for the NASDAQ Composite and Bitcoin closing prices were obtained from Investing.com. The dataset spans from January 1, 2012, to February 1, 2025, capturing monthly observations on the first day of each month.
+
+<h3><b>2.2 Data Preprocessing</b></h3>
+
+Nasdaq and Bitcoin datasets were merged, and only the closing prices were retained for the analysis. 
+Log transformation was applied to both series to stabilize the variance. 
+We then differenced the log-transformed data to eliminate the influence of time. 
+
+<h3><b>2.3 Decomposition Analysis of Trend, Noise, and Cyclical Components using LOESS</b></h3>
+
+To decompose monthly data from 2012 to 2024 using LOESS smoothing we first fit a trend component using a locally weighted regression model. 
+Since we intend to capture long term trends and reduce sensitivity from medium-term fluctuations we have used a span of 0.6 instead of 0.5 as used in the lecture notes for chapter 8. This allows a more stable representation of the trend. 
+We extract noise by applying LOESS (Local Estimation by Smoothing) smoothing with a smaller span to remove short term variations. By setting the noise span to 0.07, we ensure that only high frequency fluctuations remain.
+Finally, the cyclical component is derived by subtracting both the trend and noise from the data, capturing medium-term fluctuations.
+
+<h3><b>2.4 ARIMA Model</b></h3>
+
+The AutoRegressive Integrated Moving Average (ARIMA) model were used to fit the differenced data. The number of AR terms (p) and MA terms (q) were 
+chosen based on the Akaike Information Criterion (AIC).
+
+---
+
+<h2><b>3. Results</b></h2>
+
+<h3><b>3.1 Exploratory Data Analysis - Decomposition Analysis of Trend, Noise, and Cyclical Components using LOESS</b></h3>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.align = "center", 
+  error = FALSE, 
+  fig.width = 10
+)
+
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Read data
+nasdaq <- read.csv("NASDAQ Composite Historical Data.csv", stringsAsFactors = FALSE)
+bitcoin <- read.csv("Bitcoin Historical Data.csv", stringsAsFactors = FALSE)
+
+# Process NASDAQ Data
+nasdaq$date <- as.Date(nasdaq$Date, format = "%m/%d/%Y")
+nasdaq <- nasdaq[order(nasdaq$date), ]
+nasdaq$NASDAQ_Index <- as.numeric(gsub(",", "", nasdaq$Price))
+
+# Process Bitcoin Data
+bitcoin$date <- as.Date(bitcoin$Date, format = "%m/%d/%Y")
+bitcoin <- bitcoin[order(bitcoin$date), ]
+bitcoin$Bitcoin_Price <- as.numeric(gsub(",", "", bitcoin$Price))
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Merge the two datasets on the Date column
+merged_data <- merge(nasdaq[, c("date", "NASDAQ_Index")],
+                     bitcoin[, c("date", "Bitcoin_Price")],
+                     by = "date", all = TRUE)
+
+merged_data$Date <- as.character(merged_data$date)
+merged_data <- merged_data[, c("Date", "NASDAQ_Index", "Bitcoin_Price")]
+
+# head(merged_data)
+# summary(merged_data)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE} 
+# Exploratory Plot 
+par(mar = c(5, 4, 2, 5))
+
+plot(nasdaq$date, nasdaq$NASDAQ_Index, type = "l", 
+     col = "black", lwd = 2,
+     xlab = "Date", ylab = "NASDAQ Composite Index",
+     xlim = range(c(nasdaq$date, bitcoin$date), na.rm = TRUE),
+     xaxt = "n", cex.lab = 1.2, cex.axis = 1,
+     sub = "Figure 1. NASDAQ Index and Bitcoin Closing Price in USD")
+axis.Date(1,
+          at = seq(min(c(nasdaq$date, bitcoin$date), na.rm = TRUE),
+                   max(c(nasdaq$date, bitcoin$date), na.rm = TRUE), by = "3 years"),
+          format = "%Y", las = 2, cex.axis = 1)
+grid(nx = NULL, ny = NULL, col = "gray80", lty = "dotted")
+
+par(new = TRUE)
+plot(bitcoin$date, bitcoin$Bitcoin_Price, type = "l", 
+     col = "black", lwd = 2, lty = 2,
+     axes = FALSE, xlab = "", ylab = "",
+     xlim = range(c(nasdaq$date, bitcoin$date), na.rm = TRUE),
+     ylim = range(bitcoin$Bitcoin_Price, na.rm = TRUE))
+b_ticks <- seq(min(bitcoin$Bitcoin_Price, na.rm = TRUE),
+               max(bitcoin$Bitcoin_Price, na.rm = TRUE), length.out = 4)
+axis(side = 4, at = b_ticks, labels = round(b_ticks),
+     col = "black", col.ticks = "black", col.axis = "black", lwd = 1, cex.axis = 1)
+mtext("Bitcoin Price (USD)", side = 4, col = "black", line = 3, cex = 1.2)
+
+legend("topleft", legend = c("NASDAQ Composite Index", "Bitcoin Price (USD)"),
+       col = c("black", "black"), lty = c(1, 2), lwd = 2, bg = "white", cex = 1)
+
+box(col = "black")
+```
+
+Bitcoin exhibits exponential growth, while
+NASDAQ grows steadily. Periods of alignment (e.g., 2020-2021 COVID recovery) and divergence (e.g., 2022 market downturn) are evident (Figure 1). 
+We seek to analyze each series seperately at first to understand the trend, noise and cyclical components of the data.
+
+```{r, fig.align='center', eval=TRUE, echo=FALSE, warning=FALSE}
+
+nasdaq_num <- as.numeric(nasdaq$date)
+N_TS <- ts(nasdaq$NASDAQ_Index, 
+      start = c(as.numeric(format(min(nasdaq$date),"%Y"))),         frequency = 12)
+
+# Leverage LOESS Smoothers to extract Trend, Noise and Cycles from the Data
+# Source : Edward L. Ionides, University of Michigan, Notes, Chapter 8 
+N_Trend <- ts(loess(nasdaq$NASDAQ_Index ~ nasdaq_num, span = 0.6)$fitted, start = start(N_TS), frequency = frequency(N_TS))
+
+N_Noise <- ts(nasdaq$NASDAQ_Index - loess(nasdaq$NASDAQ_Index ~ nasdaq_num, span = 0.07)$fitted, start = start(N_TS), frequency = frequency(N_TS))
+
+# Compute Cyclical component as the residual (Original - Trend - Noise)
+N_Cycles <- N_TS - N_Trend - N_Noise
+
+# Plot the decomposition components
+plot(ts.union(N_TS, N_Trend, N_Noise, N_Cycles),
+     col = c("black", "red", "blue", "green"),
+     xlab = "Time", ylab = "Value",
+     main = "Figure 2. NASDAQ Index Decomposition: Trend, Noise, Cycles")
+
+
+```
+
+We observe a persistent upward trajectory in the NASDAQ Index throughout the period, with the slope becoming notably steeper after 2020.  This indicates that the core value of technology companies, which significantly impact the NASDAQ, has been growing more quickly in recent years, even when ignoring short-term changes and economic cycles <a id="footnote-1-ref" href="#footnote-1"><sup>[1]</sup></a>.
+From the noise component we observe there has been consistent variation (volatility) in the noise and we see an increased amplitude of the noise after 2020, indicating that the monthly market volatility has grown substantially.
+The lengths of the cyclical components, are almost similar to that of the cyclical components of the Bitcoin price given below. The most pronounced cycle occurs from 2020-2022, with a peak around late 2021 followed by a significant dip.  This pattern aligns with the tech sector's rapid growth during the post-COVID recovery and its subsequent decline as interest rates increased <a id="footnote-2-ref" href="#footnote-2"><sup>[2]</sup></a>.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Bitcoin Decomposition: Trend + Noise + Cycles
+
+bitcoin_num <- as.numeric(bitcoin$date)
+B_TS <- ts(bitcoin$Bitcoin_Price, start = c(as.numeric(format(min(bitcoin$date), "%Y"))), frequency = 12)
+
+# Leverage LOESS Smoothers to extract Trend, Noise and Cycles from the Data
+# Source : Edward L. Ionides, University of Michigan, Notes, Chapter 8 
+B_Trend <- ts(loess(bitcoin$Bitcoin_Price ~ bitcoin_num, span = 0.6)$fitted,start = start(B_TS), frequency = frequency(B_TS))
+
+B_Noise <- ts(bitcoin$Bitcoin_Price - loess(bitcoin$Bitcoin_Price ~ bitcoin_num, span = 0.07)$fitted, start = start(B_TS), frequency = frequency(B_TS))
+
+B_Cycles <- B_TS - B_Trend - B_Noise
+
+# Plot the decomposition components
+plot(ts.union(B_TS, B_Trend, B_Noise, B_Cycles),
+     col = c("black", "red", "blue", "green"),
+     xlab = "Time", ylab = "Value",
+     main = "Figure 3. Bitcoin Price Decomposition: Trend, Noise, Cycles"
+     )
+
+```
+
+We observe that unlike NASDAQ, Bitcoin's trend line remained relatively flat till 2020, after which there was a rapid upward shift. A source by Investopedia suggests that "The pandemic shutdown and subsequent government policies fed investors' fears about the global economy and accelerated Bitcoin's rise". The trend continues to increase from then on at an accelerated rate.
+When we examine the noise component, we observe very minimal noise till 2018, and then a noise with smaller magnitude of variation can be observed from 2018-2020. However from 2020, the variation in the noise is more pronounced, and can be evidently seen from the plot. 
+When we analyze the cyclical component of Bitcoin, it justifies some of the crucial aspects and fluctuation periods of bitcoin price. 
+The first small cycle in late 2017 captures the first major bull run of bitcoin. The next major cycle we see is the 2020-2022 cycle where we see a strong positive deviation starting in 2020, 
+and peaks at 2021 and returns to baseline by 2022. And finally we see a recovery cycle that is positive starting from mid 2023-2024 showing increasing strength.
+
+<h3><b>3.2 Smoothed Periodogram Analysis</b></h3>
+To obtain a clear picture of the underlying periodic structure, we apply a smoothing technique using repeated rectangular windows. 
+This non-parametric smoothing helps to average out the random fluctuations present in the raw periodogram, 
+allowing us to better identify the dominant frequencies in the data without assuming a specific model.
+
+We use spans = c(20,20) to apply two successive smoothing windows of 20 points each, 
+balancing variance reduction (through averaging neighboring frequencies) with preservation of spectral resolution. 
+This moderate smoothing suppresses spurious peaks while maintaining sufficient detail to identify both the dominant cycles and potential secondary oscillations.
+
+```{r }
+B_ind = bitcoin$Bitcoin_Price
+smoothed_r = spectrum(B_ind, spans=c(20,20),
+  , xlab="Frequency - Cycles per Month",main = "Figure 4. Bitcoin Price - Smoothed periodogram")
+```
+
+We observe that the smoothed periodogram does not show evidence of strong cyclical patterns. 
+As we do not see a distinct peak or spike at specific frequencies. 
+This periodogram analysis strongly questions the veracity of the widely known 4 year cycle in bitcoin <a id="footnote-10-ref" href="#footnote-10"><sup>[10]</sup></a>.
+
+```{r }
+N_ind = nasdaq$NASDAQ_Index
+smoothed_r = spectrum(N_ind, spans=c(20,20),
+ xlab="Frequency - Cycles per Month",main = "Figure 5. NASDAQ Index - Smoothed periodogram")
+```
+This smoothed periodogram shows properties similar to that of the Bitcoin, 
+and we do not observe any consistent cyclical pattern throughout the period of observation despite 
+there being a few irregular cycles capturing the bullish and bearish trends of the market as shown in the decomposition plot above.
+
+<h3><b>3.3 Data Preprocessing</b></h3>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Plot ACF
+
+# create a new plotting window and set the plotting area into a 1*2 array
+par(mfrow = c(1, 2))
+
+# ACF NASDAQ
+acf(nasdaq$NASDAQ_Index,lag.max=50, main = "NASDAQ Index ACF")
+
+# ACF Bitcoin
+acf(bitcoin$Bitcoin_Price,lag.max=50, main = "Bitcoin Price ACF")
+
+title(sub = "Figure 6. ACF of NASDAQ and Bitcoin Series", line = -0.9, outer = TRUE)
+```
+
+We began by merging the Nasdaq and Bitcoin datasets to facilitate a comparative analysis, 
+retaining only the closing prices as the primary variable of interest. Initial visual inspection of the raw price series (Figures 1 and 2) 
+revealed clear non-stationarity, characterized by trends and time-dependent variance. To address this, we applied a log transformation to the data. 
+The log transformation is a common preprocessing step for financial time series because it stabilizes variance <a id="footnote-7-ref" href="#footnote-7"><sup>[7]</sup></a>, 
+and ensures all values remain positive.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Plot ACF of log transformed data
+nasdaq$log_NASDAQ_Index <- log(nasdaq$NASDAQ_Index)
+bitcoin$log_Bitcoin_Price <- log(bitcoin$Bitcoin_Price)
+
+# create a new plotting window and set the plotting area into a 1*2 array
+par(mfrow = c(1, 2))
+
+# ACF NASDAQ
+acf(nasdaq$log_NASDAQ_Index,lag.max=50, main = "Log NASDAQ Index ACF")
+
+# ACF Bitcoin
+acf(bitcoin$log_Bitcoin_Price,lag.max=50, main = "Log Bitcoin Price ACF")
+
+title(sub = "Figure 7. ACF of NASDAQ and Bitcoin Series After Log Transformation", line = -0.9, outer = TRUE)
+```
+
+However, the log-transformed series (Figure 7) still exhibited non-stationarity. To achieve stationarity, we applied first-order differencing to the log-transformed series. 
+Differencing is a widely used technique to remove trends and make a series stationary by eliminating time-dependent structures <a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a> <a id="footnote-7-ref" href="#footnote-7"><sup>[7]</sup></a>. 
+Specifically, we transformed the log-transformed series $y_{1:n}$ into a differenced series $z_{2:n}$ by taking the first order 
+difference $z_n = \Delta y_n = y_n - y_{n-1}$ <a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a>.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Taking the first order differencing
+log_first_order_difference_NASDAQ_Index <- diff(nasdaq$log_NASDAQ_Index)
+log_first_order_difference_Bitcoin_Price <- diff(bitcoin$log_Bitcoin_Price)
+
+nasdaq$log_first_order_difference_NASDAQ_Index <- c(NA, log_first_order_difference_NASDAQ_Index)
+bitcoin$log_first_order_difference_Bitcoin_Price <- c(NA, log_first_order_difference_Bitcoin_Price)
+
+par(mfrow = c(1, 2))
+plot(nasdaq$date, nasdaq$log_first_order_difference_NASDAQ_Index, type = "l", col = "black",
+     xlab = "Time", ylab = "NASDAQ Index Transformed")
+
+plot(bitcoin$date, bitcoin$log_first_order_difference_Bitcoin_Price, type = "l", col = "black",
+     xlab = "Time", ylab = "Bitcoin Price Transformed")
+
+mtext("Data After Logging and Differencing", side = 3, line = - 2, outer = TRUE, font = 2, cex = 1.5)
+title(sub = "Figure 8. Data After Logging and Differencing", line = -0.9, outer = TRUE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# create a new plotting window and set the plotting area into a 1*2 array
+par(mfrow = c(1, 2))
+
+# ACF NASDAQ
+acf(nasdaq$log_first_order_difference_NASDAQ_Index,lag.max=50, main = "Transformed NASDAQ Index ACF", na.action = na.omit)
+
+# ACF Bitcoin
+acf(bitcoin$log_first_order_difference_Bitcoin_Price,lag.max=50, main = "Transformed Bitcoin Price ACF", na.action = na.omit)
+
+title(sub = "Figure 9. ACF of NASDAQ and Bitcoin Series After Logging and Differencing", line = -0.9, outer = TRUE)
+```
+
+Figure 8 and Figure 9 suggest the transformed data look appropriate for a stationary model. Both transformed datasets have constant means. The data is spread out around 0
+(Figure 8). The ACF plots show that the transformed data, overall, are not significantly correlated. Most of the autocorrelation values are within the confidence interval, except 
+for lag 8 in the transformed Bitcoin data. The ACF plots also suggest that both transformed datasets could possibly be modeled as white noise processes (Figure 9). 
+
+<h3><b>3.4 Analysis of Volatility Clustering and ARCH Effects </b></h3>
+From figure 8, we observe that the NASDAQ and Bitcoin transformed series show signs of volatility clustering - periods where large changes tend to be followed by other large changes, and small changes tend to be followed by other small changes.<a id="footnote-14-ref" href="#footnote-14"><sup>[14]</sup></a>For NASDAQ,we can see this particularly around 2020, where there are clusters of larger price swings. 
+
+For Bitcoin, there's notably high volatility in the early period around 2015. A key characteristic of financial time series that need GARCH modeling is that while returns themselves might be uncorrelated, their squared returns often show significant correlation, indicating volatility persistence. While some sources suggested that GARCH is more suited for daily data, rather than monthly data since volatility trends are usually more pronounced in shorter time intervals, we can formally test is it is useful in our case using the Engle's ARCH LM test.<a id="footnote-15-ref" href="#footnote-15"><sup>[15]</sup></a>
+
+In an Engle ARCH LM test, a low p-value, typically considered to be less than 0.05, indicates the presence of ARCH effects (autoregressive conditional heteroscedasticity), meaning we must reject the null hypothesis of no ARCH and conclude that the variance of the errors is not constant over time; a high p-value suggests no evidence of ARCH effects. 
+
+The Engle's ARCH test examines the following hypothesis:<a id="footnote-16-ref" href="#footnote-16"><sup>[16]</sup></a>
+
+$$
+H_0: \text{There are no ARCH() effects (homoscedasticity)}
+$$
+
+$$
+H_1: \text{ARCH effects are present (heteroscedasticity)}
+$$
+
+The test is based on the auxiliary regression:
+
+$$
+r_t^2 = \alpha_0 + \alpha_1 r_{t-1}^2 + \alpha_2 r_{t-2}^2 + \cdots + \alpha_{12} r_{t-12}^2 + \varepsilon_t,
+$$
+
+In our auxiliary regression, we regress the squared returns on 12 lagged values to capture one full year of observations and any potential seasonal patterns in volatility, and the \(R^2\) obtained measures the proportion of current variance explained by these 12 lags. Multiplying \(R^2\) by the sample size \(n\) gives the LM test statistic,
+$$
+LM = nR^2,
+$$
+
+This quantifies the overall explanatory power of the lagged squared returns. Under the null hypothesis that all 12 lag coefficients are zero (indicating no ARCH effects), this statistic follows a \(\chi^2\) distribution with 12 degrees of freedom---one degree for each lag term tested.
+
+
+
+```{r }
+# Source: https://www.mathworks.com/help/econ/engles-arch-test.html, and Claude for formatting the code.
+
+# Load necessary libraries
+library(tseries)
+library(moments)
+library(FinTS)  # Provides ArchTest()
+
+
+
+# ARCH test using FinTS' ArchTest() with 12 lags
+arch_test_nasdaq <- ArchTest(na.omit(nasdaq$log_first_order_difference_NASDAQ_Index), lags = 12)
+arch_test_bitcoin <- ArchTest(na.omit(bitcoin$log_first_order_difference_Bitcoin_Price), lags = 12)
+
+
+# Print the results
+cat("\nARCH Test Results:")
+cat("\nNASDAQ p-value:", arch_test_nasdaq$p.value)
+cat("\nBitcoin p-value:", arch_test_bitcoin$p.value)
+
+```
+
+The p-value obtained for Bitcoin(0.3204) and NASDAQ(0.058) for the Engle's ARCH test fails to reject the Null hypothesis, and we can conclude that the evidence of ARCH effects are insignificant. 
+
+<h3><b>3.5 ARIMA model selection</b></h3>
+
+We proceed by fitting an ARMA model to the differenced data while investigating the relationship between Bitcoin prices and the NASDAQ index. An ARMA(p, q) model for the differenced series 
+$z_{2:N}$ is referred to as an integrated autoregressive moving average (ARIMA) model for the original series $y_{1:N}$, denoted as ARIMA(p, 1, q). 
+Formally, the ARIMA(p, 1, q) with intercept $\mu$ is $\phi \mathrm{B}[(1 - \mathrm{B})^dY_n-\mu] = \psi(\mathrm{B})\epsilon_n$, where ${\epsilon_n}$ is a white noise process, 
+$\phi(x)$ and $\psi(x)$ are ARMA polynomials,  and d is the order of differencing <a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a>.. 
+Since we manually computed the differences between consecutive observations, the d term in ARIMA(p, d, q) is effectively set to 0, 
+reducing the model to an ARMA(p, q) formulation for the differenced series $z_{2:N}$. 
+We will choose p and q by selecting model with the lowest Akaike's information criterion (AIC), given by 
+$\text{AIC} = -2 \cdot l(\widehat{\theta}) + 2D$ <a id="footnote-4-ref" href="#footnote-4"><sup>[4]</sup></a>.. 
+
+```{r, eval=TRUE, echo=FALSE, warning=FALSE, message=FALSE}
+# Utility function to calculate AIC table
+# Source: Edward L. Ionides, University of Michigan
+aic_table <- function(data,P,Q,xreg=NULL){
+     table <- matrix(NA,(P+1),(Q+1))
+     for(p in 0:P) {
+          for(q in 0:Q) {
+               table[p+1,q+1] <- arima(data,order=c(p,0,q),xreg=xreg)$aic
+          }
+     }
+     dimnames(table) <- list(paste("AR",0:P, sep=""),
+     paste("MA",0:Q,sep=""))
+     table
+}
+e_aic_table <- aic_table(bitcoin$log_first_order_difference_Bitcoin_Price, 4, 5, xreg = nasdaq$log_first_order_difference_NASDAQ_Index)
+require(knitr)
+kable(e_aic_table,digits=2)
+```
+
+Here, the ARIMA(2,0,2) model yields the lowest AIC value of 10.16. However, we observe that some absolute differences between adjacent AIC values in the table are greater than 2, 
+which suggests potential numerical instability during the optimization process. To troubleshoot, we validate our results using an alternative 
+implementation: the auto.arima function from the forecast package in R. 
+The auto.arima function automates the process of selecting the optimal ARIMA model by iterating through various combinations of p and q 
+and selecting the model with the lowest AIC value, which is its default criterion <a id="footnote-8-ref" href="#footnote-8"><sup>[8]</sup></a>..
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, message=FALSE}
+forecast::auto.arima(bitcoin$log_first_order_difference_Bitcoin_Price, 
+                              xreg = nasdaq$log_first_order_difference_NASDAQ_Index,
+                              stepwise = FALSE, approximation = FALSE, trace = FALSE)
+```
+
+The auto.arima function suggests the ARIMA(0,0,0) model. We first fit the ARIMA(2,0,2) model to the data and then compare it to the ARIMA(0,0,0) model.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, fig.align="left"}
+# Source: https://otexts.com/fpp2/arima-r.html
+arima202 <- forecast::Arima(bitcoin$log_first_order_difference_Bitcoin_Price, xreg = nasdaq$log_first_order_difference_NASDAQ_Index, order=c(2,0,2))
+forecast::autoplot(arima202) + ggplot2::ggtitle("ARIMA(2,0,2)") + 
+  ggplot2::theme(plot.title = ggplot2::element_text(face="bold", hjust = 0.5), plot.subtitle = ggplot2::element_text(vjust = -123)) + 
+  ggplot2::labs(subtitle = "Figure 10. ARIMA(2,0,2) Model AR and MA Roots")
+```
+
+The ARIMA(2,0,2) model has AR roots that are numerically similar to its MA roots, indicating the potential presence of common factors that could be canceled out (Figure 10). 
+Additionally, all the roots of the ARIMA(2,0,2) model lie close to the boundary of the unit circle, suggesting that the model is near the threshold of being non-causal and non-invertible. 
+This proximity to instability implies that the ARIMA(2,0,2) analysis may not be highly reliable or robust.
+
+To formally compare the two models, we employ a hypothesis test using Wilks' approximation. 
+In this test, the null hypothesis corresponds to the ARMA(0,0,0) model (a white noise model), 
+while the alternative hypothesis corresponds to the ARMA(2,0,2) model. Wilks' approximation is given by:
+
+$$\Delta = 2(l_1 - l_0) \approx \chi_{D_1 - D_0}^2$$
+
+where $l_i$ is the maximum log likelihood under hypothesis $H_i$ and $D_i$ is the number of parameters estimated under hypothesis $H_i$. 
+When comparing the ARMA(0,0,0) and ARMA(2,0,2) models, we find that $\Delta = 6.5$. 
+This value exceeds the critical value of a $\chi^2$ distribution with 4 degrees of freedom at the 95% significance level. 
+Consequently, the test does not provide sufficient evidence to reject the null hypothesis. This conclusion is further supported 
+by the approximately canceling roots of the ARIMA(2,0,2) 
+model. Given these results, we proceed with the white noise model for our analysis. <a id="footnote-5-ref" href="#footnote-5"><sup>[5]</sup></a>.
+
+An interesting observation is that when the difference series is white noise, the model for the original series can be written as
+
+$$y_t - y_{t-1} = \epsilon_t$$
+
+which is equivalent to a random walk model: $y_t = y_{t-1} - \epsilon_t$. "Random walk models are often used to model financial and economic data, 
+The forecasts from a random walk model are equal to the last observation, as future movements are unpredictable, and are equally likely to be up or down." <a id="footnote-6-ref" href="#footnote-6"><sup>[6]</sup></a>.
+
+<h3><b>3.6 The association of Nasdaq index log returns and Bitcoin Price log returns</b></h3>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+ccf(bitcoin$log_first_order_difference_Bitcoin_Price, nasdaq$log_first_order_difference_NASDAQ_Index, 
+          na.action = na.omit, main = "Cross Correlation - Bitcoin and NasDaq")
+  title(sub = "Figure 11. Cross Correlation - Bitcoin and NasDaq")
+```
+
+We examined the cross-correlation between Bitcoin log returns and NASDAQ index log returns. The strong positive cross-correlation at lag zero supports 
+the association between the two series. In addition, we performed a likelihood ratio test to determine if the NASDAQ index is associated with Bitcoin prices. 
+The null hypothesis corresponds to the ARIMA(0,0,0) model without the NASDAQ index, while the alternative includes the NASDAQ index. Again, we employ a hypothesis test using Wilks' approximation, 
+given by $2(l_1 - l_0) \approx \chi_1^2$.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, message=FALSE}
+# Source: Edward L. Ionides, University of Michigan
+log_lik_ratio <- as.numeric(
+     logLik(arima(bitcoin$log_first_order_difference_Bitcoin_Price, xreg = nasdaq$log_first_order_difference_NASDAQ_Index,order=c(0,0,0))) -
+     logLik(arima(bitcoin$log_first_order_difference_Bitcoin_Price,order=c(0,0,0)))
+)
+cat("Likelihood ratio test p-value:", 1-pchisq(2*log_lik_ratio,df=1))
+```
+
+The p-value of 0.0005290291 indicates a statistically significant association between the NASDAQ index and Bitcoin prices. 
+This finding could offer valuable insights for investors looking to diversify their portfolios across traditional and emerging markets. 
+However, it is important to interpret this association with caution, as correlation does not necessarily imply causation.
+
+<h3><b>3.7 Residual Analysis</b></h3>
+
+We inspect the residuals of the ARIMA(0,0,0) model, and look at their sample autocorrelation to ensure that they are white noise. 
+The residuals should be uncorrelated, have zero mean, and constant variance. 
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+r <- resid(arima(bitcoin$log_first_order_difference_Bitcoin_Price, xreg = nasdaq$log_first_order_difference_NASDAQ_Index,order=c(0,0,0)))
+plot(r, ylab = "Residuals", xlab = "Time Index", type = "l", col = "black")
+abline(h = 0, col = "red")
+title(main = "Residuals of ARIMA(0,0,0) Model", sub = "Figure 12. Residuals of ARIMA(0,0,0) Model")
+```
+
+The residuals' times series plot does not show any unusual patterns, and the residuals appear to be centered around zero (Figure 12).
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+acf(r, na.action = na.omit, main = "")
+title(main = "ACF of Residuals", sub = "Figure 13. ACF of Residuals")
+```
+
+Examining the autocorrelation plot of the residuals, although there is one lag (lag 8) that is outside the confidence interval, 
+the residuals are mostly within the confidence interval, suggesting that the residuals are uncorrelated (Figure 13).
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# QQ Plot
+qqnorm(r)
+qqline(r)
+title(sub = "Figure 14. QQ Plot of Residuals")
+```
+
+Finally, we check the normality of the residuals using a QQ plot. With the exception of the last two points deviating from the qqline, 
+the residuals appear to be normally distributed, as most of the points fall along the QQ line (Figure 14).
+
+<h2><b>4. Conclusion</b></h2>
+Using monthly data from January 2012 to February 2025, our analysis finds that the differenced log returns of Bitcoin and the NASDAQ Composite 
+exhibit near-random-walk behavior. 
+LOESS decomposition reveals distinct cyclical patterns: Bitcoin shows pronounced boom-bust cycles, while the NASDAQ displays a steadier trend. 
+Although a strong short-term correlation at lag zero indicates some synchronous market sentiment, the significant volatility gap between the 
+two suggests that Bitcoin carries unique risk factors not present in traditional equity indices.
+
+<h2><b>5. Discussion</b></h2>
+
+We explored models beyond ARIMA and, based on literature review, found that the GARCH(1,1) model is preferred by economists for its discrete-time 
+framework and tractable likelihood function; however, a formal hypothesis test provided no statistical evidence to justify 
+its application to our data <a id="footnote-11-ref" href="#footnote-11"><sup>[11]</sup></a>.
+
+Our study introduces several methodological enhancements that improve upon previous work. For example, the "Time Series Midterm Project Report on Bitcoin's Price Behavior"<a id="footnote-12-ref" href="#footnote-12"><sup>[12]</sup></a> 
+relied on automated ARIMA selection without performing detailed diagnostic checks. In our analysis, we supplement automated model selection with formal likelihood ratio tests. 
+This additional diagnostic rigor allowed us to detect issues such as nearly canceling AR and MA coefficients, which informed our decision to favor a simpler ARIMA(0,0,0) specification for the differenced series.
+
+Similarly, compared to the "Nasdaq and Gold Price"<a id="footnote-13-ref" href="#footnote-13"><sup>[13]</sup></a> project which primarily employed basic trend elimination and standard decomposition techniques, 
+we refined the data preprocessing step. Our use of LOESS smoothing enhances the separation of trend, noise, and cyclical components, thereby offering a more precise understanding of 
+underlying market movements. This tailored approach provides clearer input for subsequent time series modeling.
+
+Future work might incorporate macroeconomic or sentiment data (e.g., interest rates, social media metrics) 
+to see if these exogenous factors explain periods of tight coupling or decoupling. 
+Adopt nonlinear methods to handle potential heavy tails, volatility clustering, and abrupt shifts in either market. 
+Expand to high frequency data for capturing intraday interactions, 
+which may be masked by monthly aggregation but are crucial for algorithmic or short-term traders. 
+Ultimately, these expanded methods could explain how “old” and “new” markets sometimes converge or sharply diverge.
+
+<h2><b>6. Contribution</b></h2>
+
+<i>Blinded.</i>
+
+<h2><b>7. Reference</b></h2>
+
+[1] <span id="footnote-1">https://www.reuters.com/markets/us/stunning-rally-big-tech-drives-nasdaq-20000-2024-12-11/</span>
+
+[2] <span id="footnote-2">https://en.wikipedia.org/wiki/2022_stock_market_decline</span>
+
+[3] <span id="footnote-3">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 6, Slide 11.</span>
+
+[4] <span id="footnote-4">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 5, Slide 21.</span>
+
+[5] <span id="footnote-5">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Homework 3 Solutions</span>
+
+[6] <span id="footnote-6">https://otexts.com/fpp2/stationarity.html</span>
+
+[7] <span id="footnote-7">Huang, Wanqi & Li, Yizhuo & Zhao, Yuhang & Zheng, Lanfeng. (2022). 
+Time Series Analysis and Prediction on Bitcoin. BCP Business & Management. 34. 1223-1234. 10.54691/bcpbm.v34i.3163. </span>
+
+[8] <span id="footnote-8">https://www.rdocumentation.org/packages/forecast/versions/8.23.0/topics/auto.arima</span>
+
+[9] <span id="footnote-9">UM ChatGPT was used to polish the sentences and correct grammars</span>
+
+[10] <span id="footnote-10">https://calebandbrown.com/blog/bitcoins-market-cycle/</span>
+
+[11] <span id="footnote-11">https://math.berkeley.edu/~btw/thesis4.pdf</span>
+
+[12] <span id="footnote-12">https://ionides.github.io/531w24/midterm_project/project10/blinded.html</span>
+
+[13] <span id="footnote-13">https://ionides.github.io/531w22/midterm_project/project09/blinded.html</span>
+
+[14] <span id="footnote-14"> Wikipedia - Volatility Clustering
+https://en.wikipedia.org/wiki/Volatility_clustering
+
+[15] <span id="footnote-15"> Mathworks - Engle's ARCH Test
+https://www.mathworks.com/help/econ/engles-arch-test.html
+
+[16] <span id="footnote-16"> Tsay, R. S. (2010). Analysis of Financial Time Series (3rd ed.). Wiley
+

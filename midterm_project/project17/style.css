@@ -1,0 +1,72 @@
+body {
+    font-family: 'Lato', sans-serif;
+    background-color: #f4f6f9;
+    color: #333;
+    margin: 40px;
+    line-height: 1.6;
+}
+
+/* Header Styling */
+h1, h2, h3 {
+    color: #002147;
+    font-weight: bold;
+}
+
+h1 {
+    font-size: 30px;
+    text-align: center;
+    border-bottom: 3px solid #002147;
+    padding-bottom: 10px;
+}
+
+h2 {
+    font-size: 24px;
+    margin-top: 20px;
+}
+
+/* Paragraph Styling */
+p {
+    font-size: 14px;
+    text-align: justify;
+    margin-bottom: 15px;
+}
+
+/* Table Styling */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #ddd;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+}
+
+table th {
+    background: #002147;
+    color: white;
+    padding: 10px;
+    text-align: right;
+}
+
+table td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+
+/* Plots and Figures */
+img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 20px auto;
+    border-radius: 5px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+/* Sidebar or Important Notes */
+.note {
+    background: #e7f3fe;
+    border-left: 5px solid #002147;
+    padding: 10px;
+    font-style: italic;
+}

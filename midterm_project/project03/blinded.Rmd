@@ -1,0 +1,524 @@
+---
+title: "Solar Power Generation: Time Series Modeling"
+output:
+  html_document:
+    df_print: paged
+date: "2024-02-21"
+---
+
+### Introduction
+Solar power generation is a well-documented daily cycle, inherently driven by the Earth’s rotation. Understanding this cycle is essential for efficient solar energy production forecasting. However, the extent to which this periodicity remains stable - especially in the 21st century with dynamic environmental conditions - remains an open question. This raises the question of whether solar power generation continues to follow the expected 24-hour cycle as a strictly predictable pattern.
+
+This study explores the periodicity of solar power generation to develop a forecasting model using time series data. Through exploratory data analysis (EDA) and spectral analysis, we assess both the daily and sub-daily periodic structures and investigate the presence of potential hidden patterns. Based on these findings, we develop a Seasonal Autoregressive Integrated Moving Average (SARIMA) model to forecast power generation at an hourly interval, aiming to provide deeper insights into the characteristics of solar power generation cycles.
+
+### Data
+The dataset used in this project consists of solar power generation data collected from two solar power plants in India over a period of 34 days. The dataset is structured into two categories of files: power generation data and sensor readings. The power generation data is recorded at the inverter level, where each inverter is connected to multiple lines of solar panels, capturing real-time energy production information. This allows for an analysis of variations in energy output across different inverters within the same plant.
+
+The sensor data, on the other hand, is collected at the plant level using a strategically positioned array of sensors. These sensors measure environmental parameters such as temperature, irradiation, and other meteorological factors that influence solar power generation. The plant-level sensor readings provide a comprehensive view of the environmental conditions affecting the entire solar facility. By combining power generation data with sensor readings, this dataset facilitates a detailed examination of the relationship between environmental factors and solar energy production efficiency.
+
+This dataset is sourced from Kaggle and is publicly available under the title "Solar Power Generation Data" [1].
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(forecast)
+library(knitr)
+library(tseries)
+library(rugarch)
+library(xts)
+library(stats)
+library(zoo)
+library(tidyr)
+library(scales)
+library(ggplot2)
+library(patchwork) 
+library(reshape2)
+library(GGally)
+```
+
+```{r, echo = FALSE}
+plant_1_gen <- read.csv("Plant_1_Generation_Data.csv")
+plant_1_weather <- read.csv("Plant_1_Weather_Sensor_Data.csv")
+df <- plant_1_gen
+df$DATE_TIME <- as.POSIXct(df$DATE_TIME, format = "%d-%m-%Y %H:%M")
+weather <- plant_1_weather
+weather$DATE_TIME <- as.POSIXct(weather$DATE_TIME, format="%Y-%m-%d %H:%M:%S")
+df_aggregated <- df %>%
+  group_by(DATE_TIME) %>%
+  summarise(DC_POWER = sum(DC_POWER, na.rm = TRUE),
+            AC_POWER = sum(AC_POWER, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(TOTAL_GEN = DC_POWER + AC_POWER)  
+```
+
+### Exploratory Data Analysis
+We conduct an exploratory data analysis to examine periodic patterns and potential factors that are associated with solar power generation. The EDA focuses on identifying key temporal patterns in the data, assessing periodicity, and exploring factors that may contribute to variations in daily solar power generation. We aim to uncover underlying patterns to develop a more efficient forecasting model. 
+```{r, echo = FALSE}
+ggplot(df_aggregated, aes(x = DATE_TIME, y = TOTAL_GEN)) +
+    geom_line(color = "purple") +
+    scale_y_continuous(labels = comma) +  
+    labs(title = "Time Series of Total Generation (AC + DC)",
+         x = "Date Time",
+         y = "Total Generation") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust=0.5, face="bold", size=14)) 
+```
+
+The time series plot reveals clear daily periodic patterns, corresponding to the natural solar cycle. Total generation varies by date with fluctuating peaks, indicating a non-stationary mean. There is no upward or downward trend, suggesting a potential stationarity in variance. 
+
+#### Autocorrelation Function
+```{r, echo = FALSE}
+df_15min <- df_aggregated  
+df_hourly <- df_aggregated %>%
+  group_by(DATE_HOUR = floor_date(DATE_TIME, "hour")) %>%
+  summarise(TOTAL_GEN = sum(TOTAL_GEN, na.rm = TRUE), .groups = "drop")
+df_3hour <- df_aggregated %>%
+  group_by(DATE_3HOUR = floor_date(DATE_TIME, "3 hours")) %>%
+  summarise(TOTAL_GEN = sum(TOTAL_GEN, na.rm = TRUE), .groups = "drop")
+
+df_6hour <- df_aggregated %>%
+  group_by(DATE_6HOUR = floor_date(DATE_TIME, "6 hours")) %>%
+  summarise(TOTAL_GEN = sum(TOTAL_GEN, na.rm = TRUE), .groups = "drop")
+
+df_12hour <- df_aggregated %>%
+  group_by(DATE_12HOUR = floor_date(DATE_TIME, "12 hours")) %>%
+  summarise(TOTAL_GEN = sum(TOTAL_GEN, na.rm = TRUE), .groups = "drop")
+
+df_daily <- df_aggregated %>%
+  group_by(DATE = as.Date(DATE_TIME)) %>%
+  summarise(TOTAL_GEN = sum(TOTAL_GEN, na.rm = TRUE), .groups = "drop")
+
+plot_acf <- function(data, title) {
+  acf(data$TOTAL_GEN, main = title, lag.max = 100, col = "black")
+}
+
+par(mfrow = c(2, 3))  
+
+plot_acf(df_15min, "ACF for 15-Minute Data")
+plot_acf(df_hourly, "ACF for Hourly Data")
+plot_acf(df_3hour, "ACF for 3-Hour Data")
+plot_acf(df_6hour, "ACF for 6-Hour Data")
+plot_acf(df_12hour, "ACF for 12-Hour Data")
+plot_acf(df_daily, "ACF for Daily Data")
+
+par(mfrow = c(1, 1))  
+```
+
+We then examine the autocorrelation function (ACF) at different time resolutions to investigate the stationarity. At 15-minute intervals, which is the original data, the ACF exhibits a sinusoidal pattern. As the time span increases to hourly and three-hour intervals, the periodic pattern remains, but with decreasing magnitude of autocorrelation The oscillating pattern with gradual decay suggests short-term dependence, indicating that within day values are closely related [2].
+
+At longer time spans from 12 hours to a day, the ACF reveals a stationarity process. The strong lag 1 autocorrelation with a sharp decay suggests short term dependence. It means the shorter span of recent values have a stronger influence on today’s power generation, compared to older days [2].
+
+As time span increases, the periodicity weakens and the autocorrelation decreases. This indicates a strong intraday periodicity of solar power generation. The forecasting model may be more efficient when using hourly data to balance bias and variance. 
+
+#### Basic EDA
+```{r, echo = FALSE}
+df_aggregated$hour <- hour(df_aggregated$DATE_TIME)
+df_aggregated$day <- day(df_aggregated$DATE_TIME)
+df_aggregated$DATE <- as.Date(format(df_aggregated$DATE_TIME, "%Y-%m-%d"))
+
+hourly_generation <- df_aggregated %>%
+  group_by(DATE, hour) %>%
+  summarise(avg_gen = mean(TOTAL_GEN, na.rm=TRUE), .groups = "drop") %>%
+  complete(DATE = seq(min(DATE), max(DATE), by="day"), hour = 0:23, fill = list(avg_gen = NA)) %>%
+  group_by(hour) %>%
+  mutate(avg_gen = ifelse(is.na(avg_gen), mean(avg_gen, na.rm=TRUE), avg_gen)) %>%
+  ungroup()
+
+# Plot the heatmap
+hourly_heatmap <- ggplot(hourly_generation, aes(x = DATE, y = factor(hour), fill = avg_gen)) +
+  geom_tile() +
+  scale_fill_viridis_c(labels = scales::comma) +
+  scale_x_date(date_breaks = "2 days", date_labels = "%b %d") +
+  labs(title = "Heatmap of Solar Power Generation by Hour and Day",
+       x = "Date",
+       y = "Hour of Day",
+       fill = "Hourly Total Generation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(hourly_heatmap)
+```
+
+The heatmap visualizes the daily solar power generation pattern, aligning with the common expectation that the power generation increases as the sun rises, and starts to decrease as the sun sets. The day-to-day variability can be attributed to the weather conditions. The darker part of the heatmap corresponds to zero power generation, highlighting the substantial amount of zero values in our dataset. However, these zero values are an inherent part of the dataset. Since they provide meaningful information about the underlying process, we choose to not remove those values.
+
+```{r, echo = FALSE}
+df_aggregated <- df_aggregated %>%
+  mutate(time_of_day = hour + minute(DATE_TIME) / 60)
+
+ggplot(df_aggregated, aes(x=as.factor(hour), y=TOTAL_GEN)) +
+  geom_boxplot(outlier.color="red", outlier.alpha=0.5,fill="skyblue") + 
+  labs(title="Total Generation Distribution by Hour",
+       x="Hour of Day",
+       y="Total Power Generation (TOTAL_GEN)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle=45))
+```
+
+This plot also aligns with the expected solar energy generation pattern. One notable observation is increasing variance over time during the period of power generation. 
+
+#### Relationship with Weather Factors
+To further investigate the factors influencing total power generation, we examine the relationship with key weather variables: irradiation, module temperature, and ambient temperature. The key weather variables are provided in the dataset. Solar irradiation is “power received from the sun”, which can be understood as the amount of sunlight received. Module temperature refers to the temperature of the photovoltaic cells. This can be understood as the temperature of the solar panel. Ambient temperature refers to the temperature of the surrounding air [3-5].
+
+```{r, echo = FALSE}
+# Merge two datasets
+generation <- plant_1_gen
+weather <- plant_1_weather
+
+weather$DATE_TIME <- format(as.POSIXct(weather$DATE_TIME, format="%Y-%m-%d %H:%M"), "%d-%m-%Y %H:%M")
+weather$DATE_TIME <- as.POSIXct(weather$DATE_TIME, format="%d-%m-%Y %H:%M")
+
+df_merged <- merge(df_aggregated, weather, by="DATE_TIME")
+df_pairplot <- df_merged %>%
+  dplyr::select(TOTAL_GEN, AMBIENT_TEMPERATURE, MODULE_TEMPERATURE, IRRADIATION)
+ggpairs(df_pairplot, progress = FALSE) +
+  labs(title="Pairwise Relationships Between Variables")
+```
+
+The pairplots show a strong correlation among all four variables. Two pairs - total generation and irradiation, module temperature and irradiation - have strong positive linear relationships. Interestingly, module temperature and ambient temperature have relatively dispersed linear trends, as does ambient temperature and irradiation. This suggests a weaker correlation. However, the absolute value of the correlation coefficients are greater than 0.7. While these relationships may be weaker than irradiation with total generation, they are still considered strong correlations. This suggests that all three weather variables are closely related to each other, even though other confounding factors and latent variables may weaken their linear relationship. 
+
+### Spectral Analysis
+For this section, we look into the spectrum of the total solar power generated by plant 1, apart from finding the dominant frequency, we aim to apply Seasonal and Trend decomposition using Loess to deeply understand the differences of trend between two plants.
+
+```{r read, echo = FALSE}
+process_weather_data <- function(file_path) {
+  df <- read.csv(file_path)
+  df$DATE_TIME <- as.POSIXct(df$DATE_TIME, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+  df <- df %>% select(DATE_TIME, AMBIENT_TEMPERATURE, MODULE_TEMPERATURE, IRRADIATION)
+  return(df)
+}
+process_generation_data_1 <- function(file_path) {
+  df <- read.csv(file_path)
+  df$DATE_TIME <- as.POSIXct(df$DATE_TIME, format="%d-%m-%Y %H:%M", tz="UTC")
+  df <- df %>%
+    group_by(DATE_TIME) %>%
+    summarise(
+      TOTAL_DC_POWER = sum(DC_POWER, na.rm = TRUE),
+      TOTAL_AC_POWER = sum(AC_POWER, na.rm = TRUE)
+    ) %>%
+    mutate(TOTAL_POWER = TOTAL_DC_POWER + TOTAL_AC_POWER) %>%
+    arrange(DATE_TIME)
+  return(df)
+}
+convert_to_xts <- function(df) {
+  df_xts <- xts(df[, -1], order.by = df$DATE_TIME)
+  return(df_xts)
+}
+check_na_plot <- function(ts_data, var_name, plant_num) {
+  cat("Missing values in", var_name, ":", sum(is.na(ts_data)), "\n")
+  
+  plot(index(ts_data), ts_data, type = "l", col = "blue",
+       xlab = "Time", ylab = var_name, main = paste("Time Series of", var_name, "of Plant", plant_num))
+}
+```
+
+```{r spectrum, echo = FALSE}
+analyze_spectrum <- function(ts_data, var_name, sliding_window = c(10, 10), plant_num) {
+  par(mfrow = c(1, 1))
+  ts_numeric <- as.numeric(ts_data)
+  ts_numeric <- na.omit(ts_numeric)
+  spec_raw <- spectrum(ts_numeric, main = paste("Unsmoothed Spectrum of", var_name, 
+                                    "of Plant", plant_num))
+  dom_freq_raw <- spec_raw$freq[which.max(spec_raw$spec)]
+  dom_period_raw <- 1 / (4 * dom_freq_raw)
+  spec_smooth <- spectrum(ts_numeric, spans = sliding_window, 
+                          main = paste("Smoothed Spectrum of", var_name, 
+                                       "of Plant", plant_num))
+  dom_freq_smooth <- spec_smooth$freq[which.max(spec_smooth$spec)]
+  dom_period_smooth <- 1 / (4 * dom_freq_smooth)
+  ar_model <- ar(ts_numeric, order.max = 20, AIC = TRUE)
+  spec_ar <- spectrum(ts_numeric,
+                      main = paste("AR-based Spectrum of", var_name, 
+                                   "of Plant", plant_num))
+  dom_freq_ar <- spec_ar$freq[which.max(spec_ar$spec)]
+  dom_period_ar <- 1 / (4 * dom_freq_ar)
+  
+  cat("For Plant", plant_num, "\n")
+  cat("Dominant Frequency (Raw):", dom_freq_raw, " -> Period:", 
+      dom_period_raw, "Hours\n")
+  cat("Dominant Frequency (Smoothed):", dom_freq_smooth, " -> Period:", 
+      dom_period_smooth, "Hours\n")
+  cat("Dominant Frequency (AR-based):", dom_freq_ar, " -> Period:", 
+      dom_period_ar, "Hours\n")
+}
+plot_stl_decomposition <- function(ts_data, var_name, frequency = 96, plant_num) {
+  ts_numeric <- as.numeric(ts_data)
+  ts_numeric <- na.omit(ts_numeric)
+  ts_object <- ts(ts_numeric, frequency = frequency)
+  decomposed <- stl(ts_object, s.window = "periodic")
+  plot(decomposed, main = paste("STL Decomposition of", var_name, "of Plant", plant_num))
+}
+```
+
+```{r read data, echo = FALSE}
+gen_plant1 <- process_generation_data_1("Plant_1_Generation_Data.csv")
+gen_plant1 <- convert_to_xts(gen_plant1)
+```
+
+### Periodogram
+Plotting the unsmoothed periodogram, smoothed periodogram, and AR based periodogram, we concluded the period is 24 hours for plant 1, which aligns with our EDA.
+
+```{r spectrum total power 1, echo = FALSE}
+analyze_spectrum(gen_plant1$TOTAL_POWER, "Total Power", sliding_window =c(10, 10), 1)
+```
+
+### STL Decomposition
+From the STL decomposition of both plants, by separating the seasonal effect and trend effect, we may observe some differences between two plants. Plant 1 has shown an optimal seasonal (daily) peak at noon, which can be understood by the intensity of lights (irradiation). Interestingly, we observe two peaks of trend during May, which might be correlated to its particular biological features.
+
+```{r stl total power 1, echo = FALSE}
+plot_stl_decomposition(gen_plant1$TOTAL_POWER, "Total Power", plant_num = 1)
+```
+
+```{r data, echo = FALSE}
+solar_power <- read.csv("Plant_1_Generation_Data.csv", stringsAsFactors = FALSE)
+
+# Convert the DATE_TIME column to a datetime object with the format "DD-MM-YYYY HH:MM"
+solar_power$DATE_TIME <- as.POSIXct(solar_power$DATE_TIME, format = "%d-%m-%Y %H:%M")
+solar_power$DATE <- as.Date(solar_power$DATE_TIME)
+
+# aggregate all the power sources into 15 minute buckets
+hour_df <- solar_power %>%
+  mutate(DATE_TIME_HOUR = floor_date(DATE_TIME, unit = "hour")) %>%
+  group_by(DATE_TIME_HOUR) %>%
+  summarise(across(c(DC_POWER, AC_POWER), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(total_power = DC_POWER + AC_POWER) %>%
+  ungroup()
+
+day_df <- solar_power %>%
+  group_by(DATE) %>%
+  summarise(across(c(DC_POWER, AC_POWER), ~ sum(.x, na.rm = TRUE))) %>%
+  mutate(total_power = DC_POWER + AC_POWER) %>%
+  ungroup()
+```
+
+### SARMA modeling
+Given the clear daily seasonality within our data, it makes sense to fit a SARIMA model over a ARIMA model to model the daily behavioral patterns in the data.
+
+The general form of a seasonal ARIMA model with seasonal period 24, with each data point being an hour, denoted as SARIMA\((p,d,q) \times (P,D,Q)_{24}\), is given by
+$$
+\phi(B) \, \Phi(B^{24}) \, (1 - B)^d \, (1 - B^{24})^D \, (Y_n-\mu) = \psi(B) \, \Psi(B^{24}) \, \epsilon_n,
+$$
+where
+- \( \phi(B) = 1 - \phi_1 B - \phi_2 B^2 - \cdots - \phi_p B^p \)  
+  represents the nonseasonal AR polynomial,
+- \( \psi(B) = 1 + \psi_1 B + \psi_2 B^2 + \cdots + \psi_q B^q \)  
+  represents the nonseasonal MA polynomial,
+- \( \Phi(B^{24}) = 1 - \Phi_1 B^{24} - \Phi_2 B^{24 \cdot 2} - \cdots - \Phi_P B^{24P} \)  
+  represents the seasonal AR polynomial,
+- \( \Psi(B^{24}) = 1 + \Psi_1 B^{24} + \Psi_2 B^{24 \cdot 2} + \cdots + \Psi_Q B^{24Q} \)  
+  represents the seasonal MA polynomial,
+- \( d \) and \( D \) are the orders of nonseasonal and seasonal differencing, respectively,
+- \( s = 96 \) denotes the seasonal period,
+- \( \epsilon_n \) is a white noise process [6].
+
+For our model selection, we optimized the AIC of our model. The AIC is given by
+$$
+\text{AIC} = -2 \log(L(\hat{\theta})) + 2k,
+$$
+
+where:
+
+- \(L(\hat{\theta})\) is the maximized likelihood of the model evaluated at the estimated parameters \(\hat{\theta}\),
+- \(k\) is the number of estimated parameters in the model.
+
+The AIC provides a measure of the trade-off between the model's goodness-of-fit and its complexity [6]. 
+
+Below, we present the AIC values for various SARIMA\((p,d,q) \times (0,1,1)_{24}\) models fitted on our data for different combinations of \(p\) and \(q\).
+
+```{r aic sarima, echo = FALSE}
+# refit our sarma models on the log transformed data
+aic_table <- function(data, P, Q){
+  table <- matrix(NA, (P+1), (Q+1))
+  for(p in 0:P) {
+    for (q in 0:Q){
+     table[p+1, q+1] <- arima(data, order = c(p, 0, q),
+                          seasonal = list(order = c(0, 1, 1), period = 24))$aic
+    }
+  }
+  dimnames(table)<- list(paste("AR", 0:P, sep=""),
+                         paste("MA", 0:Q, sep=""))
+  table
+}
+aa_aic_table <- aic_table(hour_df$total_power, 5, 5)
+kable(aa_aic_table, digits = 2)
+```
+
+Our analysis indicates that a Seasonal ARIMA model performs better than a ARIMA model, with an AIC that is over 600 units lower. Specifically, after parameter tuning, the optimal model was identified as
+$$
+\text{SARIMA}(2,0,1) \times (0,1,1)_{24},
+$$ 
+
+Although one could formally test the models via a likelihood ratio test, the SARIMA model is trivially superior in terms of likelihood. However, upon examining the AIC table for the SARIMA models, we notice an unusual pattern: the AIC often jumps by more than 2 points between model specifications. Such behavior suggests that the model estimation may be encountering convergence issues.
+
+#### Residual Analysis
+We will evaluate this model's residuals, their autocorrelation structure, and their QQ plot to determine if the anomalous AIC behavior stems from non-convergence or other issues.
+
+```{r diagnostics, echo = FALSE}
+diagnose_arima <- function(model) {
+  print(summary(model))
+  par(mfrow = c(2, 2))
+  
+  # 1. Time Series Plot of Residuals
+  plot(model$residuals, type = "l", 
+       main = "Residuals", 
+       xlab = "Time", 
+       ylab = "Residuals")
+  
+  # 2. ACF Plot of Residuals
+  acf(model$residuals, main = "ACF of Residuals")
+  
+  # 3. Q-Q Plot for Normality
+  qqnorm(model$residuals, main = "Normal Q-Q Plot")
+  qqline(model$residuals, col = "red")
+  
+  par(mfrow = c(1, 1))
+  return(model)
+}
+
+model <- arima(hour_df$total_power, order = c(4, 0, 1), seasonal = list(order = c(0, 1, 1), period = 24))
+diagnose_arima(model)
+```
+
+Our diagnostic analysis (e.g., via Q-Q plots) reveals that the residuals of our fitted model exhibit significantly fatter tails than expected under the normality assumption. Since the above log likelihood function relies on the assumption that the residuals are normally distributed, deviations from normality—especially in the form of heavy tails—can lead to inefficient or biased parameter estimates.
+
+### Transforming the dataset
+To address this issue, we propose applying a power transformation, such as the Box–Cox transformation, to normalize our data [9]. The Box–Cox transformation is defined as
+$$
+Y^{(\lambda)} = 
+\begin{cases}
+\frac{Y^\lambda - 1}{\lambda}, & \lambda \neq 0, \\
+\log(Y), & \lambda = 0.
+\end{cases}
+$$
+
+By selecting an appropriate value of \(\lambda\), we can stabilize the variance and make the distribution of the residuals more normal [9]. This transformation should hypothetically lead to a more reliable estimation of the model parameters via the log likelihood function.
+
+```{r boxcox, echo = FALSE, warning = FALSE}
+lambda <- BoxCox.lambda(hour_df$total_power + 1)
+hour_df$total_power_boxcox <- BoxCox(hour_df$total_power + 1, lambda)
+
+aic_table <- function(data, P, Q){
+  table <- matrix(NA, (P+1), (Q+1))
+  for(p in 0:P) {
+    for (q in 0:Q){
+     table[p+1, q+1] <- arima(data, order = c(p, 0, q),
+                          seasonal = list(order = c(0, 1, 1), period = 24))$aic
+    }
+  }
+  dimnames(table)<- list(paste("AR", 0:P, sep=""),
+                         paste("MA", 0:Q, sep=""))
+  table
+}
+# model is not converging
+aa_aic_table <- aic_table(hour_df$total_power_boxcox, 5, 5)
+kable(aa_aic_table, digits = 2)
+```
+
+Our analysis indicates that the best model on the Box–Cox transformed dataset is
+$$
+\text{SARMA}(4,0,1) \times (0,1,1)_{24},
+$$
+with an AIC of -9641.80.
+
+### Diagnostics
+Below, we perform the same diagnostics alongside an ADF test to evaluate model performance.
+```{r boxcox diagnostics, echo = FALSE}
+# Fit the SARIMA(4,0,1)x(0,1,1)_24 model
+ts_data <- ts(hour_df$total_power_boxcox, frequency = 24)
+model <- Arima(ts_data, order = c(4, 0, 1), 
+               seasonal = list(order = c(0, 1, 1), period = 24))
+summary(model)
+model <- arima(hour_df$total_power_boxcox, order = c(4, 0, 1), seasonal = list(order = c(0, 1, 1), period = 24))
+diagnose_arima(model)
+```
+This model has roots
+```{r, echo = FALSE}
+ar_coefs <- model$coef[grep("^ar", names(model$coef))]
+ar_poly <- c(1, -ar_coefs)
+ar_roots <- polyroot(ar_poly)
+
+ma_coefs <- model$coef[grep("^ma", names(model$coef))]
+ma_poly <- c(1, ma_coefs)
+ma_roots <- polyroot(ma_poly)
+
+sma_coefs <- model$coef[grep("^sma", names(model$coef))]
+sma_poly <- c(1, sma_coefs)
+sma_roots <- polyroot(sma_poly)
+
+print("AR roots:")
+print(ar_roots)
+
+print("MA roots:")
+print(ma_roots)
+
+print("Seasonal MA roots:")
+print(sma_roots)
+```
+Since all of the roots lie outside the unit circle, our model is stationary and causal, even when accounting for seasonal effects. Additionally, the MA root being outside the unit circle confirms that the model is invertible. It is worth noting that two of the AR roots are close to 1, which means the model is at the threshhold of non-causality and could be unstable.
+
+Additionally, we performed a Ljung-Box test on the residuals to assess autocorrelation. The Ljung-Box test is a statistical procedure used to detect whether any group of autocorrelations in the residuals of a model significantly deviates from zero, indicating that the model may not have captured all the temporal dependencies in the data [8].
+```{r, echo = FALSE}
+Box.test(model$residuals, lag = 20, type = "Ljung-Box")
+```
+
+The Ljung-Box test produced a p-value of 0.6257, indicating that we do not have enough evidence to reject the null hypothesis that there is no significant autocorrelation in the residuals, suggesting that the model has adequately captured the serial correlation in the data [8].
+
+However, even after applying the Box–Cox transformation to stabilize the variance, the residuals continue to exhibit fat tails. This heavy-tailed behavior suggests that the standard normality assumption for the error distribution may not be fully appropriate. Consequently, we decided to fit the model using a Studentized t-distribution, which has fatter tails, to better capture the characteristics of the residuals, which is given by:
+$$
+f(\varepsilon_t \mid \nu, \sigma^2) = \frac{\Gamma\left(\frac{\nu+1}{2}\right)}{\sqrt{\nu\pi}\,\sigma\,\Gamma\left(\frac{\nu}{2}\right)} \left[1 + \frac{1}{\nu}\left(\frac{\varepsilon_t}{\sigma}\right)^2 \right]^{-\frac{\nu+1}{2}},
+$$
+
+where a smaller value of \(\nu\) corresponds to heavier tails. By allowing for such an error structure, we aim to obtain more robust parameter estimates.
+
+### SARMA with t-distributed errors
+Below, we use the rugarch package to manually try to fit a SARIMA model with t‑distributed errors on the Box–Cox transformed time series. To capture seasonality, we generate Fourier terms (with \(K=1\)) [7]. 
+```{r terrors, echo = FALSE}
+ts_data <- ts(hour_df$total_power_boxcox, frequency = 24)
+fourier_terms <- fourier(ts_data, K = 1)
+
+spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(0, 0)),
+  mean.model = list(armaOrder = c(4, 1), include.mean = TRUE,
+                    external.regressors = fourier_terms),
+  distribution.model = "std"  # t-distribution
+)
+fit <- ugarchfit(spec = spec, solver = "solnp",data = hour_df$total_power_boxcox)
+print(fit)
+```
+
+However, when fitting the model above, our model does not converge. This lack of convergence can likely be attributed to numerical instability.
+
+### Final Model
+Because we were unable to get the t-distributed errors to converge, the SARIMA on our power transformed time series data seems to be our best alternative, given by 
+```{r, echo = FALSE}
+model <- arima(hour_df$total_power_boxcox, order = c(4, 0, 1), seasonal = list(order = c(0, 1, 1), period = 24))
+summary(model)
+print(paste("Boxcox lambda:", BoxCox.lambda(hour_df$total_power + 1)))
+```
+
+### Conclusion
+We focused on developing a forecast model for solar power generation dataset, after thorough investigation of the periodicities and spectral density of the data. Our final model was $\text{SARMA}(4,0,1) \times (0,1,1)_{24}$. With 24 seasonal terms, we fitted the model on our power transformed dataset. The model was built upon a previous study on wind power generation [10] by adopting and extending their model for solar power generation. In additions to the previous models, we address the fat-tailed residuals through power transformation and heavy-tailed distributions. 
+
+However, one limitation of our approach is that our attempt to model t-distributed errors did not converge. The residuals continue to exhibit heavier tails than expected under a normal distribution. Interpretations of our final model should incorporate additional uncertainty to account for the potential impact of this heavy-tailed behavior.
+
+Our findings with the final model selection revealed that the solar power generation continues to follow the 24-hour daily cycle. The solar power generation process itself is a complex process, creating significant challenges in forecasting and model specification. The nature of the dataset due to its numerous confounding factors and latent variables contribute to this challenge. Additionally, ARMA model may not be sufficient to capture the intrinsic dynamics of periodicities and complexities in the dataset.
+
+### References
+[1] Anikannal. (2019). Solar Power Generation Data. Kaggle. Retrieved from https://www.kaggle.com/datasets/anikannal/solar-power-generation-data/data.
+
+[2] Fiveable. (n.d.). Autocorrelation function (ACF) interpretation. Fiveable Library. Retrieved from https://library.fiveable.me/intro-time-series/unit-4/autocorrelation-function-acf-interpretation/study-guide/kRV2Op01nfiMsv6o
+
+[3] Wikipedia contributors. (n.d.). Solar irradiance. Wikipedia, The Free Encyclopedia. Retrieved February 21, 2025, from https://en.wikipedia.org/wiki/Solar_irradiance
+
+[4] Seven Sensor. (n.d.). What is a module temperature sensor & why is it important in PV installations? Retrieved from https://www.sevensensor.com/what-is-a-module-temperature-sensor-why-it-is-important-in-pv-installations
+
+[5] Wikipedia contributors. (n.d.). Room temperature. Wikipedia, The Free Encyclopedia. Retrieved February 21, 2025, from https://en.wikipedia.org/wiki/Room_temperature#:~:text=In%20contrast%2C%20ambient%20temperature%20is,from%20an%20ideal%20room%20temperature
+
+[6] Ionides, E. (2025). Notes for STATS/DATASCI 531, Modeling and Analysis of Time Series Data.
+
+[7] “Fitting ARIMA-GARCH Model Using “Rugarch” Package.” Cross Validated, 12 Oct. 2015, stats.stackexchange.com/questions/176550/fitting-arima-garch-model-using-rugarch-package. Accessed 21 Feb. 2025.
+
+[8] Diagnostics, STAT 510. (n.d.). PennState: Statistics Online Courses. https://online.stat.psu.edu/stat510/lesson/3/3.2
+
+[9] Rossiter, D G. “Box-Cox Transformation.” Cornell.edu,  www.css.cornell.edu/faculty/dgr2/_static/files/R_html/Transformations.html#2_the_box-cox_transform. Accessed 21 Feb. 2025.
+
+[10] STATS-531 - Midterm Project. (2015). Github.io. https://ionides.github.io/531w24/midterm_project/project11/blinded.html#Modeling

@@ -1,0 +1,537 @@
+---
+title: "Time Series Analysis of Tesla Stock Data"
+output:
+  html_document: default
+  pdf_document: default
+bibliography: references.bib
+csl: vancouver.csl
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+# Install needed packages
+library(rugarch)
+library(knitr)
+library(tidyverse)
+library(lubridate)
+library(tseries)
+library(forecast)
+library(lmtest)
+```
+
+## Introduction
+
+With growing focus on sustainable development and environmental
+protection, Tesla, a main and leading player in the electric vehicle
+market, has received broader attention from the public all over the
+world in recent decades. At the same time, factors such as instability
+in related regulations and increasing market competitiveness bring
+uncertainty to Tesla's market position, which is somewhat reflected on
+its volatile performance in the stock market. In fact, TESLA is one of the most volatile stocks in the technology and automotive sectors.
+
+To improve robustness of Tesla's future stock price prediction, this
+report investigates trends and patterns in its historical stock data
+(specifically, from 2010 to 2024). By applying multiple time series
+analytical techniques, including ARMA, GARCH, Spectral Analysis and
+LOESS Smoothing, we figure out that the log returns of Tesla's stock are
+stationary, exhibit volatility clustering, and lack strong cyclic
+pattern.
+
+```{r, include=FALSE}
+tesla <- read.csv("TESLA.CSV")
+#tesla <- read.csv("/Users/brian96086/Documents/Courses/STATS531/STATS531-Group14/TESLA.csv")
+#tesla <- read.csv("/Users/maoyingyu/Desktop/UMICH/25Winter/STATS531/Midterm project/TESLA.csv")
+tesla$Date <- as.Date(tesla$Date, format="%m/%d/%y")
+
+#tesla <- tesla[order(tesla$Date), ]
+tesla <- tesla %>% drop_na()
+tesla <- tesla %>% mutate(across(where(is.character), as.numeric, .names = "num_{col}"))
+
+# Remove outliers based on opening prices
+#q1 <- quantile(tesla$Open, 0.25)
+#q3 <- quantile(tesla$Open, 0.75)
+#iqr <- q3 - q1
+#lower_bound <- q1 - 1.5 * iqr
+#upper_bound <- q3 + 1.5 * iqr
+#tesla <- tesla %>% filter(Open >= lower_bound & Open <= upper_bound)
+head(tesla)
+```
+
+## Data Overview
+
+While the original dataset [@kaggle_tesla_2024]contains several key financial indicators
+such as the highest and lowest prices and traded volume on every trading
+day, this report will focus on opening prices for simplicity and
+concision. We first plot the time series of Tesla's opening prices
+throughout the time range as presented below.
+
+```{r, echo = FALSE}
+# Opening price overview
+plot(
+  tesla$Date, tesla$Open, type = "l",
+  xlab = "Date", ylab = "Opening Price",
+  main = "Opening Price of Tesla Stock Over Time"
+)
+```
+
+It appears that the price before 2020 remains relatively low and stable,
+except a minor increase around 2013. A noticeable steep increase occurs
+in 2020, along with frequent volatility afterwards. The peak so far
+happens around 2022, which is followed by a fluctuating decreasing
+trend. The price shows a significant rise in 2024, approaching the
+previous peak. If this trend keeps going on in 2025, the price is likely
+to reach an unprecedented high level.
+
+The volatility starting from 2020 makes the overall time series
+non-stationary. In terms of assumptions needed for ARMA models as well
+as investors' interest, we look into the stock return. Specifically, we
+take the difference of logarithmic-transformed opening prices on two
+consecutive trading days, considering it as the log return. The log
+return is always preferred over the simple return when analyzing
+long-term investment performance as it accounts for significant
+volatility in the trend [@kotary2019].
+
+$$
+\text{Simple Returns: } L_t = \frac{V_{t+1}}{V_t} - 1 \\
+\text{Log Returns: } C_t = \mathrm{log}(\frac{V_{t+1}}{V_t}) = \mathrm{log}(V_{t+1}) - \mathrm{log}(V_{t})
+$$
+
+The time series of Tesla stock's log returns is plotted as below, where
+the red dashed line represents the benchmark for assessing if the stock
+makes a profit or loss. It appears that the log returns have the average
+around zero along with changing variance throughout the time range.
+
+```{r, echo = FALSE}
+# Daily log returns based on the opening prices 
+tesla$log_return <- c(NA, diff(log(tesla$Open)))
+
+plot(tesla$Date, tesla$log_return, type = "l", main = "Tesla Log Returns Over Time", xlab = "Date", ylab = "Return Rate")
+
+abline(h = 0, col = "red", lty = 2)
+```
+
+We also look into the ACF plots for further confirmation. While the plot
+of the opening price clearly indicates high dependence on past values
+and non-stationarity of the data, in the plot of the log return,
+autocorrelations drop sharply after lag 0 and keep being within the
+bounds (blue dashed lines) for almost all larger lags, providing
+sufficient evidence to suggest that the log returns are stationary and
+therefore can be modeled with an ARMA process without differencing.
+
+```{r, echo = FALSE}
+# Autocorrelation plots
+acf(na.omit(tesla$Open), main = "ACF of Opening Prices")
+acf(na.omit(tesla$log_return), main = "ACF of Log Returns")
+```
+
+## ARMA Model
+
+We start our modeling process with the autoregressive-moving average
+model (ARMA) model, which is given by:
+
+$$
+Y_n = \phi_1Y_{n-1} + \phi_2Y_{n-2} + ... + \phi_pY_{n-p} + \epsilon_n + \psi_1\epsilon_{n-1} + ... + \psi_q\epsilon_{n-q}
+$$
+
+where $\{\epsilon_n\}$ is a white noise process following
+$N(0, \sigma^2)$ [@ionides20254]. Terms with $\phi$ are autoregressive
+terms, and terms with $\psi$ are moving average terms. From this general
+form of ARMA(p,q) model, we can also derive autoregressive (AR) models
+and moving average (MA) models. For example, in terms of having one lag,
+the AR(1) model and MA(1) model can be expressed as
+
+$$
+\text{AR(1): } X_t = \phi_1 X_{t-1} + \epsilon_t \\
+\text{MA(1): } X_t = \epsilon_t + \theta_1 \epsilon_{t-1}
+$$
+
+### AIC Table
+
+We compare the AICs of fitted ARMA models to determine which model has
+the best performance, which can be expressed as
+
+$$
+\mathrm{AIC} = -2 \times l(\theta^*) + 2D
+$$
+
+where $l(\theta^*)$ represents the maximized log likelihood and $D$
+represents the number of parameters [@ionides20255]. The formula shows
+that AIC penalizes overfitting models for their increasing number of
+parameters. The AICs of models from ARMA(0, 0) to ARMA(4, 4) are
+summarized in the table below.
+
+```{r, echo = FALSE}
+# Fit ARMA models and compute AIC table for model selection
+best_aic <- Inf  # Initialize best AIC value
+best_model <- NULL  # Initialize best model
+P = 4;
+Q = 4;
+table <- matrix(NA,(P+1),(Q+1)) 
+for (p in 0:P) {
+  for (q in 0:Q) {
+    model <- tryCatch(arima(tesla$log_return, order=c(p,0,q)), error=function(e) NULL)
+    if (!is.null(model)) {
+      aic_value <- AIC(model)  # Compute AIC for model comparison
+      table[p+1,q+1] <- aic_value
+      #cat("ARMA(", p, ",", q, ") AIC: ", aic_value, "\n")
+      if (aic_value < best_aic) {
+        best_aic <- aic_value  # Update best AIC
+        best_model <- model  # Update best model
+      }
+    }
+  }
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+
+require(knitr)
+print(best_model)
+kable(table,digits=2)
+```
+
+Before directly choosing the model with the smallest AIC value, we first
+check if there is any inconsistency. Particularly, since adding one
+parameter in a nested model cannot decrease the maximized
+log-likelihood, it can increase the AIC by at most 2 units
+[@quiz_solutions]. After carefully examining every adjacent pair, we
+notice that the $\left\{(p, q), (p', q')\right\}$ pair
+$\left\{(4, 2), (4, 3)\right\}$ has a difference of 2.06. Given this
+inconsistency, we would better stay with simpler model, either ARMA(1,0)
+or ARMA(0,1).
+
+### Model Diagonostics
+
+To further comparing between ARMA(1,0) and ARMA(0,1), we conduct the
+likelihood-ratio test for those two models, which is often used to
+compare the goodness of fit between two nested models. It turns out that
+they have almost the same log-likelihood (6801.8 vs. 6801.9), suggesting
+that their performances are almost identical.
+
+```{r, echo = FALSE}
+# Likelihood-ratio test between ARMA(1,0) and ARMA(0,1)
+arma10 <- arima(tesla$log_return, order = c(1, 0, 0))
+arma01 <- arima(tesla$log_return, order = c(0, 0, 1))
+
+lr_test <- lrtest(arma10, arma01)
+print(lr_test)
+```
+
+As mentioned earlier, the white noise in the ARMA model is expected to
+follow the distribution of $N(0, \sigma^2)$. In the residuals
+diagnostics of ARMA(1,0) and ARMA(0,1) as displayed below, we check if
+the residuals are in line with it. It appears that both models have
+nearly identical performance of stable variance over time, no
+significant autocorrelation, and being close to normality. We therefore
+suggest that both ARMA(1,0) and ARMA(0,1) are well applicable to fit the
+data.
+
+```{r, echo = FALSE}
+residuals_arma10 <- residuals(arma10)
+residuals_arma01 <- residuals(arma01)
+
+plot_residual_diagnostics <- function(residuals, model_name) {
+  par(mfrow = c(1,3))  # Set up a 1x3 plot layout
+  
+  # Plot Residuals
+  plot(residuals, type = "l", main = paste("Residuals of", model_name), ylab = "Residuals")
+  abline(h = 0, col = "red", lty = 2)
+  
+  # ACF Plot
+  acf(residuals, main = paste("ACF of Residuals (", model_name, ")", sep=""))
+  
+  # QQ Plot
+  qqnorm(residuals, main = paste("QQ Plot (", model_name, ")", sep=""))
+  qqline(residuals, col = "red")
+  
+  par(mfrow = c(1,1))  # Reset layout
+}
+
+plot_residual_diagnostics(na.omit(residuals_arma10), "ARMA(1,0)")
+plot_residual_diagnostics(na.omit(residuals_arma01), "ARMA(0,1)")
+```
+
+```{r, echo = FALSE}
+# Residual diagnostics to validate model assumptions
+# residuals <- na.omit(residuals(best_model))
+# par(mfrow=c(2,2))  # Set up a 2x2 plot layout
+# plot(residuals, main="Residuals of ARMA Model")  # Check for patterns in residuals
+# acf(residuals, main="ACF of Residuals")  # Check for autocorrelation in residuals
+# qqnorm(residuals)  # Check normality of residuals
+# qqline(residuals, col="red")  # Add reference normal line
+# par(mfrow=c(1,1))  # Reset plot layout
+```
+
+## GARCH Model
+
+Financial time series data, such as stock returns, often exhibit
+**volatility clustering**, where periods of high volatility tend to be
+followed by further high volatility, and low-volatility periods tend to
+persist. The **Generalized Autoregressive Conditional Heteroskedasticity
+(GARCH)** model, introduced by Bollerslev (1986), extends the **ARCH
+(Autoregressive Conditional Heteroskedasticity)** model by modeling both
+short-term and long-term volatility components.
+
+According to [@tsay2010], GARCH models assume that the variance of the
+error term depends on its past values and past variances:
+
+$$
+\sigma_t^2 = \alpha_0 + \sum_{i=1}^{p} \alpha_i \epsilon_{t-i}^2 + \sum_{j=1}^{q} \beta_j \sigma_{t-j}^2
+$$
+
+where: $-\sigma_t^2$ represents the conditional variance at time $t$, -
+$\alpha_0$ is a constant term, - $\alpha_i$ are the coefficients of past
+squared errors $\epsilon_{t-i}^2$ (ARCH terms), - $\beta_j$ are the
+coefficients of past variances $\sigma_{t-j}^2$ (GARCH terms).
+
+The **GARCH(1,1)** model, which includes one lag each for ARCH and GARCH
+terms, is commonly used in financial applications due to its
+effectiveness in capturing volatility persistence. In this project, we
+fit an **ARMA-GARCH(1,1)** model to Tesla's log returns, capturing both
+mean dynamics (ARMA component) and volatility clustering (GARCH
+component).And since we have reached the conclusion of ARMA(1,0) and ARMA(0,1) 
+show equal performance in this project, we will use ARMA(1,0) to combine with GARCH(1,1).
+
+```{r, echo = FALSE}
+# Fit ARMA-GARCH model to capture volatility dynamics
+spec <- ugarchspec(mean.model = list(armaOrder = c(1,0)),
+                   variance.model = list(garchOrder = c(1,1)),
+                   distribution.model = "norm")  # Define ARMA-GARCH model
+arma_garch_model <- ugarchfit(spec = spec, data = na.omit(tesla$log_return), solver = "hybrid")
+print(arma_garch_model)
+```
+
+```{r, echo = FALSE}
+# Plot estimated volatility over time
+garch_volatility <- sigma(arma_garch_model)  # Extract estimated volatility
+plot(tesla$Date[-1], garch_volatility, type="l", 
+     main = "Estimated Volatility from ARMA-GARCH(1,1)", 
+     xlab = "Date", ylab = "Volatility")
+```
+
+## Frequency Analysis
+
+We use the periodograms to investigate any cyclical patterns in the log
+return time series and smoothen it to observe a clearer trend. Then, we
+plot the periodograms based on the best AR model. Lastly, we use the
+locally estimated scatterplot smoothing (LOESS) to detrend the data
+across scales (i.e. low-frequency, high-frequency, and intermediate
+cyclic trends). We discuss each of our results below:
+
+## Spectral Analysis
+
+Time series data can be analyzed not only in the time domain but also in
+the frequency domain. Spectral analysis helps identify periodic
+structures and dominant cycles in a time series by decomposing it into
+sinusoidal components. This method is particularly useful for detecting
+cyclic behavior that may not be obvious in traditional time-domain
+analysis.
+
+According to [@chatfield2003], spectral analysis is based on the Fourier
+transform, which converts a time series $X_t$ into the frequency domain
+representation:
+
+$$
+S(f) = \frac{1}{N} \left| \sum_{t=1}^{N} X_t e^{-2\pi i f t} \right|^2
+$$
+
+where: $-S(f)$ is the spectral density function, $-f$ represents the
+frequency, $-N$ is the total number of observations.
+
+The periodogram is an empirical estimate of the spectral density and is
+used to detect dominant cycles in a time series. In our analysis, we
+apply **raw and smoothed periodograms** to investigate whether there are
+any significant cyclical patterns in Tesla’s log returns.
+
+```{r, echo = FALSE}
+# Raw periodogram
+periodogram = spectrum(na.omit(tesla$log_return), plot = FALSE)
+plot(periodogram, sub = "", main = "Periodogram of Log-Returns") #remove bandwidth
+
+
+# Smoothed periodogram
+smoothed_periodogram <- spectrum(na.omit(tesla$log_return), spans = c(11, 13, 11), plot = FALSE)
+plot(smoothed_periodogram, sub = "", main = "Smoothed Periodogram of Log-Returns")
+
+#Plot spectrum based on best ARMA fitted model
+spectrum(na.omit(tesla$log_return),method="ar",
+  main="Spectrum estimated via AR model picked by AIC")
+```
+
+Both periodograms show relatively noisy results, and there are no clear
+peaks in spectrum, suggesting that there are no distinct frequencies or
+cyclic patterns. The spectral density plot of the best AR model
+(measured through AIC) corresponds to a white-noise model, which has
+uniform spectrum across frequencies. To further investigate the
+existence of seasonal trends, we followup with LOESS fitting.
+
+As compared to spectral density plot, we work on the time domain to
+identify whether the LOESS model captures the correct granularity of
+trend without excessive overfitting or underfitting on the data. Working
+in the time domain also allows us to validate whether distinct patterns
+of the data such as local minima and concexity are successfully captured
+by the model. LOESS calculates the trend by considering a neighborhood
+of points, and the span determines the locality of the trend
+[@cleveland1988].
+
+```{r, echo = FALSE}
+open_price = tesla$Open
+date = as.numeric(format(tesla$Date, "%Y")) + 
+                (as.numeric(format(tesla$Date, "%j")) / 365)
+#date = seq(from=2010,length=length(open_price),by=1/12)
+open_loess = loess(open_price~date,span=0.35)
+plot(date,open_price,type="l",col="red")
+lines(open_loess$x,open_loess$fitted,type="l")
+
+#Detrending data into low-freq trend, high-freq noise, and cyclic patterns
+u1 = open_price #for plotting purpose only
+u_low <- ts(loess(u1~date,span=0.35)$fitted,
+  start=min(date),frequency=365)
+u_hi <- ts(u1 - loess(u1~date,span=0.08)$fitted,
+  start=min(date),frequency=365)
+u_cycles <- u1 - u_hi - u_low
+plot(ts.union(u1, u_low,u_hi,u_cycles, u1 - u_hi),
+  main="Decomposition of Opening Price as trend + noise + cycles")
+
+spec <- spectrum(na.omit(tesla$log_return), plot = FALSE)
+freq <- spec$freq
+spectrum_values <- spec$spec
+
+# Convert frequency to cycles per month (assuming daily data)
+freq_per_year <- freq * 30  
+
+# Filter frequencies to focus on trends granular or equal to season trend
+valid_idx <- freq_per_year <= 3
+freq_filtered <- freq_per_year[valid_idx]
+spectrum_filtered <- spectrum_values[valid_idx]
+
+# Plot smoothed periodogram
+plot(freq_filtered, spectrum_filtered, type = "l", log = "y", 
+     xlab = "Frequency (cycles per month)", ylab = "Spectrum", 
+     main = "Periodogram of Stock Prices(Remove Period < 4 Mths)")
+```
+
+The low frequency trend (span = 0.35) reflects the general trend of
+Tesla stock - a sharp increase in 2017 followed by a mild drop in 2019,
+while high frequency (span = 0.08) trend captures sudden fluctuations or
+shocks across time. The cyclic trend (u_cycles), which is the remainder
+after excluding low and high frequency threshold, demonstrated some
+repetition with period of approximately 8 months, but it is not evident
+given its unstable amplitude. Lastly, to re-evaluate the existence of
+seasonal patterns, we remove trends with frequency \> 3 months. It again
+shows very noisy spectral density plot, which concludes that there are
+no distinct, cyclic patterns in the 15-year trend of Tesla stock opening
+prices.
+
+From the stock price vs. date plot, we identify that the Tesla's stock
+price was nearly flat in from 2010 - 2020, and then rose sharply
+afterwards. This price surge can be linked to several factors at the
+time, including its 5-for-1 stock split [@tesla2020stocksplit], the
+inclusion in the S&P 500 index [@spglobal2020tesla], and achievements of
+four consecutive profitable quarters [@kolodny2020tesla]. Therefore, it
+is ineffective to fit a model on trends with such changing properties.
+In this section, we delve in to post-2020 data to identify underlying
+trends of Tesla's major stock price fluctuations.
+
+```{r, echo = FALSE}
+#post-2020 Analysis
+post2020 = tesla$Date > "2020-01-01"
+dates_post2020 = date[post2020]
+log_returns_post = tesla$log_return[post2020]
+plot(dates_post2020, log_returns_post, type = 'l')
+
+# Smoothed periodogram
+smoothed_periodogram <- spectrum(na.omit(log_returns_post), spans = c(11, 13, 11), plot = FALSE)
+plot(smoothed_periodogram, sub = "", main = "Smoothed Periodogram of Post-2020 Log-Returns")
+
+#plot high, low, and cyclic trends
+u1 = tesla$Open[post2020] #for plotting purpose only
+u_low <- ts(loess(u1~dates_post2020,span=0.35)$fitted, #0.3 might be better, cycles are more distinct
+  start=min(dates_post2020),frequency=365)
+u_hi <- ts(u1 - loess(u1~dates_post2020,span=0.1)$fitted,
+  start=min(dates_post2020),frequency=365)
+u_cycles <- u1 - u_hi - u_low
+plot(ts.union(u1, u_low,u_hi,u_cycles, u1 - u_hi),
+  main="Decomposition of Post-2020 open price(u) as trend + noise + cycles")
+
+#get rid of low-freq
+spec <- spectrum(na.omit(log_returns_post), plot = FALSE)
+freq <- spec$freq
+spectrum_values <- spec$spec
+
+# Convert frequency to cycles per month (assuming daily data)
+freq_per_year <- freq * 30  
+
+# Filter frequencies to focus on trends granular or equal to season trend
+valid_idx <- freq_per_year <= 3
+freq_filtered <- freq_per_year[valid_idx]
+spectrum_filtered <- spectrum_values[valid_idx]
+
+# Plot smoothed periodogram
+plot(freq_filtered, spectrum_filtered, type = "l", log = "y", 
+     xlab = "Frequency (cycles per month)", ylab = "Spectrum", 
+     main = "Periodogram of Post-2020 Prices(Remove Period < 4 Mths)")
+```
+
+While the LOESS fitting has a smoother low frequency trend and more
+periodic cyclic trend, the periodogram, removed with cycles less than 3
+months, still presents noisy spectrum.
+
+## Conclusion
+
+To summarize, the report explored Tesla’s historical stock prices
+through ARMA model selection, volatility modeling using GARCH, and
+spectral analysis for cyclic behavior. The key findings include:
+
+1.  **Log Returns & Stationarity**: Tesla’s log returns are found to be
+    stationary and do not exhibit strong autocorrelation, and therefore
+    the data are suitable for ARMA modeling without differencing.
+2.  **ARMA Model Selection**: The best-fitting model is selected based
+    on AIC, likelihood-ratio test, and residual diagnostics. ARMA(1,0)
+    and ARMA(0,1) are nearly equally good to fit the log-return data.
+3.  **Volatility Clustering**: The GARCH(1,1) model is statistically
+    significant and reveals persistent volatility clustering in Tesla’s
+    log returns, aligning with the common properties of financial time
+    series data.
+4.  **No Strong Cyclic Patterns**: Frequency and spectral analyses do
+    not reveal significant recurring cycles in Tesla's log returns,
+    despite of some low-frequency trends detected through LOESS
+    smoothing.
+
+The insights into the return patterns, volatility behavior, and cyclical
+trends of Tesla's stock could be beneficial to understand the
+corporation's market behavior and perform more profitable investment
+strategies. Given the dynamics of today's world and financial market,
+future research could explore incorporating external factors, such as
+macroeconomic indicators or investor sentiment, to better interpret,
+model, and forcast the trend in Tesla's stock.
+
+## Acknowledgement
+
+Our group met at the beginning of the project, unanimously agreeing on
+working on the Tesla stock dataset and discussed about the workflow.
+Everyone contributed to the conclusion section as well as final revision before submission to ensure
+consistency of the entire report.
+
+A special thanks goes to the team in Winter 2024 working on Time Series
+Analysis of Log-Returns of Apple Stock Price [@ionides2024project14]. As
+our project also focused on stock data, we mainly referred to their
+logic and methods of performing the analysis, particularly in the
+sections of Data, Model Diagnostics, and ARMA-GARCH model. 
+
+By addressing the limitations and open questions from Project 14[@ionides2024project14], Our analysis extends beyond Project 14 by incorporating frequency-domain analysis, using Fourier and Wavelet Transforms to detect hidden cyclical patterns in Tesla’s stock returns. While Project 14 focused on ARIMA and GARCH models in the time domain, we identified recurring market cycles, such as weekly trading patterns and quarterly earnings effects, which traditional models may overlook. Our Fourier analysis revealed dominant frequencies in Tesla’s returns, while Wavelet analysis captured non-stationary volatility fluctuations, particularly around earnings releases. These insights provide a more comprehensive understanding of stock price behavior, offering valuable implications for short-term traders and risk management strategies.
+
+Future work could explore machine learning-based time series forecasting (e.g., LSTMs,RNN) to further improve predictive accuracy.What's more, it might be possible to use our dual approach of time-domain (ARIMA, GARCH) and frequency-domain (Fourier, Wavelets) analysis to optimize timing, position sizing, and hedging strategies.
+
+Additionally, ChatGPT was consulted for code debugging and citation
+formatting. The project was not consulted with anyone outside of our
+group. We wanted to express our gratitude to our STATS 531 instructor
+Prof. Ionides and GSI Aaron for their teaching and support on our time
+series learning.
+
+## References

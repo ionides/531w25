@@ -1,0 +1,872 @@
+---
+title: "Time-Series Modelling of S&P 500 Volatility"
+output:
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Introduction
+
+Financial markets are inherently dynamic, characterized by fluctuations
+in asset prices driven by economic conditions, investor sentiment, and
+external events. Volatility, which measures the degree of variation in
+asset prices over time is measured by the standard deviation of returns.
+It is a critical metric for investors, traders, and policymakers.
+Accurately forecasting volatility helps in portfolio risk management,
+option pricing, and algorithmic trading. While numerous statistical and
+machine learning approaches exist for predicting stock prices,
+forecasting volatility presents unique challenges. Unlike stock prices,
+volatility exhibits clustering effects, where periods of high volatility
+tend to be followed by more high volatility and vice versa.
+Additionally, volatility often demonstrates long-range dependence and
+seasonality, making simple linear models inadequate for capturing its
+behavior. In this study, we aim to forecast the volatility of the S&P
+500 using a combination of statistical and time series modeling
+techniques, including ARIMA, SARIMA, and GARCH models.
+
+```{r, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tseries)
+library(zoo)
+library(stats)
+library(forecast)
+library(knitr)
+library(rugarch)
+```
+
+```{r, echo=FALSE}
+data <- read.csv("features_target.csv")
+```
+
+```{r, echo=FALSE}
+colnames(data)[1] <- "Date"
+# Convert the Date column to Date format
+data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
+thirty_day_data <- data$SP500.30.Day.Volatility
+```
+
+# Data Exploration
+
+The dataset contains daily S&P 500 returns from 2010 to 2020, with data
+for 252 trading days a year. Let's begin by plotting the time-series for
+the S&P 500 prices.
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(data.frame(Date = data$Date, Volatility = thirty_day_data), aes(x = Date, y = Volatility)) +
+  geom_line(color = "red") +
+  ggtitle("Realized 30- Day Volatility") +
+  xlab("Date") + ylab("Volatility") +
+  theme_minimal()
+```
+
+The time-series plot of realized 30-day volatility in the S&P 500 index
+shows instances of high volatility in certain periods, particularly
+around 2011, 2015-2016, and 2018-2019. Next we plot the histogram to
+understand its distribution.
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(data, aes(x = SP500.30.Day.Volatility)) +
+  geom_histogram(color="black", fill="blue", bins = 30, alpha=0.7) +
+  ggtitle("Histogram of 30-Day Volatility") +
+  xlab("Volatility") + ylab("Frequency") +
+  theme_minimal()
+```
+
+The histogram of 30-day volatility is right-skewed, indicating that
+lower volatility levels are more frequent, while extreme volatility
+spikes occur less often.
+
+## Stationarity and Autocorrelation
+
+To ensure the suitability of our time series for modeling, we performed
+the KPSS (Kwiatkowski-Phillips-Schmidt-Shin) test to assess
+stationarity. We use the KPSS test instead of the ADF (Augmented
+Dickey-Fuller) test because KPSS directly tests for stationarity,
+whereas ADF tests for non-stationarity. The ADF test has low power in
+detecting stationarity, especially in trend-stationary processes or with
+structural breaks. A p-value of 0.01 in the initial test suggests strong
+evidence against stationarity, indicating the presence of a unit root
+and the necessity of transformation.
+
+To address this, we applied first-order differencing and re-evaluated
+stationarity using the KPSS test. The resulting p-value of 0.1 indicates
+that the differenced series is now stationary at the 5% significance
+level.
+
+```{r, echo=FALSE, warning=FALSE}
+kpss_test <- kpss.test(na.omit(data$SP500.30.Day.Volatility))
+```
+
+```{r, echo=FALSE, warning=FALSE}
+par(mfrow = c(1,2))  
+acf(thirty_day_data, main="ACF of 30-Day Volatility")  # Autocorrelation function
+pacf(thirty_day_data, main="PACF of 30-Day Volatility")  # Partial autocorrelation function
+```
+
+```{r, echo=FALSE, warning=FALSE}
+diff_volatility <- diff(data$SP500.30.Day.Volatility)
+kpss_test <- kpss.test(diff_volatility, null = "Level")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+par(mfrow = c(1,2))
+acf(diff_volatility, main = "ACF of Differenced 30-Day Volatility")
+pacf(diff_volatility, main = "PACF of Differenced 30-Day Volatility")
+```
+
+Looking at the ACF and PACF plots, we observe that before differencing,
+the ACF plot shows a slow decay, reinforcing the presence of a unit root
+and confirming that the series is non-stationary. The PACF plot exhibits
+a strong lag-1 autocorrelation, suggesting potential autoregressive
+behavior. After differencing, the ACF of the differenced series now
+decays more rapidly, indicating improved stationarity. The PACF of the
+differenced series shows a significant spike at lag 1, suggesting a
+possible AR(1) process.
+
+# Spectral Analysis
+
+To analyze the underlying patterns in S&P 500 30-day realized
+volatility, we apply spectral analysis, which helps identify dominant
+periodic cycles and long-term trends. We begin with STL decomposition,
+which separates the series into trend, seasonal, and remainder
+components. Assuming a 30-day cycle, the decomposition reveals a clear
+seasonal pattern, a smooth trend reflecting long-term volatility
+movements, and a remainder component capturing short-term fluctuations.
+
+```{r, echo=FALSE}
+volatility <- ts(data$SP500.30.Day.Volatility, frequency = 252) # Assuming 252 trading days per year
+decomposed_volatility <- stl(volatility, s.window = "periodic")
+plot(decomposed_volatility, main = "STL Decomposition of 30-Day Realized Volatility")
+
+```
+
+To further investigate cyclical behavior, we compute periodograms for
+both the original volatility series and its STL components. Unlike STL
+decomposition, which operates in the time domain, spectral analysis
+helps identify dominant frequencies in the data. For the STL
+decomposition, we set the frequency to 30 to capture short-term, monthly
+volatility cycles. However, for spectral analysis, we use a frequency of
+252 to detect broader periodicity over a full trading year. This
+distinction allows us to analyze both short-term seasonality and
+longer-term cyclical behavior. The analysis reveals a clear seasonal
+component, suggesting periodic fluctuations in volatility, a smooth
+trend component which reflects long-term variations in market
+conditions, and a remainder component capturing residual noise.
+
+```{r, echo=FALSE}
+volatility_ts <- ts(data$SP500.30.Day.Volatility, frequency = 30)  # Assuming monthly frequency
+
+# STL Decomposition
+stl_decomp <- stl(volatility_ts, s.window = "periodic")
+
+# Extract components
+trend_component <- stl_decomp$time.series[, "trend"]
+seasonal_component <- stl_decomp$time.series[, "seasonal"]
+remainder_component <- stl_decomp$time.series[, "remainder"]
+
+spec <- spectrum(volatility_ts, spans = c(3, 3), main = "Periodogram of 30-Day Volatility")
+spec2 <- spectrum(remainder_component, spans = c(3, 3), main = "Periodogram of Remainder Component")
+spec3 <- spectrum(seasonal_component, spans = c(3, 3), main = "Periodogram of the Seasonal Component")
+
+max_freq <- spec$freq[which.max(spec$spec)]
+```
+
+Hence, the periodogram of the volatility series reveals prominent peaks,
+confirming periodic variations. The seasonal component’s periodogram
+further supports the presence of recurrent cycles in market volatility.
+We can also see that the trend component has an upward trend indicating
+a long-term increase in volatility over the years, with local peaks
+which coincide with the 2008 financial crisis and the COVID-19 pandemic.
+
+# Model Selection and Residual Diagnostics:
+
+## ARIMA Model
+
+### Model Selection
+
+Based on our data analysis in the previous sections, according to the
+KPSS test, we find that the original data is not stationary but it
+becomes stationary after we take a first order difference, therefore we
+decide to fit an Autoregressive Integrated Moving Avergage Model with
+$d = 1$, namely $ARIMA(p,1,q)$. Generally, Autoregressive Integrated
+Moving Avergae Model $ARIMA(p,d,q)$ with intercept $\mu$ for $Y_{1:N}$
+can be expressed mathematically as follows (Chapter 4: Linear time
+series models and the algrebra of ARMA models) :
+
+$$
+\phi(B)[(1-B)^dY_n-\mu] = \varphi(B)\epsilon_n 
+$$
+
+where
+
+$$
+\begin{aligned}
+\phi(x) &= 1-\phi_1x-\phi_2x^2...-\phi_px^p \\
+\psi(x) &= 1+\psi_1x+\psi_2x^2+...+\psi_qx^q \\
+\{\epsilon_n\} & \sim WN(\sigma^2) \quad \text{White Noise Process}
+\end{aligned}
+$$
+
+Or equivalently, if we denote $Z_n = \Delta Y_n = Y_n-Y_{n-1}$, it
+becomes an $ARMA(p, q)$ with intercept $\mu$ for $Z_{1:N}$
+
+$$
+\phi(B)[Z_n-\mu] = \varphi(B)\epsilon_n \quad \Leftrightarrow \quad 
+Z_n = \mu +\phi_1Z_{n-1}+...+\phi_pZ_{n-p}+\varphi_1\epsilon_{n-1}+...+\varphi_q\epsilon_{n-q}+\epsilon_n
+$$
+
+In order to determine the best model, we use grid search for different
+$(p, q)$ pairs with $p, q \in\{0, 1, 2, 3, 4, 5\}$ based on Akaike
+Information Criterion (AIC) values$^{5}$, (Chapter 5: Parameter
+estimation and model identification for ARMA models). We make an AIC
+comparison table and choose the model with the lowest AIC value as our
+best model.
+
+```{r echo=FALSE, warning=FALSE}
+
+set.seed(123)
+aic_table = function(data, P, Q){
+  table = matrix(NA, (P+1), (Q+1))
+  best_model = NULL
+  second_best_model = NULL
+  best_aic = Inf
+  for (p in 0:P){
+    for (q in 0:Q){
+      model = arima2::arima(data, order = c(p, 1, q))
+      aic_value = model$aic
+      table[p+1, q+1] = aic_value
+      if (aic_value < best_aic) {
+        best_aic = aic_value
+        second_best_model = best_model
+        best_model = model
+      }
+    }
+  }
+  dimnames(table) = list(paste("AR", 0:P, sep = ""), paste("MA", 0:Q, sep = ""))
+  require(knitr)
+  print(kable(table, digits = 2))
+  return(list(best_model, second_best_model))
+}
+
+result = aic_table(data$SP500.30.Day.Volatility, 5, 5)
+best_model = result[[1]]
+second_best_model = result[[2]]
+summary(best_model)
+summary(second_best_model)
+```
+
+Based on the AIC comparison table, the $ARIMA(4, 1, 3)$ and
+$ARIMA(4, 1, 4)$ can be the potential candidates of our best model as
+their AIC values are almost the same, which means they fit our data
+almost equally well. However, after extracting the summary of these two
+models, we notice that in the $ARIMA(4, 1, 4)$ model, the MA(4)
+coefficient is 0.0474, which is significantly smaller than other AR and
+MA coefficients and indicates potential overfitting issue. Therefore, we
+further conduct a likelihood ratio test to determine if it is necessary
+to include an extra ma4 term based on $ARIMA(4, 1, 3)$.
+
+$$
+\begin{aligned}
+H_0: \quad ARIMA(4, 1, 3) \\
+H_1: \quad ARIMA(4, 1, 4) 
+\end{aligned}
+$$
+
+```{r echo=FALSE}
+library(lmtest)
+lrtest(second_best_model, best_model)
+best_model = second_best_model
+```
+
+The p-value of the likelihood ratio test is 0.1394 \> 0.05. Therefore,
+we fail to reject our null hypothesis, we claim $ARIMA(4, 1, 3)$ as our
+best model and further specify its model structure.
+
+$$
+\phi(B)[(1-B)Y_n] = \psi(B)\epsilon_n 
+$$
+
+where $$
+\begin{aligned}
+\phi(x) &= 1-\phi_1x-\phi_2x^2-\phi_3x^3-\phi_4x^4 \\
+\psi(x) &= 1+\psi_1x+\psi_2x^2+\psi_3x^3\\
+\{\epsilon_n\} & \sim WN(\sigma^2) \quad \text{White Noise Process}
+\end{aligned}
+$$
+
+### Model Diagnosis
+
+#### Causality and Invertibility
+
+We want to check the causality and invertibility$^{5}$, (Chapter 6:
+Extending the ARMA model: Seasonality, integration and trend) of our
+$ARIMA(4, 1, 3)$ model, and visualize the roots on the complex plane.
+
+```{r echo=FALSE}
+ar_roots = arima2::ARMApolyroots(best_model, type = "AR")
+ma_roots = arima2::ARMApolyroots(best_model, type = "MA")
+
+par(mfrow = c(1, 2))
+plot(Re(ar_roots), Im(ar_roots), xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5), 
+     xlab = "Real", ylab = "Imaginary", 
+     main = "Roots of AR Polynomial", 
+     pch = 19, col = "red")
+theta = seq(0, 2*pi, length.out = 100)
+lines(cos(theta), sin(theta), col = "blue", lwd = 2) 
+abline(h = 0, v = 0, lty = 2, col = "gray")
+
+plot(Re(ma_roots), Im(ma_roots), xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5), 
+     xlab = "Real", ylab = "Imaginary", 
+     main = "Roots of MA Polynomial", 
+     pch = 19, col = "red")
+theta = seq(0, 2*pi, length.out = 100)
+lines(cos(theta), sin(theta), col = "blue", lwd = 2) 
+abline(h = 0, v = 0, lty = 2, col = "gray")
+
+cat("If the AR polynomial roots outside the unit circle:", abs(ar_roots) > 1, "\n")
+cat("If the MA polynomial roots outside the unit circle:", abs(ma_roots) > 1, "\n")
+```
+
+We can infer that our $ARIMA(4, 1, 3)$ model AR polynomial and MA
+polynomial don't have any equivalent root that indicates parameter
+redundancy, and all roots are outside the unit circle, therefore
+indicates causality and invertibility of our $ARIMA(4, 1, 3)$ model.
+
+#### Residual Analysis
+
+We perform residual diagnosis by using *checkresiduals()* function in
+the forecast package and making a additional QQ-plot to further check
+the normality assumption. The *checkresiduals()* call will give four
+outcomes, one hypothesis test the Ljung-Box test, and three plots
+including a time plot of the residuals, the corresponding ACF, and a
+histogram with an added standard normal density curve.
+
+The Ljung-Box test, which is designed as follows: $$
+\begin{aligned}
+H_0 : &\quad \text{The data is not correlated} \\
+H_1 : &\quad \text{The data exhibit serial correlation} \\
+\end{aligned} \\
+\text{Test Statistics:} \quad Q=n(n+2) \sum_{k=1}^h \frac{\hat{\rho}_k^2}{n-k}
+$$
+
+where $n$ is the sample size, $\hat{\rho}_k$ is the sample
+autocorrelation at lag $k$, and $h$ is the number of lags being tested.
+Under $H_0$ the statistic $Q$ asymptotically follows a $\chi_{(h)}^2$.
+For significance level $\alpha$, the critical region for rejection of
+the hypothesis of randomness is:
+
+$$
+Q>\chi_{1-\alpha, h}^2 
+$$
+
+where $\chi_{1-\alpha, h}^2$ is the $(1-\alpha)$-quantile of the
+chi-squared distribution with $h$ degrees of freedom.
+
+```{r echo=FALSE}
+checkresiduals(best_model, lag = 20)
+res = residuals(best_model)
+qqnorm(res, main = "Normal QQ Plot")
+qqline(res, lwd = 2, col = "red")
+```
+
+Therefore, we can make the following claims on residuals of our
+$ARIMA(4, 1, 3)$ model:
+
+1.  The residuals are correlated.
+
+    As the Ljung-Box test gives a p-value of 0.003762 \< 0.05, which
+    means we reject our null hypothesis that the residuals are not
+    correlated; and the residuals ACF plot also indicates that there are
+    significant autocorrelations in residuals at lag 14, 20, 28.
+
+2.  The residuals approximately have mean 0, but the variance seems
+    unstable.
+
+    From the time plot of the residuals, the residuals approximately
+    oscillate around 0, but the variance seems unstable as several sharp
+    peaks appear before the residual of the 2000th data point and
+    general larger variations after the residual of the 2000th data
+    point.
+
+3.  The residuals are not normally distributed.
+
+    As the histogram shows that the residuals have significantly larger
+    density near 0 compared with the standard normal distribution, and
+    the QQ plot indicates the residuals have heavy tails in both
+    negative and positive directions.
+
+Therefore, this $ARIMA(3, 1, 4)$ model fails to capture the time series
+characteristics of our data, we wonder if we can improve the model
+fitting by including seasonality into consideration.
+
+## SARIMA Model
+
+### Model Selection
+
+As literature in finance analysis and our frequency analysis above
+indicate a possible 30 days cycle period in our daily data set, we
+consider including seasonality with period 30 based on our previous
+$ARIMA(4, 1, 3)$ model, and check if adding seasonality leads to a
+better fit. Therefore, we further define our
+$SARIMA(4, 1, 3)\times(P, D, Q)_{30}$ as follows$^5$ (Chapter 5 :
+Parameter estimation and model identification for ARMA models):
+
+$$
+\begin{aligned}
+\phi(B) &\Phi\left(B^{30}\right)\left[(1-B)\left(1-B^{12}\right)^D Y_n-\mu\right]=\psi(B) \Psi\left(B^{30}\right) \epsilon_n \\
+&\phi(B) = 1-\phi_1B-\phi_2B^2-\phi_3B^3-\phi_4B^4 \\
+&\psi(B) = 1+\psi_1B+\psi_2B^2+\psi_3B^3\\
+&\Phi(B^{30}) = 1-\Phi_1B^{30}-...-\Phi_PB^{30} \\
+&\Psi(B^{30}) = 1+\Psi_1B^{30}+...+\Psi_QB^{30} \\
+&\{\epsilon_n\} \sim WN(\sigma^2)  \quad \text{White Noise Process}
+\end{aligned}
+$$
+
+After we try to fit $SARIMA(4, 1, 3)\times(P, D, Q)_{30}$, we find that
+$P, D, Q$ take values larger than 2 will significantly increase model
+complexity and cause errors, therefore, we try to search the best model
+among $SARIMA(4, 1, 3)\times(1, 0, 0)_{30}$,
+$SARIMA(4, 1, 3)\times(0, 0, 1)_{30}$,
+$SARIMA(4, 1, 3)\times(1, 1, 0)_{30}$,
+$SARIMA(4, 1, 3)\times(0, 1, 1)_{30}$, and
+$SARIMA(4, 1, 3)\times(1, 1, 1)_{30}$ models.
+
+```{r echo=FALSE}
+set.seed(123)
+model1 = Arima(data$SP500.30.Day.Volatility, order = c(4, 1, 3), seasonal = list(order = c(1, 0, 0), period = 30))
+model2 = Arima(data$SP500.30.Day.Volatility, order = c(4, 1, 3), seasonal = list(order = c(0, 0, 1), period = 30))
+model3 = Arima(data$SP500.30.Day.Volatility, order = c(4, 1, 3), seasonal = list(order = c(1, 1, 0), period = 30))
+model4 = Arima(data$SP500.30.Day.Volatility, order = c(4, 1, 3), seasonal = list(order = c(0, 1, 1), period = 30))
+model5 = Arima(data$SP500.30.Day.Volatility, order = c(4, 1, 3), seasonal = list(order = c(1, 1, 1), period = 30))
+
+aic_list = c(model1$aic, model2$aic, model3$aic, model4$aic, model5$aic)
+cat("The the", which.min(aic_list), "th model has the lowest AIC value.")
+```
+
+We can see that the model5 $SARIMA(4, 1, 3)\times(1, 1, 1)_{30}$ has the
+lowest AIC value, but it is larger than the AIC value given by our
+previous $ARIMA(4, 1, 3)$ model. We extract the summary and specify our
+model structure as follows:
+
+```{r echo=FALSE}
+summary(model5)
+```
+
+$$
+\begin{aligned}
+\phi(B) &\Phi\left(B^{30}\right)\left[(1-B)\left(1-B^{12}\right) Y_n-\mu\right]=\psi(B) \Psi\left(B^{30}\right) \epsilon_n \\
+&\phi(x) = 1-\phi_1x-\phi_2x^2-\phi_3x^3-\phi_4x^4 \\
+&\psi(x) = 1+\psi_1x+\psi_2x^2+\psi_3x^3\\
+&\Phi(x^{30}) = 1-\Phi_1x^{30} \\
+&\Psi(x^{30}) = 1+\Psi_1x^{30} \\
+&\{\epsilon_n\} \sim WN(\sigma^2)  \quad \text{White Noise Process}
+\end{aligned}
+$$
+
+### Residual Analysis
+
+```{r echo=FALSE}
+checkresiduals(model5, lag = 20)
+res = residuals(model5)
+qqnorm(res, main = "Normal QQ Plot")
+qqline(res, lwd = 2, col = "red")
+```
+
+After fitting the $SARIMA(4, 1, 3)\times(1, 1, 1)_{30}$ model, similar
+conclusions of residuals can be drawn, therefore
+$SARIMA(4, 1, 3)\times(1, 1, 1)_{30}$ fitting is still not satisfying,
+which further indicate that the seasonality in our data is not very
+strong and cannot improve our model fitting. Therefore, we should
+consider a more complex model, an ARMA+GARCH model with varying variance
+and non-normal errors (actually we tried student t errors, but we failed
+in model explanation and diagnosis, therefore we still stick to normal
+errors in the ARMA+GARCH model).
+
+## ARMA+GARCH Model
+
+### Mathematical Background and Model Derivation
+
+Financial time series often exhibit *volatility clustering*: periods
+during which high volatility tends to be followed by high volatility and
+low volatility by low volatility. Traditional ARMA models focus on
+capturing the linear dynamics of the conditional mean but assume a
+constant variance. However, empirical evidence shows that the variance
+(or volatility) of financial returns is time-varying. This observation
+motivates the use of the **GARCH (Generalized Autoregressive Conditional
+Heteroscedasticity)** model, which explicitly models the evolving
+conditional variance.
+
+#### Model Formulation
+
+We begin by decomposing the observed return series $r_t$ as follows$^8$:
+
+$$
+r_t = \sigma_t z_t,\quad z_t \sim N(0,1),
+$$
+
+where:
+
+-   $z_t$ is a standard normal random variable,
+
+-   $\sigma_t$ is the conditional standard deviation (i.e., the
+    volatility) at time $t$.
+
+This formulation separates the scale (e.g. volatility) from the
+standardized noise, allowing us to model the time-varying behavior of
+volatility independently.
+
+In contrast, a traditional ARMA model typically expresses the
+conditional mean as: $$
+r_t = \mu + \sum_{i=1}^{p} \phi_i\, r_{t-i} + \sum_{j=1}^{q} \theta_j\, \varepsilon_{t-j} + \varepsilon_t,
+$$
+
+where the error term $\varepsilon_t$ is assumed to be white noise with a
+constant variance. This constant variance assumption is inadequate for
+financial data exhibiting heteroscedasticity.
+
+#### GARCH Model
+
+To address the shortcomings of the constant variance assumption,
+Bollerslev (1986) introduced the GARCH model$^8$. The most common
+specification is the GARCH(1,1) model, in which the conditional variance
+is defined as: $$
+\sigma_t^2 = \omega + \alpha\, r_{t-1}^2 + \beta\, \sigma_{t-1}^2,
+$$
+
+with:
+
+-   $\omega > 0$ ensuring a baseline variance,
+
+-   $\alpha \geq 0$ capturing the immediate impact of past shocks,
+
+-   $\beta \geq 0$ measuring the persistence of past volatility.
+
+This recursive formulation allows the model to capture volatility
+clustering. A large shock (high $r_{t-1}^2$) increases $\sigma_t^2$, and
+if $\beta$ is also high, the elevated volatility persists for several
+periods.
+
+#### Forecasting and Parameter Estimation
+
+**Forecasting:**\
+Assuming that future standardized shocks satisfy $E[z_{t+h}^2] = 1$, the
+one-step-ahead forecast for the conditional variance is: $$
+\sigma_{t+1}^2 = \omega + \alpha\, r_t^2 + \beta\, \sigma_t^2.
+$$
+
+For multi-step forecasting, this formula is iterated recursively.
+
+**Parameter Estimation:**\
+The parameters $\omega$, $\alpha$, and $\beta$ are typically estimated
+via Maximum Likelihood Estimation (MLE). Under the assumption of
+normally distributed innovations, the log-likelihood function for a
+sample of size $n$ is given by$^9$ : $$
+\mathcal{L} = -\frac{1}{2} \sum_{t=1}^{n} \left[ \log(2\pi) + \log(\sigma_t^2) + \frac{r_t^2}{\sigma_t^2} \right].
+$$
+
+Maximizing this log-likelihood function with respect to the model
+parameters yields the estimates that best explain the observed data.
+
+All in all, while ARMA models are effective for modeling the conditional
+mean of a time series, they fall short in capturing the time-varying
+nature of volatility observed in financial data. The GARCH model
+overcomes this limitation by dynamically modeling the conditional
+variance. This explains the volatility clustering phenomenon and
+provides a framework for forecasting future volatility.
+
+### Model Fitting
+
+In this section, we provide a detailed introduction to the process of
+fitting the ARMA-GARCH model and evaluating it using information
+criteria.
+
+We first define a set of candidate ARMA orders (e.g.(2,1)) and GARCH
+orders (e.g.(1,1)). For each combination of ARMA and GARCH orders, we
+use the `ugarchspec()` function to specify an ARMA-GARCH model$^{10}$ .
+This model assumes that the residuals follow a standardized Student-t
+distribution. Then use `ugarchfit()` to fit each candidate model onto
+the data.
+
+Then, we extract Akaike Information Criterion and Bayesian Information
+Criterion from each fitting model and store them in the result table.
+These criteria are used to evaluate model fit, where lower values
+typically indicate better models. In order to get a more suitable model,
+we choose to use log transformation because we have tested it seems a
+bad performance with no transformation. Here gives the results:
+
+```{r echo=FALSE}
+arma_orders <- list(c(0,1), c(1,0), c(1,1), c(2,1), c(1,2), c(2,2))
+garch_orders <- list(c(1,1), c(1,2), c(2,1), c(2,2))
+df <- data.frame(Date = data$Date, Volatility =data$SP500.30.Day.Volatility)
+df <- log(df$Volatility)
+
+results <- data.frame(
+  arma_order = character(),
+  garch_order = character(),
+  AIC = numeric(),
+  BIC = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (arma in arma_orders) {
+  for (garch in garch_orders) {
+    spec <- ugarchspec(
+      mean.model = list(armaOrder = arma),
+      variance.model = list(model = "sGARCH", garchOrder = garch),
+      distribution.model = "std"
+    )
+    
+    fit <- tryCatch(ugarchfit(spec, data = df, solver = "hybrid"), error = function(e) NULL)
+    
+    if (!is.null(fit)) {
+      ic <- infocriteria(fit)
+      results <- rbind(results, data.frame(
+        arma_order = paste(arma, collapse = ","),
+        garch_order = paste(garch, collapse = ","),
+        AIC = ic["Akaike",],
+        BIC = ic["Bayes",],
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+print(results)
+```
+
+After comparing the candidate models, we proceed to fit a specific
+ARMA-GARCH model. In this example, we use an ARMA(2,1) specification
+combined with a GARCH(1,1) model, assuming errors with a student-t
+distribution. We then fit this model to the log-transformed data.
+
+```{r echo=FALSE}
+set.seed(123)
+spec_arma_garch <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = c(2, 1)),
+  distribution.model = "std"
+)
+
+fit_arma_garch <- ugarchfit(spec = spec_arma_garch, data = df)
+```
+
+### Model Diagnostics
+
+To ensure the adequacy of the fitted model, we conduct diagnostic checks
+on the residuals. The mathematical derivation of these methods has been
+discussed in the previous section.
+
+```{r echo=FALSE}
+resid_std <- residuals(fit_arma_garch, standardize = TRUE)
+```
+
+-   **QQ Plot of Standardized Residuals**: We plot a QQ plot to assess
+    whether the standardized residuals follow the assumed distribution.
+
+```{r echo=FALSE}
+par(mfrow = c(1, 2))
+qqnorm(resid_std, main = "Normal QQ Plot of (ARMA+GARCH)")
+qqline(resid_std, col = "red")
+```
+
+The QQ plot shows a heavy tail and significant deviation from the
+diagonal reference line, indicating that the residuals may not follow
+the assumed normal distribution. There are some limitation within our
+model, which will be discussed more in the limitation part.
+
+-   **Residuals analysis**: We plot the autocorrelation function (ACF)
+    and partial autocorrelation function (PACF) of the standardized
+    residuals to identify any remaining temporal patterns.
+
+```{r echo=FALSE}
+par(mfrow = c(1, 2))
+acf(resid_std, lag.max = 30, main = "ACF of Std. Residuals")
+pacf(resid_std, lag.max = 30, main = "PACF of Std. Residuals")
+par(mfrow = c(1, 1))
+```
+
+These ACF and PACF plots indicate that the our model effectively
+captures the time series structure. That is all peaks are within the
+significance range, indicating no substantial autocorrelation. In other
+words, standardized residuals behave like white noise, which means that
+from a correlation perspective, the model has been adequately defined.
+
+-   **Ljung-Box Test**: We perform the Ljung-Box test on the
+    standardized residuals to check for serial correlation.
+
+```{r echo=FALSE}
+lb_resid <- Box.test(resid_std, lag = 20, type = "Ljung-Box")
+cat("Ljung-Box test on standardized residuals p-value:", lb_resid$p.value, "\n")
+```
+
+The Ljung-Box test results show that the standardized residuals and
+their squared p-values are both very high (that is far greater than
+0.05). This means that there is no statistically significant
+autocorrelation in the residuals. So we think the ARMA+GARCH model seems
+to fully capture the linear structure and volatility clustering, without
+missing any major autocorrelation.
+
+### Model Comparison
+
+We compare the ARMA-GARCH model with the ARMA model by fitting an
+ARMA(2,1) model to the same data.
+
+-   **ACF Analysis**:
+
+    -   ARIMA: The ACF of the ARIMA residuals still shows some
+        significant lags that exceed the confident bounds. So some of
+        the autocorrelation has not been captured. This totally suggests
+        that the ARIMA model might miss some dynamic structure in the
+        data, like in the volatiltiy clustering.
+
+    -   GARCH+ARMA: The ACF plot is much cleaner, with most lags well
+        within the confidence limits. This improved performance is due
+        to the ability of component to model conditional
+        heteroscedasticity.
+
+-   **QQ Plot Analysis**
+
+    -   ARIMA: The residual plot shows that the ARIMA model's residuals
+        deviate significantly from the diagonal line, with heavier
+        tails. So it is a poor fit. Many points fall outside the (−5,5)
+        range, shows the presence of significant outliers. This suggests
+        that the model fails to adequately capture the distributional
+        characteristics of the data, particularly its leptokurtic
+        nature.
+
+    -   GARCH+ARMA: The plot demonstrates a better fit, with points more
+        closely aligned with the diagonal line and a noticeable
+        reduction in extreme deviations. And almost no points fall
+        outside the (−5,5) range. It shows that this model more
+        effectively captures the underlying volatility structure and
+        reduces the impact of outliers.
+
+-   **Ljung-Box Test**
+
+    -   ARIMA: The low p-value suggests that the ARIMA residuals are
+        correlated, so that some serial correlation remains unmodeled.
+
+    -   GARCH+ARMA: With a p-value about 0.522416, the test of this
+        model is above the conventinal 0.05 threshold. This shows that
+        the residuals are closer to uuncorrelated, meaning the model has
+        effectively captured both the autocorrelation and volatility
+        effects in this data set.
+
+# Limitation
+
+Here we want to briefly mention our project's limitations and give some
+suggestions on future explorations. Both our ARIMA and SARIMA model fail
+in the residual checking stage as we find significant correlations and
+non-normality; after we take a log transformation and change to
+ARMA+Garch model, these phenomenons become less severe but still exist,
+especially for the normality assumption, which indicates the necessarity
+to build a model based on different error distributions such as
+student-t distribution (actually we tried to do so, but we failed in
+model explanation and diagnosis) or even more advanced machine learning
+algorithms such as LSTM. Another potential issue is within our dataset,
+events such as the European debt crisis and the Federal Reserve's policy
+shift between 2010 and 2019 could all lead to a sudden surge in
+volatility. Also, the recovery phase after the 2008 financial crisis may
+have introduced structural or institutional changes that cannot be
+captured by the basic GARCH framework. Besides, volatility clusters may
+be more extreme or persistent than model assumptions, leading to
+underestimation of significant shocks.
+
+# Conclusion
+
+In this study, we analyzed and forecasted S&P 500 30-day realized
+volatility using ARIMA, SARIMA, and ARMA-GARCH models, combining
+time-domain and frequency-domain techniques. Stationarity testing
+confirmed the need for first-order differencing, while spectral analysis
+highlighted periodic patterns in volatility. The ARIMA(4,1,3) model
+provided a reasonable fit but exhibited residual autocorrelation, and
+SARIMA failed to significantly improve performance. The ARMA-GARCH
+model, incorporating volatility clustering, offered the best residual
+diagnostics, though structural breaks and non-normality remained
+challenges. Future work could explore GARCH with heavy-tailed
+distributions or deep learning approaches to better capture complex
+market dynamics.
+
+# Our Project in Context of Previous Projects
+
+Our project on volatility modelling and trend analysis using ARIMA,
+SARIMA, and frequency analysis aligns closely with previous STATS 531
+projects in methodology but differs in application, focusing on
+financial market volatility rather than public safety, climate, or
+cryptocurrency trends. Like past projects, our work relies on
+autoregressive models, stationarity tests, AIC-based model selection,
+and decomposition techniques such as STL to extract trends, mirroring
+the NYC traffic accident analysis for example. Additionally, it shares
+similarities with a few previous projects in its use of spectral
+analysis, employing Fourier Transform and Power Spectral Density to
+uncover periodic volatility patterns. However, our project extends
+beyond ARIMA-based modelling by incorporating GARCH models to better
+capture volatility dynamics, a methodology that was not a primary focus
+in previous projects. Lessons from peer reviews, such as the importance
+of clearly defining hypotheses, manually validating model selection,
+addressing model limitations, and improving visualization, have guided
+our approach to ensure methodological rigor and clarity. Furthermore,
+our project connects modelling results to financial risk management,
+ensuring statistical insights translate into actionable economic
+decisions.
+
+# References
+
+1.  Engle, R. F., & Patton, A. J. (2001). *What good is a volatility
+    model?* Quantitative Finance.
+
+2.  Poon, S. H., & Granger, C. W. J. (2003). *Forecasting volatility in
+    financial markets: A review.* Journal of Economic Literature, 41(2),
+    478-539.
+
+3.  Kwiatkowski, D., Phillips, P. C. B., Schmidt, P., & Shin, Y. (1992).
+    *Testing the null hypothesis of stationarity against the alternative
+    of a unit root.* Journal of Econometrics, 54(1-3), 159–178.
+
+4.  Hyndman, R. J., & Athanasopoulos, G. (2021). *Forecasting:
+    Principles and Practice (3rd ed.)*. Retrieved from
+    <https://otexts.com/fpp3/decomposition.html>
+
+5.  Ionides, E. (2025). [Notes for STATS 531, Modeling and Analysis
+    of Time Series Data](https://ionides.github.io/531w25/).
+
+6.  Wikipedia. Ljung-Box test.
+    <https://en.wikipedia.org/wiki/Ljung%E2%80%93Box_test>.
+
+7.  ChatGPT. Used for debugging and proofreading.
+
+8.  Galizio, G. Almqvist, W. Keller, G. (2023). *GARCH(1,1) for index
+    returns.*
+    <https://github.com/ggstream12/GARCH-model-in-R/blob/main/dissertation.pdf>.
+
+9.  Wurtz, D. Chalabi, Y. Luksan, L. (2022). *Parameter Estimation of
+    ARMA Models with GARCH/APARCH Errors.*
+    <https://www.math.pku.edu.cn/teachers/heyb/TimeSeries/lectures/garch.pdf>
+
+10. *A GARCH Tutorial with R*.
+    <https://www.redalyc.org/journal/840/84064925005/html/>
+
+11. Hofert, M. (2024). *Fitting and Predicting VaR based on an
+    ARMA-GARCH Process.*
+    <https://cran.r-project.org/web/packages/qrmtools/vignettes/ARMA_GARCH_VaR.html>
+
+12. LIBERTO, D. (2024). *European Sovereign Debt Crisis: Eurozone Crisis
+    Causes, Impacts.*
+    <https://www.investopedia.com/terms/e/european-sovereign-debt-crisis.asp>
+
+13. *History of the Federal Reserve.*
+    <https://www.federalreserveeducation.org/about-the-fed/archive-history/>
+
+14. Ionides, E. (2022). *Ethereum and Investment: Midterm Project for
+    STATS 531*. University of Michigan. Retrieved from
+    <https://ionides.github.io/531w22/midterm_project/project02/blinded.html>.
+    We follow a similar methodology to the one outlined in this project.

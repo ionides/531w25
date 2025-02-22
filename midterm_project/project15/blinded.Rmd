@@ -1,0 +1,809 @@
+---
+title: STATS531 Midterm Project 
+subtitle: Time Series Analysis on Fatal Car Accidents in Michigan
+date: "2025-02-21"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collasped: true
+    highlight: tango
+    code_folding: hide
+    number_sections: false
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(kableExtra)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(tsibble)
+library(feasts)
+library(forecast)
+library(gridExtra)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(knitr)
+library(forecast)
+library(boot)
+```
+
+## Introduction
+In this report, we perform a time series analysis to investigate fatal car accidents in Michigan. Fatal accidents are defined as car accidents that occur on public roads that result in at least one fatality within 30 days of the incident[1]. By analyzing these accidents, we can identify trends that can aid in improving emergency response efficiency and road safety measures and policy decisions to reduce fatalities.
+
+
+
+### Data Description
+The data for this study is obtained from the National Highway Traffic Safety Administration (NHTSA) through the Fatality Analysis Reporting System (FARS), which contains a census of fatal motor vehicle crashes across all 50 states, the District of Columbia, and Puerto Rico. FARS data is collected from various state-level sources, including police crash reports, state vehicle registration files, driver records, roadway classification data, death certificates, toxicology reports, and emergency medical service reports[1].
+
+
+For this study, we only focus on fatal car accidents that occurred in Michigan between 2008 and 2022. The data set is aggregated on a monthly basis, providing the total number of fatal accidents reported in Michigan each month.
+
+```{r preprocessing, include=FALSE, echo=FALSE}
+process_data <- function(pathname, skip){
+  df <- read_excel(pathname, skip=skip)
+  #removing total row and total column
+  df <- df %>%
+    slice_head(n = -1) %>% 
+    select(-last_col())
+  
+  colnames(df)[1] <- "Year"
+  #pivot table so each row is crashes in a given month & year
+  df_long <- df %>%
+    pivot_longer(cols = -Year, names_to = "Month", values_to = "Crashes")
+
+  #creating date column
+  df_long <- df_long %>% 
+    mutate(Month = match(Month, month.name)) %>%  
+    mutate(Date = make_date(Year, Month, 1)) %>%  
+    arrange(Date) %>%
+    mutate(Monthabb = factor(month.abb[Month], levels = month.abb))  # 
+  return(df_long)
+}
+crashes_MI <- process_data("CrashReport_FatalCrashes_MI.xlsx",  skip=7)
+```
+## Exploratory Analysis {.tabset}
+Initial data analysis shows that the number of fatal accidents exhibit periodicity. Additionally, the overall mean has been increasing over the years, while the variance appears to be constant. Analyzing the monthly distribution of accidents shows a seasonal pattern, where accidents peak during the summer months of July and August. This seasonal fluctuation may be explained by increased travel, higher traffic volumes, and perhaps riskier driving behaviors during the warm months. While understanding what factors influences this seasonal pattern could be an interesting investigation, we focus strictly on performing a time series analysis.  
+
+
+### Time Series of Fatal Crashes
+```{r, dataexploration_all, echo=FALSE}
+library(ggplot2)
+ggplot(crashes_MI, aes(x=Date, y=Crashes)) +
+  geom_line()+
+  ggtitle("Counts of Fatal Car Accidents in Michigan (2008-2022)")+
+  ylab("Number of Accidents") +
+  xlab("Year")+
+  theme_minimal()+
+  scale_x_date(date_breaks = "1 year", # could be 2 weeks or 1 month or anything
+               labels = scales::date_format(format = "%Y")) 
+```
+
+### Crashes By Month
+```{r, dataexploration_monthly, echo=FALSE}
+ggplot(crashes_MI, aes(x = Monthabb, y = Crashes)) +
+  geom_boxplot() +
+  ggtitle("Monthly Distribution of Fatal Car Accidents in Michigan (2008-2022)") +
+  ylab("Number of Accidents") +
+  xlab("Month") +
+  theme_minimal()
+```
+
+
+## Decomposition 
+To get a clearer understanding of the data, we decompose it using Seasonal and Trend decomposing using Loess (STL)[2]. STL allows us to split the data into 3 components, overall trend,  cyclical trend, and the remainder where the overall trend doesn't need to be linear [3].
+
+The time series can be expressed as: $$Y_t = T_t + S_t + R_t$$
+where $T_t$ represents the trend component, $S_t$ represents the seasonal components, and $R_t$ represents the remainder.
+
+The seasonal component is determined by taking the mean of each month across all of the years, rather than using Loess smoothing. After obtaining the seasonal component, it is removed from the data and we obtain a de-seasonalized time series. The de-seasonalized time series is then smoothed using Loess regression to estimate the trend component.
+
+Though this initial decomposition may still contain small shifts in the seasonal component that should not be there. The seasonal component should be purely periodic such that it fluctuates around zero on average over time. If this is not the case, it indicates that part of the long-term trend has mistakenly remained in the seasonal component.
+
+STL corrects this by adjusting the seasonal component by removing any persistent long-term level shift. If the seasonal component’s mean is not zero, it means it has absorbed part of the trend. This mean is then subtracted from the seasonal component to ensure it oscillates around zero. At the same time, to maintain the consistency of the decomposition, this adjustment is added to the trend component so that the total sum of components remains unchanged. This process is repeated until the seasonal component has an average of zero over time[3].
+
+After the trend and seasonal components are properly separated, the remainder component is simply the difference between the original time series and the sum of the adjusted trend and seasonal components. The remainder should contain only random noise, meaning it does not exhibit any systematic patterns. 
+
+
+```{r decompositionplot, echo=TRUE}
+ts_crash_mi <- ts(crashes_MI$Crashes, start = c(2008,01), end = c(2022,12), frequency = 12)
+ts_crash_mi_decomp <- stl(ts_crash_mi,s.window = "periodic", robust=TRUE)
+autoplot(ts_crash_mi_decomp, main = "Decomposition Plot for Fatal Car Accidents in Michigan", xlab = "Years")
+```
+
+From the decomposition plot, we can see that the trend has been increasing over time, though not in a strictly linear manner. There are fluctuations in the trend and we see that that car accidents increased beginning in 2020 which may appear counter-intuitive given that Michigan had COVID-19 lockdown measures in place during this period of time [4]. The seasonal component shows a very clear cyclical pattern, with an average close to zero, though this pattern was evident from the original data. Finally, the remainder component does not exhibit any discernible trend, suggesting that it primarily captures random variations that are not explained by the trend or seasonal components.
+
+
+
+## Sample ACF {.tabset}
+We next evaluate the sample Autocorrelation Function (ACF) plot of the data. The ACF measures the correlation of the time series with its past values at different lags. We see that there is a gradual decline in the ACF indicating future values of the series are correlated by past values, suggesting that the autocorrelation can be better explained by AR models than MA models. Unsurprisingly, we see periodic behavior having a period of 12 lags which corresponds to 1 year.
+
+### ACF-Lag 12
+```{r, echo=TRUE}
+acf(crashes_MI$Crashes, lag = 12, main= "Sample Autocorrelation")
+```
+
+### ACF-Lag 52
+```{r, echo=TRUE}
+acf(crashes_MI$Crashes, lag = 60, main= "Sample Autocorrelation")
+
+```
+
+### ACF-Lag 180
+```{r, echo=TRUE}
+acf(crashes_MI$Crashes, lag = 180, main= "Sample Autocorrelation")
+```
+
+## Detrending
+In order to use ARMA or SARMA models, there's an underlying assumption that these models are stationary, meaning they have a constant mean and variance over time. From our data exploration, we observed that the time series does not have a constant mean. To address this issue, we apply a log transformation to minimize the impact of large values. We then fit a a linear regression model to capture the overall trend in the data. The residuals from the linear model serve as our detrended time series, ensuring that the data has a constant mean and can be used in ARMA and SARMA models. 
+
+From the plots below,  we see that both the original and log-transformed data do not have constant means, as they have a clear upward trend over time. While the log transformation reduces the impact of extreme values, it does not remove the trend itself. After detrending, the log-transformed data fluctuates around zero indicating that the non-stationarity introduced by the trend has been removed.
+```{r logtransform, echo=TRUE}
+# Transform the data using log(1 + x)
+log_data <- log(1 + crashes_MI$Crashes)
+log_data_ts <- ts(log_data, start = c(2008, 1), frequency = 12)
+
+# Fit a linear trend model
+trend_model_log <- lm(log_data_ts ~ poly(time(log_data_ts), degree = 1))
+log_data_detrended <- resid(trend_model_log)
+
+par(mfrow = c(1, 3))  
+# Original Data with Linear Fit
+plot(ts_crash_mi, xlab="Years", ylab="Number of Car Accidents", main="Original Data")
+abline(lm(ts_crash_mi ~ time(ts_crash_mi)), col="blue", lwd=2, lty=2)  
+
+# Log Transformed Data with Linear Fit
+plot(log_data_ts, xlab="Years", ylab="log(Number of Car Accidents)", main="Log Transformed Data")
+abline(lm(log_data_ts ~ time(log_data_ts)), col="blue", lwd=2, lty=2)  
+
+# Detrended Log Transformed Data with Linear Fit
+plot(log_data_detrended, type ="l", xlab="Years", ylab="log(Number of Car Accidents)", main="Detrended Log Transformed Data")
+abline(lm(log_data_detrended ~ time(log_data_detrended)), col="blue", lwd=2, lty=2)
+# Add a single legend outside the rightmost plot
+```
+
+
+## Spectral Analysis {.tabset}
+A time series can be expressed as a sum of sine and cosine functions with different frequencies known as a Fourier transform of the data[5]
+
+
+The spectral density function is the Fourier transform of the autocovariance function function[5] which is given by:
+$$\lambda(\omega) = \sum_{-\infty}^{\infty} \gamma_he^{-2\pi i\omega h}$$
+where $\gamma_h$ is the autocovariance at lag h. It describes how power is distributed across all possible frequencies.
+
+For a finite time series, we can't compute the spectral density at all possible frequencies. Instead, we compute the frequencies at a discrete set of points:
+$$w_n = \frac{n}{N} \quad \text{for } 0<n < \frac{N}{2}$$
+The sine and cosine components at frequency $\omega_n$ for the data $y_{1:N}$are expressed as[5]:
+$$c_n= \frac{1}{\sqrt{N}} \sum_{k=1}^{N} y_k^*cos(2\pi i\omega_n k) \quad \text{for } 0 < n < \frac{N}{2} \\
+s_n= \frac{1}{\sqrt{N}} \sum_{k=1}^{N} y_k^*sin(2\pi i\omega_n k) \quad \text{for } 0 < n < \frac{N}{2}$$
+The frequency components can then be written as real and imaginary parts of the discrete Fourier transform[5]:
+$$d_n = \frac{1}{\sqrt{N}} \sum_{k=1}^{N} y_ke^{-2\pi i k n / N} = c_n - is_n$$
+The periodogram which is an estimator of the spectral density can then be expressed as:
+$$I_n = |d_n|^2 = c_n^2 + s_n^2$$
+This provides an estimate at the power at each frequency allowing us to determine dominant frequencies and the corresponding period.
+
+To verify the seasonality, we plot the estimated spectral density of the detrended data. From the periodograms below, we see that there is a dominant frequency of 0.0833. This corresponds to a period of 12 months which aligns with the ACF plots and data exploration findings. 
+
+### Unsmoothed Periodogram
+```{r , echo=TRUE}
+#periodogram estimates the spectrum for a stationary model
+periodogram_unsmoothed = spectrum(log_data_detrended, main="Unsmoothed Periodogram of Car Crashes in Michigan", xlab="frequency", sub="")
+abline(v=periodogram_unsmoothed$freq[which.max(periodogram_unsmoothed$spec)], col="red", lty=2)
+
+```
+
+### Smoothed Periodogram
+```{r ,  echo=TRUE}
+periodogram_smoothed = spectrum(log_data_detrended, spans =c(3,5,3), main="Smoothed Periodogram of Car Crashes in Michigan", plot=TRUE, xlab="frequency", sub="")
+abline(v=periodogram_smoothed$freq[which.max(periodogram_smoothed$spec)], col="red", lty=2)
+
+```
+
+### Periodogram Based on AIC
+```{r ,  echo=TRUE}
+periodogram_AR = spectrum(log_data_detrended, method= "ar", main = "Spectrum estimated via AR model picked by AIC")
+abline(v=periodogram_AR$freq[which.max(periodogram_AR$spec)], col="red", lty=2)
+
+```
+
+
+## Modeling - ARMA
+
+
+The first model we aim to fit to our time series, after removing the trend, is an ARMA model, to effectively capture the
+underlying autocorrelations. The ARMA model will likely serve as a baseline, as the ACF plots from the previous sections 
+display a cyclical pattern, suggesting a persistent seasonal effect in our time series.
+
+A stationary ARMA($p, q$) process with a mean $\mu$ can be written as:
+$$ \phi(B) (Y_n - \mu) = \psi(B)\epsilon_n $$
+where $\phi(x) = 1 - \sum_{i = 1}^p \phi_i x^i$,   $\psi(x) = 1 + \sum_{j = 1}^q \psi_j x^j$,   $B$ is the backshift operator, 
+and $\{\epsilon_n\}$ is a white noise process with zero mean and variance $\sigma^2$[6]. 
+
+### Model Selection
+
+#### AIC
+Typically, selecting the best ARMA model given a range of ($p, q$) is done by comparing the Akaike Information Criterion (AIC) of 
+different models and selecting the model with the lowest AIC as the best fitting one. The AIC is defined as:
+
+$$AIC = -2 \times \ell(\theta^*) + 2D$$
+where $D$ is the number of parameters, and $\ell(\theta^*)$ is the maximum log likelihood[7].
+
+
+Below is the AIC table with bootstrap-based standard errors[8]. 
+The code used to generate the table is adapted from the lecture notes[7] and has been modified by ChatGPT to compute the standard errors.
+
+
+```{r echo=TRUE}
+aic_se_table <- function(data, P, Q, R = 50, max_iter = 1000, optimizer = "BFGS") {
+  table <- matrix("", (P + 1), (Q + 1))
+  for (p in 0:P) {
+    for (q in 0:Q) {
+      tryCatch({
+        model <- arima2::arima(data, order = c(p, 0, q), 
+                       optim.method = optimizer,
+                       optim.control = list(maxit = max_iter))
+
+        # ---------- The following code is written by ChatGPT. ----------
+        # Bootstrap function to compute AIC for resampled data
+        aic_boot <- function(data, indices) {
+          sample_data <- data[indices]  # Resample data with replacement
+          boot_model <- tryCatch(arima(sample_data, order = c(p, 0, q),
+                                       optim.method = optimizer,
+                                       optim.control = list(maxit = max_iter))$aic, 
+                                 error = function(e) NA)
+          return(boot_model)
+        }
+        # Perform bootstrapping
+        boot_results <- boot(data, aic_boot, R = R)
+        # Compute SE as the standard deviation of bootstrapped AIC values
+        se_aic <- sd(boot_results$t, na.rm = TRUE)
+        # ---------- End of ChatGPT-generated code ----------
+
+        table[p + 1, q + 1] <- sprintf("%.2f(%.2f)", model$aic, se_aic)
+      }, error = function(e) {
+        table[p + 1, q + 1] <- "NA"
+      })
+    }
+  }
+
+  dimnames(table) <- list(paste("AR", 0:P, sep=""), paste("MA", 0:Q, sep=""))
+  table
+}
+require(knitr)
+```
+
+
+
+```{r, warning=FALSE, echo=TRUE}
+set.seed(1)
+crashes_detrend_table = aic_se_table(log_data_detrended, 4, 3, max_iter = 5000, optimizer = "Nelder-Mead", R = 500)
+kable(crashes_detrend_table, digits=2, format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+While AIC might suggest $ARMA(3,2)$ as the better model, this metric has large standard errors, which can make it less reliable 
+for model selection, especially when the coefficients or model diagnostics show instability. 
+
+In fact, further investigations show that $ARMA(3, 2)$ has unstable coefficients, meaning they change each time we run the model.
+```{r echo=TRUE, fig.dim = c(12, 8)}
+set.seed(0)
+for (i in 1:3) {
+  cat("\nRun", i, ":\n")
+  crashes_arma32 <- arima2::arima(
+    x = log_data_detrended,
+    order = c(3, 0, 2),
+    optim.method = "Nelder-Mead",
+    optim.control = list(maxit = 5000)
+  )
+  print(coef(crashes_arma32))
+  
+  AR_roots <- polyroot(c(1,-coef(crashes_arma32)[c("ar1", "ar2", "ar3")]))
+  cat("The norm of AR roots: ", abs(AR_roots), "\n")
+  MA_roots <- polyroot(c(1, coef(crashes_arma32)[c("ma1", "ma2")]))
+  cat("The norm of MA roots: ", abs(MA_roots), "\n")
+}
+```
+
+In some runs, the the $ARMA(3,2)$ model exhibits unit AR roots or MA roots, suggesting potential non-causality or non-invertibility. The diagnostics are also concerning. In most runs, we observe multiple spikes in the ACF plots, and the residuals' distribution significantly deviates from normality. 
+
+```{r, echo=FALSE}
+residual_diagnostics = function(model){ 
+    par(mfrow = c(2, 2))
+    plot(model$residuals, main = "Residuals")
+    acf(model$residuals, main = "ACF, Residuals")
+    plot(density(model$residuals), main = "Density Plot for the Residuals", xlab = "Residuals")
+    qqnorm(model$residuals, pch = 1, frame = FALSE)
+    qqline(model$residuals, col = "steelblue", lwd = 2)
+    #Box.test(model$residuals, type = "Ljung-Box")
+}
+```
+
+```{r, echo = FALSE}
+residual_diagnostics(crashes_arma32)
+```
+
+We also check to see if the residuals are correlated using the Ljung-Box Test[9]. The hypotheses and the test statistic for the Ljung-Box Test are as follows:
+
++ $H_0$: The data is not correlated 
+    (\textit{i.e.} the correlations in the population from which the sample is taken are 0, 
+    so that any observed correlations in the data result from randomness of the sampling process)
++ $H_1$: The data exhibit serial correlation.
+
+The test statistics is defined as 
+$$ Q = n(n + 2)\sum_{k = 1}^h \frac{\hat{\rho_k}^2}{n - k} $$
+
+where $n$ is the sample size, $\hat{\rho_k}$ is the sample autocorrelation at lag $k$, and $h$ is 
+the number of lags being tested. Under the null hypothesis, $Q$ asymptotically follows a $\chi_{(h)}^2$
+distribution.
+
+Using this test, we obtain a $p$-value less than 0.05 in some runs, which suggests that significant autocorrelation remains.
+
+
+```{r}
+Box.test(crashes_arma32$residuals, type = "Ljung-Box")
+```
+
+
+#### Auto Fit
+We then utilize `forecast::auto.arima()`, an automated model selection function, which integrates multiple criteria including AIC, BIC, 
+AICc, and model stability to identify the most appropriate ARIMA model[10]. 
+
+In our case, auto.arima selected ARMA(3,1) perhaps due to its greater stability. This model is more stable than ARMA(3, 2) while 
+still effectively capturing the features of the time series.
+
+```{r}
+auto.arima(log_data_detrended, max.p = 4, max.q = 3, trace = TRUE)
+
+crashes_detrend_arma = arima2::arima(log_data_detrended, order = c(3, 0, 1), , optim.method = "Nelder-Mead", optim.control = list(maxit = 2000))
+summary(crashes_detrend_arma)
+```
+
+### Model Comparison for ARMA
+The likelihood ratio test (LRT) helps assess whether the inclusion of additional parameters significantly improves the model fit[7].
+The hypotheses of the LRT are as follows:
+
+\begin{align*}
+  H^{(0)} & : \quad \theta \in \Theta^{(0)}, \\
+  H^{(1)} & : \quad \theta \in \Theta^{(1)},
+\end{align*}
+
+where $\Theta^{(0)} \subset \Theta^{(1)}$, with respective dimensions $D^{(0)} < D^{(1)}$.
+
+The Wilk's approximation for the test statistics will be considered, under the hypothesis $H^{(0)}$,
+$$2(\ell^{(1)} - \ell^{(0)}) \sim \chi^2_{D^{(1)} - D^{(0)}}$$
+where $\ell^{(*)}$ is the log likelihood estimates and $\chi^2_{D^{(1)} - D^{(0)}}$ follows a chi-squared distribution.
+
+
+```{r, echo=FALSE}
+# The functions below are adapted from a group member's homework in this course.
+lrt = function(model0, model1, df) {
+chi_sq = 2 * (model1$loglik - model0$loglik)
+pval = pchisq(chi_sq, df, lower.tail = FALSE)
+cat(sprintf("Test Statistic: %.4f\nDOF: %d\np-value: %.4f\n", chi_sq, df, pval))
+}
+```
+
+
+We have performed LRTs between the best model, ARMA(3,1), and several alternative models that vary by one parameter (except for ARMA(3, 2),
+which proved unstable). Specifically, we compared ARMA(3, 1) with models that have either one more parameter (ARMA(4,1)) or one fewer parameter (ARMA(2,1) 
+or AR(3)). We will use shorthand notation for the hypotheses in this section. For example, 
+
+$H_0$: ARMA(3,1) means that $H_0$: ARMA(3,1) is considered sufficient.
+
+#### ARMA(4, 1)
+The hypotheses are as follows:
+
++ $H_0$: ARMA(3, 1)
++ $H_1$: ARMA(4, 1)
+```{r, echo=FALSE}
+crashes_arma41 = arima2::arima(x = log_data_detrended, order = c(4, 0, 1), optim.method = "Nelder-Mead", 
+    optim.control = list(maxit = 2000))
+lrt(crashes_detrend_arma, crashes_arma41, df = 1)
+```
+
+The $p$-value is $0.13 > 0.05$, indicating that we fail to reject the null hypothesis that ARMA(3, 1) is sufficient.
+
+
+#### ARMA(2, 1)
+The hypotheses are as follows:
+
++ $H_0$: ARMA(2, 1)
++ $H_1$: ARMA(3, 1)
+```{r echo=FALSE}
+crashes_arma21 = arima2::arima(x = log_data_detrended, order = c(2, 0, 1), optim.method = "Nelder-Mead", 
+    optim.control = list(maxit = 2000))
+lrt(crashes_arma21, crashes_detrend_arma, 1)
+```
+
+The $p$-value is almost zero. We can conclude that ARMA(3, 1) is a better fit than ARMA(2, 1).
+
+
+#### AR(3)
+The hypotheses are as follows:
+
++ $H_0$: AR(3)
++ $H_1$: ARMA(3, 1)
+```{r echo=FALSE}
+crashes_arma30 = arima2::arima(x = log_data_detrended, order = c(3, 0, 0), optim.method = "Nelder-Mead", 
+    optim.control = list(maxit = 2000))
+lrt(crashes_arma30, crashes_detrend_arma, 1)
+```
+Similar to the previous part, we can conclude that ARMA(3, 1) fits the data better than AR(3).
+
+We conclude that ARMA(3, 1) is the best model for now. The model is given by 
+$$ (1 - 1.1130B + 0.0780B^2 + 0.3911B^3)(Y_t + 0.0018) = (1 - 0.6728B)\epsilon_t $$
+
+
+### Diagnostics
+The actual vs. fitted values plot reveals several key insights:
+
++ The fitted values follow the overall trend of the actual values quite well, suggesting that the ARMA(3,1) model captures much of 
+the underlying pattern. 
++ Some peaks and troughs are not fully captured by the fitted values, suggesting that the model may be 
+underestimating volatility in certain periods.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- data.frame(
+  Date = crashes_MI$Date,
+  Actual = log_data_detrended,          
+  Fitted = fitted(crashes_detrend_arma))
+
+ggplot(plot_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual"), alpha = 0.8) +  
+  geom_line(aes(y = Fitted, color = "Fitted"), linetype = "dashed") +  
+  ggtitle("ARMA(3, 1), Actual vs Fitted Values") +
+  labs(x = "Date", y = "Crashes", color = "Legend") +  
+  scale_color_manual(values = c("Actual" = "black", "Fitted" = "red")) +  
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+It still remains to check whether the residuals exhibit structure. If so, the model may be missing key components such as seasonality, or 
+additional autoregressive/moving average terms.
+
+We see that the residuals fluctuate around zero, but they don't necessarily look like white noise  since we can see some cyclical behavior. 
+The ACF plot also shows a significant significant autocorrelation at lags 4, 13, 14,and 16 suggesting that the current model is not fully capturing the dependencies between the observations, though it's interesting to see that lag 12 which corresponds to yearly seasonality is not significant. 
+The residuals exhibit a heavy left tail, since the density plot displays asymmetry and the QQ plot deviates from the normal distribution 
+in the lower quantiles.
+
+```{r echo=FALSE, fig.dim = c(12, 8)}
+#checking roots
+AR_roots <- polyroot(c(1,-coef(crashes_detrend_arma)[c("ar1", "ar2", "ar3")]))
+#AR_roots
+#cat("The norm of AR roots: ", abs(AR_roots), "\n")
+MA_roots <- polyroot(c(1, coef(crashes_detrend_arma)[c("ma1")]))
+#MA_roots
+#cat("The norm of MA roots: ", abs(MA_roots), "\n")
+residual_diagnostics(crashes_detrend_arma)
+```
+
+
+The residuals passed the Ljung-Box test suggesting that the residuals do not exhibit significant autocorrelation. 
+```{r}
+Box.test(crashes_detrend_arma$residuals, type = "Ljung-Box")
+
+```
+
+```{r, echo=FALSE}
+autoplot(crashes_detrend_arma)
+```
+
+Finally, checking the inverse AR and AM roots show that they are all contained within the unit circle, indicating that the model is likely to be causal and invertible[11].
+
+
+
+## Modeling - SARMA
+From the ACF plot of the original data and the log transform data, we observe a peak at lag 12, indicating a strong seasonal pattern with a periodicity of 12 months. Additionally, the spectral analysis and decomposition plot confirms this seasonality by showing a repeating pattern in the seasonal component. 
+
+\
+To model the seasonal behavior, we use Seasonal AutoRegressive Moving Average(SARMA), which extends the ARMA model by including seasonal components. The general $SARMA(p,q) \times (P,Q)_{12}$ model for monthly data is expressed as:
+$$\phi(B) \Phi(B^{12}) \left(Y_n - \mu \right) = \psi(B) \Psi(B^{12}) \epsilon_n$$
+where $\{ \epsilon_n \}$is a white noise process, the intercept $\mu$ is the mean of the process, and $\phi(x)$, $\Phi(x)$, $\psi(x)$, $\Psi(x)$ are the ARMA polynomials[12].
+
+\
+By applying log transformation and detrending on the data, we confirmed that the data points result in a more stationary time series. Next, we will find the best-fitting model using $SARMA(p,q) \times (P,Q)_{12}$ through different parameter sets by fixing the regular terms $p$ and $q$ and focus on finding the optimal seasonal parameters $P$ and $Q$ that provide the best fit for our time series data, where the seasonal period is 12 months.
+
+\
+
+
+
+
+### Model Fitting for SARMA
+In this section, we fit three models and evaluate them using Akaike’s Information Criterion (AIC), defined as,
+$$AIC = -2 \times \ell(\theta^*) + 2D$$
+where $D$ is the number of parameters, and $\ell(\theta^*)$ is the maximum log likelihood[7]. \
+The model with the lowest AIC value will be selected for each parameter set, and further model selection will be conducted.
+\
+
+Through the ARMA analysis, we identified ARMA(3,1) as the best-fitting model. Therefore, we will fit a SARMA model with regular AR and MA terms set to (3,1) while determining the optimal seasonal parameters. Next, we will fit a model with fewer parameters to see whether a simple model already provide a good fit.
+
+
+#### {.tabset}
+
+##### $SARMA(3,1) \times (P,Q)_{12}$
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sarma_aic_table <- function(data, p, q, P_max, Q_max, seasonal_period) {
+  table <- matrix(NA, (P_max+1), (Q_max+1))  
+  
+  for (P in 0:P_max) {
+    for (Q in 0:Q_max) {
+      model <- tryCatch(
+        arima(data, order = c(p, 0, q), 
+              seasonal = list(order = c(P, 0, Q), period = seasonal_period),
+              optim.control = list(maxit = 1000)),
+        error = function(e) return(NULL)  
+      )
+      table[P+1, Q+1] <- ifelse(is.null(model), NA, model$aic)  
+    }
+  }
+  
+  dimnames(table) <- list(paste("SAR", 0:P_max, sep=""), paste("SMA", 0:Q_max, sep=""))
+  return(table)
+}
+
+
+# ARIMA(1,0,1) with seasonal effects
+sarma_aic_results <- sarma_aic_table(log_data_detrended, p=3, q=1, P_max=2, Q_max=2, seasonal_period=12)
+
+# Display the AIC table
+require(knitr)
+kable(sarma_aic_results, digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+min_aic <- min(sarma_aic_results, na.rm = TRUE)
+min_aic_index <- which(sarma_aic_results == min_aic, arr.ind = TRUE)
+
+# Find the smallest AIC model
+best_P <- min_aic_index[1] - 1  
+best_Q <- min_aic_index[2] - 1
+
+cat("The SARMA model with smallest AIC is: SARMA(3,1) x (", best_P,",",best_Q, ")_12 with AIC =", round(min_aic, 2))
+```
+
+```{r,  echo=FALSE, message=FALSE, warning=FALSE}
+sarma_31 <- arima(log_data_detrended,order=c(3,0,1),seasonal=list(order=c(best_P,0,best_Q),period=12))
+sarma_31
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+autoplot(sarma_31)
+```
+
+For $SARMA(3,1) \times (2,2)_{12}$, the unit root plot shows that all AR and MA inverse roots lie on or inside the unit circle. This means the model is both causal and invertible, which shows stability[11]. However, further residual analysis should be conducted to check whether the model fits all assumptions.
+
+##### $SARMA(1,1) \times (P,Q)_{12}$
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sarima_aic_table <- function(data, p, q, P_max, Q_max, seasonal_period) {
+  table <- matrix(NA, (P_max+1), (Q_max+1))  
+  
+  for (P in 0:P_max) {
+    for (Q in 0:Q_max) {
+      model <- tryCatch(
+        arima(data, order = c(p,0, q), 
+              seasonal = list(order = c(P, 0, Q), period = seasonal_period)),
+        error = function(e) return(NULL)  
+      )
+      table[P+1, Q+1] <- ifelse(is.null(model), NA, model$aic)  
+    }
+  }
+  
+  dimnames(table) <- list(paste("SAR", 0:P_max, sep=""), paste("SMA", 0:Q_max, sep=""))
+  return(table)
+}
+
+
+# ARIMA(1,0,1) with seasonal effects
+sarma_aic_results <- sarma_aic_table(log_data_detrended, p=1, q=1, P_max=2, Q_max=2, seasonal_period=12)
+
+# Display the AIC table
+require(knitr)
+require(kableExtra)
+kable(sarma_aic_results, digits=2, format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+min_aic <- min(sarma_aic_results, na.rm = TRUE)
+min_aic_index <- which(sarma_aic_results == min_aic, arr.ind = TRUE)
+
+# Find the smallest AIC model
+best_P <- min_aic_index[1] - 1  
+best_Q <- min_aic_index[2] - 1
+
+cat("The SARMA model with smallest AIC is: SARMA(1,1) x (", best_P, ",", best_Q, ")_12 with AIC =", round(min_aic, 2))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+sarma_11 <- arima(log_data,order=c(1,0,1),seasonal=list(order=c(best_P,0,best_Q),period=12))
+sarma_11
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+autoplot(sarma_11)
+```
+
+For $SARMA(1,1) \times (2,2)_{12}$, the unit root plot shows that all AR and MA inverse roots lie on or inside the unit circle. This means the model is both causal and invertible, which shows stability[11]. However, further residual analysis should also be conducted to check whether the model fits all assumptions.
+
+
+#### {-}
+
+---
+
+### Model Comparison for SARMA
+
+In the previous section, we identified the SARMA model with the lowest AIC for different parameter settings. By comparing these models, our goal is to find out the best-fitting model for the time series data. 
+
+\
+In the following part, we will test for $SARMA(3,1) \times (2,2)_{12}$ and $SARMA(1,1) \times (2,2)_{12}$ since we are curious whether whether a more complex model will indeed lead to a significantly better fit.
+
+\
+We performed likelihood ratio tests (LRT) to compare our model, the hypotheses for the LRT[7] will be:
+\begin{align*}
+  H^{(0)} & : \quad \theta \in \Theta^{(0)}, \\
+  H^{(1)} & : \quad \theta \in \Theta^{(1)},
+\end{align*}
+
+where $\Theta^{(0)} \subset \Theta^{(1)}$, with respective dimensions $D^{(0)} < D^{(1)}$.
+
+\
+The Wilk's approximation for the test statistics will be considered, under the hypothesis $H^{(0)}$,
+$$2(\ell^{(1)} - \ell^{(0)}) \sim \chi^2_{D^{(1)} - D^{(0)}}$$
+where $\ell^{(*)}$ is the log likelihood estimates and $\chi^2_{D^{(1)} - D^{(0)}}$ follows a chi-squared distribution.
+
+\
+By testing $SARMA(1,1) \times (2,2)_{12}$ and $SARMA(3,1) \times (2,2)_{12}$.
+
+\begin{align*}
+  H^{(0)} & : SARMA(1,1) \times (2,2)_{12} \text{is sufficient} \\
+  H^{(1)} & : SARMA(3,1) \times (2,2)_{12} \text{is a better fit}
+\end{align*}
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+logLik_31 <- as.numeric(logLik(sarma_31))
+logLik_11 <- as.numeric(logLik(sarma_11))
+
+D_1 <- 2 * (logLik_31 - logLik_11)
+
+p_value_1 <- 1-pchisq(D_1, df = 2)
+p_value_general_1 <- ifelse(p_value_1 < 0.0001, "small than 0.0001", round(p_value_1, 2))
+
+cat("The p-value for the LRT test is",p_value_general_1,".")
+```
+\
+Since the p-value of the test is smaller than $<$ 0.05, we reject the null hypothesis and conclude that $SARMA(1,1) \times (2,2)_{12}$ model does not provide a statistically better fit than the $SARMA(3,1) \times (2,2)_{12}$ model. This suggests that adding regular AR and MA terms(more complex model) will improve the model's performance.
+
+
+\
+Through the above model selection, we conclude that $SARMA(3,1) \times (2,2)_{12}$ is the best fitting SARMA model, which is
+$$
+(1 - 0.7269B + 0.3448B^2 + 0.1142B^3)(1 - 0.3335B^{12} - 0.6656B^{24}) Y_t
+= (1 + 0.9606B)(1 - 0.4846B^{12} - 0.4573B^{24}) \epsilon_t + 0.0011
+$$
+
+### Residual Analysis
+After fitting the $SARMA(3,1) \times (2,2)_{12}$ model, we analyze the residuals to see if they exhibit non-normality, autocorrelation, and non constant variance. If any of these are present then it indicates the model may be mis-specified and should be refined further.
+
+The residuals plotted over time fluctuate about 0 and there doesn't appear to be any noticeable pattern.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+residuals_31 <- residuals(sarma_31)
+residuals_df <- tibble(Time = time(residuals_31), Residuals = as.numeric(residuals_31))
+
+ggplot(residuals_df, aes(x = Time, y = Residuals)) +
+  geom_line()+
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Reference line at zero
+  labs(title = "Residuals of SARMA(3,1) × (2,2)_12",
+       x = "Time", y = "Residuals") +
+  theme_minimal()
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+acf(residuals_31, main="ACF of SARMA(3,1)(2,2) Residuals")
+```
+\
+The ACF plot of the residuals shows that most lag values are within the blue significance bounds, suggesting that the residuals do not show a significant autocorrelation. However, a few spikes crossing the bounds indicate that there may be some unexplained structure that the model has not captured.
+\
+
+
+To verify our conclusion, we perform the Ljung-Box test[9] to further examine the residuals. The hypothesis is set as follows:
+$$H_0: \text{The residuals are independently distributed (no significant autocorrelation)}$$
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Box.test(residuals_31, lag=12, type="Ljung-Box")
+```
+From the test results, the p-value is 0.8475, which is greater than 0.05. Therefore, we fail to reject the null hypothesis, indicating that the residuals are independently distributed.
+
+\
+To check the normality of residuals, we generate a QQ plot and a density plot as follows. From both the density plot and QQ plot, the residuals seem to follow a normal distribution despite some deviations at the tails.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+plot(density(residuals_31), 
+     main = "Density Plot for SARMA(3,1)(2,2) Residuals", xlab = "Residuals", cex.main = 0.8)
+
+qqnorm(residuals_31, main = "QQ-Plot for SARMA(3,1)(2,2) Residuals",cex.main = 0.8)
+qqline(residuals_31)
+```
+
+### Actual vs Fitted Values
+Since there were no issues found in the residual analysis, we conclude that that $SARMA(3,1) \times (2,2)_{12}$ model is appropriate for the time series. We now compare the the log transformed data to the fitted values obtained from our model. From the plot below, we observe that the SARMA models captures the overall pattern of the time series. The fitted values closely follow the cyclical pattern of the data. Overall, the model appears to be a good fit for the data and captures the seasonal and autoregressive patterns. 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot_data <- data.frame(
+  Date = crashes_MI$Date,
+  Actual = log_data_detrended,          
+  Fitted = fitted(sarma_31))
+
+ggplot(plot_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual"), alpha = 0.8) +  
+  geom_line(aes(y = Fitted, color = "Fitted"), linetype = "dashed") +  
+  ggtitle("Actual vs Fitted Values (SARMA(3,1)(2,2))") +
+  labs(x = "Date", y = "Crashes", color = "Legend") +  
+  scale_color_manual(values = c("Actual" = "black", "Fitted" = "red")) +  
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+
+
+
+
+
+
+
+
+
+## Conclusion
+In this study, we applied time series models to analyze fatal car accidents in Michigan by comparing ARMA and SARMA approaches. Initially, we explored ARMA(3,2) which had the lowest AIC, but was highly unstable with coefficient estimates changing between runs and occasional unit roots appearing, which is highly undesirable. While ARMA(3,1) was relatively stable, its residuals exhibited non-normality and signs of remaining autocorrelation, indicating that it did not fully capture the structure of the data.
+
+Given the strong seasonal patterns identified in the data, we extended our analysis to SARMA models. The $SARMA(3,1) \times (2,2)_{12}$ model provided a much better fit, effectively capturing both seasonal and autoregressive dependencies while producing normally distributed residuals with minimal autocorrelation. This demonstrated that seasonality plays a crucial role in modeling fatal accidents. Despite the improved performance of SARMA, some residual autocorrelations, such as lag 14, remain significant. This suggests that there may be another seasonal effect which can be explored in future studies. Future studies could enhance the model by incorporating additional time series such as weather or traffic volume data.
+
+This study also provides insight into modeling choices for cyclical time series data. Many past projects that analyzed cyclical time series relied on ARIMA or SARIMA, which involve differencing the data to obtain a stationary time series. However, our findings demonstrate that it is possible to develop an effective model without differencing as long as we understand the seasonal component of the data. While our final models did not use differencing, our overall approach was similar to most teams: we detrended the data, performed spectral analysis, fitted models, selected the best model using AIC and verified model stability by checking the AR & MA roots and performing residual diagnostics.
+
+## References
+[1] [Fatal Accidents Reporting System](https://crashstats.nhtsa.dot.gov/Api/Public/ViewPublication/813556)
+
+[2] [stl in R](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/stl)
+
+[3] [Seasonal and Trend decomposing using Loess](https://www.scb.se/contentassets/ca21efb41fee47d293bbee5bf7be7fb3/stl-a-seasonal-trend-decomposition-procedure-based-on-loess.pdf)
+
+[4] [Michigan Covid-19 Lockdown](https://www.michigan.gov/whitmer/news/state-orders-and-directives/2020/06/01/executive-order-2020-110)
+
+[5] [Edward L. Ionides, Chapter 7: Introduction to timeseries analysis in the frequency domain](https://ionides.github.io/531w25/07/notes.pdf)
+
+[6] [Edward L. Ionides, Chapter 4: Linear time series models and the algebra of ARMA models](https://ionides.github.io/531w25/04/notes.pdf)
+
+[7] [Edward L. Ionides, Chapter 5: Parameter estimation and model identification for ARMA models](https://ionides.github.io/531w25/05/notes.pdf)
+
+[8] [Bootstraping in R](https://www.rdocumentation.org/packages/boot/versions/1.3-31/topics/boot)
+
+[9] [Ljung-Box Test](https://en.wikipedia.org/wiki/Ljung%E2%80%93Box_test)
+
+[10] [Automated ARIMA model selction: auto.arima in R](https://www.rdocumentation.org/packages/forecast/versions/8.23.0/topics/auto.arima)
+
+[11] [Intepretation of Inverse Roots](https://robjhyndman.com/hyndsight/arma-roots/)
+
+[12] [Edward L. Ionides, Chapter 6: Extending the ARMA model: Seasonality, integration and trend.](https://ionides.github.io/531w25/06/notes.pdf)
+
+## Sources
+We made use of additional sources to complete this project that we would like to acknowledge.
+
+R markdown formatting:
+
++ https://bookdown.org/yihui/rmarkdown/html-document.html#code-folding
++ https://bookdown.org/yihui/rmarkdown-cookbook/html-tabs.html
+
+Modifying lecture code to obtain AIC with bootstrap-based standard errors:
+
++ ChatGPT
+
+
+
+
+

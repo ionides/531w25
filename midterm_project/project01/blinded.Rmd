@@ -1,0 +1,556 @@
+---
+title: "STATS 531 Midterm Project - Time Series Modeling of Flight Delays"
+date: "2/21/2025"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    code_folding: hide
+
+# Table of Contents and Folding Code Taken from Winter 24 Project 11 [6]
+---
+
+```{r project_setup, include=FALSE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(forecast)
+library(lubridate)
+library(tseries)
+library(lmtest)
+library(plotly)
+```
+
+# 1. Introduction
+
+Flight delays are a major concern in the aviation industry.  Of the approximately 1 billion passengers who flew in the US in 2023, around 250 million had their flights delayed or cancelled [1].  More than just a minor inconvenience, these disruptions also come with a hefty financial cost.  In 2019 alone, delays were estimated to cost passengers and airlines a combined $33 billion [2].  Understanding the causes of delays, how to prevent them, and ways to mitigate their impact are essential to improving air travel for both passengers and airlines alike.  This project focuses on the causes of delays, specifically on identifying when delays tend to occur.  Using historical flight data in the United States from the beginning of 2021 to the end of 2023, we will apply time series analysis techniques to identify trends and seasonal patterns, and to forecast future delays.
+
+The primary research questions we hope to analyze are:
+
+1. What are the trends and patterns in flight delays over the three-year period?
+2. What seasonal variations exist in flight delays?
+3. How accurately can time series modeling techniques forecast future flight delays?
+
+---
+
+# 2. Exploratory Data Analysis
+The dataset, derived from the Department of Transportation’s Bureau of Transportation Statistics' (BTS) Reporting Carrier On-Time Reporting data* [3] contains records of flight operations, including the number of delayed flights per day, from 1987 to the present day. The key motivation is to focus on a three-year period of post-pandemic data (January 1st, 2021 - January 1st, 2024) to avoid the disruptions caused by Covid-19 in 2020, which led to an abnormal drop in air travel. By limiting our analysis to this period, we ensure that the model captures recent operational patterns rather than pandemic-related deviations.  
+
+(*See appendix for data cleaning procedure.*)
+
+To begin, we visualize the number of delays (per day and per week) to identify any trends or patterns in the data. (We have used the `window` function to drop the last week of delay data due to it being incomplete.)
+
+```{r load_data, include=FALSE}
+df <- read.csv("flight_delays.csv")
+
+year <- 2021
+# Convert FlightDate to Date and filter for year+
+df <- df %>%
+  mutate(FlightDate = as.Date(FlightDate)) %>%
+  filter(FlightDate >= as.Date(paste0(year, "-01-01")))
+
+# Aggregate data at weekly level
+df_weekly <- df %>%
+  group_by(Week = floor_date(FlightDate, "week")) %>%
+  summarise(n_delay = sum(n_delay, na.rm = TRUE)) %>%
+  ungroup()
+
+# Timeseries objects of daily and weekly delays
+df_all_ts <- ts(df$n_delay, start = c(year, 1), frequency = 365)
+df_weekly_ts <- ts(df_weekly$n_delay, start = c(year, 1), frequency = 52)
+df_weekly_ts <- window(df_weekly_ts, end = c(year + 2, 52))
+```
+
+```{r weekly_delays_plot, echo=FALSE}
+# Plot all delays
+plot(df_all_ts, main = paste0("Daily Flight Delays (Jan ", year,"- Jan 2024)"), xlab = "Date", ylab = "Number of Delays")
+# Plot weekly delays
+plot(df_weekly_ts, main = paste0("Weekly Flight Delays (Jan ", year,"- Jan 2024)"), xlab = "Date", ylab = "Number of Delays")
+```
+
+We see a notable trend,  with peaks in the summer and winter months. As the weekly data provides a clearer picture of the overall trend compared to the daily data, we will use it moving forward.
+
+---
+
+# 3. Stationarity Analysis
+
+To determine the stationarity of the time series data, we conduct the Augmented Dickey-Fuller (ADF) test. The null hypothesis of the ADF test is that the time series data is non-stationary. If the p-value is less than 0.05, we reject the null hypothesis and conclude that the data is stationary.
+
+```{r adf_test_weekly, echo=FALSE}
+adf_test_weekly <- adf.test(df_weekly_ts, alternative = "stationary")
+adf_test_weekly
+```
+
+The p-value of the ADF test for the weekly delays is `r round(adf_test_weekly$p.value, 4)`, indicating that the weekly time series data is stationary, and that we do not need to apply differencing  before proceeding with time series modeling.
+
+### 3.1 Seasonal Decomposition
+
+To more formally test for periodicity in the data, we use the `stl()` function to decompose the time series into seasonal, trend, and remainder components.
+
+```{r seasonal_decomposition, echo=FALSE}
+decomp_obj <- stl(df_weekly_ts, s.window = "periodic")
+plot(decomp_obj, main = "Seasonal Decomposition of Weekly Delays")
+```
+
+The seasonal decomposition plot shows the original time series along with its seasonal, trend, and remainder components.
+
+The seasonal component displays a clear pattern of peaks and troughs, indicating seasonal variation within the data. This suggests that certain times of the year regularly experience more flight delays than others. Notably, summer months tend to see more delays than winter months.
+
+The trend component indicates a long-term trend in the data of flight delays increasing over time.
+
+The remainder (or residual) component captures the random fluctuations in the data that are not explained by seasonal and trend patterns. We see both positive and negative fluctuations around the trend line, suggesting that several factors outside of the regular seasonal and trend patterns can affect flight delays.
+
+### 3.2 Autocorrelation and Partial Autocorrelation
+
+We examine the autocorrelation function (ACF) and partial autocorrelation function (PACF) of the weekly delays to identify the lag values for the autoregressive (AR) and moving average (MA) components of the time series model. The non-integer x-axis represents the lag values with a frequency of 52 weeks per year.
+
+```{r acf_pacf__weekly, echo=FALSE}
+acf_obj <- acf(df_weekly_ts, main = "ACF of Differenced Weekly Delays")
+pacf_obj <- pacf(df_weekly_ts, main = "PACF of Differenced Weekly Delays")
+```
+
+The ACF shows a strong correlation at the first lag (0.820), with the correlation gradually decreasing as the lags increase. This indicates that the series has a significant dependence on its recent values, with correlations fading over time, suggesting a trend or long-term dependence.
+
+The PACF shows a sharp drop after lag 1 (0.820), with most subsequent lags near zero. This indicates that the series can be well explained by an AR(1) process, where the current value is mainly influenced by the immediate past value, and higher-order lags are not as important.
+
+In summary, the time series shows strong short-term dependence and suggests that an AR(1) model might be a good fit for the data.
+
+---
+
+# 4. Time Series Modeling
+
+### 4.1 ARIMA Model
+
+```{r summarize_arima_fit, echo=FALSE}
+summarize_arima_fit <- function(data, P, Q) {
+  aic_summary <- matrix(NA, nrow = P+1, ncol = Q+1)
+ 
+  # Fit ARIMA(p,0,q) models and store AIC values
+  for (p in 0:P) {
+    for (q in 0:Q) {
+      model <- tryCatch(
+        arima(data, order = c(p, 0, q)),
+        error = function(e) NULL
+      )
+      if (!is.null(model)) {
+        aic_summary[p+1, q+1] <- model$aic
+      }
+    }
+  }
+ 
+  # Convert matrix to dataframe
+  aic_df <- as.data.frame(aic_summary)
+  rownames(aic_df) <- paste("AR", 0:P, sep = "")
+  colnames(aic_df) <- paste("MA", 0:Q, sep = "")
+
+  # Find the best model based on AIC
+  best_indices <- which(aic_summary == min(aic_summary, na.rm = TRUE), arr.ind = TRUE)
+  best_p <- best_indices[1] - 1
+  best_q <- best_indices[2] - 1
+
+  # Identify and fit the best model
+  best_model <- tryCatch(
+    arima(data, order = c(best_p, 0, best_q)),
+    error = function(e) NULL
+  )
+ 
+  # Extract coefficients
+  if (!is.null(best_model)) {
+    coefs <- best_model$coef
+    coef_summary <- data.frame(
+      Coefficient = names(coefs),
+      Estimate = coefs,
+      Std_Error = sqrt(diag(best_model$var.coef)),
+      stringsAsFactors = FALSE
+    )
+   
+    # AIC summary for best model
+    aic_summary_df <- data.frame(
+      Coefficient = "AIC",
+      Estimate = best_model$aic,
+      Std_Error = NA,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    coef_summary <- data.frame(
+      Coefficient = "No valid model found",
+      Estimate = NA,
+      Std_Error = NA,
+      stringsAsFactors = FALSE
+    )
+    aic_summary_df <- coef_summary
+  }
+ 
+  kable(aic_df, digits = 2, escape = FALSE, caption = "AIC Table for ARIMA Models") %>%
+    kable_styling(full_width = FALSE)
+
+}
+
+summarize_arima_fit(df_weekly_ts, 3, 3)
+```
+
+The best ARMA model by minimum AIC is AR(3), MA(1) with a minimum AIC of 3395.788. However, AR(1), MA(1) and AR(2), MA(1) models also have competitive AIC values. The AR(1), MA(1) model is chosen as it has a comparatively low AIC while being a simpler model overall.
+
+(*Note that there is an increase in AIC of 2.11 from AR(3), MA(2) to AR(3), MA(3), which could be due to model complexity. We will prefer the simpler models overall, but this should be noted.*)
+
+The ARMA(1,1) model coefficients are as follows:
+
+```{r arima_best_model, echo=FALSE}
+best_arima_model <- arima(df_weekly_ts, order = c(1, 0, 1))
+
+coef_summary <- data.frame(
+  Estimate = best_arima_model$coef,
+  Std_Error = sqrt(diag(best_arima_model$var.coef)),
+  stringsAsFactors = FALSE
+)
+kable(coef_summary, digits = 4, caption = "ARIMA Model Coefficients") %>%
+  kable_styling(full_width = FALSE)
+```
+
+### 4.2 SARMA Model
+
+Proceeding with the ARMA(1,1) model, further investigation was conducted to determine if a seasonal component was present. Both the ACF and PACF plots show a slight pattern around lag 52, suggesting annual seasonality. Taking into account both the overall time series graph and real-world flight scheduling behaviors which indicate peaks in summer and winter, we decided to also check for a semi-annual seasonality.
+
+SARMA (Seasonal Autoregressive Moving Average) models is a special case of ARMA, where the AR and MA polynomials are factored into a monthly polynomial in $B$ and an annual polynomial in $B^{s}$. The model equation is defined below[4].
+
+A general SARMA($p,q$) $\times$ ($P,Q$)$_{s}$ model for monthly data is:
+
+$$
+\tag{S1}
+\phi(B)\,\Phi\bigl(B^{s}\bigr)\bigl(Y_n - \mu\bigr)
+  = \psi(B)\,\Psi\bigl(B^{s}\bigr)\,\epsilon_n,
+$$
+
+where $\{\epsilon_n\}$ is a white noise process and
+
+$$
+\mu = \mathrm{E}[Y_n],
+$$
+
+$$
+\phi(x) = 1 - \phi_1 x - \cdots - \phi_p x^p,
+$$
+
+$$
+\psi(x) = 1 + \psi_1 x + \cdots + \psi_q x^q,
+$$
+
+$$
+\Phi(x) = 1 - \Phi_1 x - \cdots - \Phi_P x^P,
+$$
+
+$$
+\Psi(x) = 1 + \Psi_1 x + \cdots + \Psi_Q x^Q.
+$$
+
+
+
+Since our data is a weekly, to investigate annual seasonality, we choose a period of 52 and 26 for semi-annual seasonality.
+
+The SARMA model was constructed by including additional season terms from the ARMA model that was selected previously. Although there seems to be a pattern of seasonality in the decomposition as well as the ACF and PACF plot, it does not perfectly show strong spikes which could mean that the seasonal effects are weak. Thus, we started off with a low-order SARMA model with P=1 and Q=1, so that we avoid unnecessary complexity to our model.
+
+The SARMA(1,0,1)(1,0,1)[52] and SARMA(1,0,1)(1,0,1)[26] were fitted to determine which seasonal period was most relevant.
+
+```{r SARMA, echo=FALSE}
+arima_model = arima(df_weekly_ts, order = c(1, 0, 1))
+annual_SARMA_ARMA = arima(df_weekly_ts, order = c(1, 0, 1), seasonal = list(order = c(1, 0, 1), period = 52))
+biannual_SARMA = arima(df_weekly_ts, order = c(1, 0, 1), seasonal = list(order = c(1, 0, 1), period = 26))
+
+#summary(arima_model)
+#summary(annual_SARMA_ARMA)
+#summary(biannual_SARMA)
+
+#print("Coefficient estimates for ARMA(1,1):")
+#coeftest(arima_model)
+#print("Coefficient estimates for SARMA(1,0,1)(1,0,1) w/ annual seasonal component:")
+#coeftest(annual_SARMA_ARMA)
+#print("Coefficient estimates for SARMA(1,0,1)(1,0,1) w/ biannual seasonal component:")
+#coeftest(biannual_SARMA)
+```
+
+Comparing the model coefficients for the three different models, the coefficients of the SARMA(1,0,1)(1,0,1)[26] model were all statistically significant. However, the seasonal MA=1 term for SARMA(1,0,1)(1,0,1)[52] was not significant, meaning that the seasonal moving average effects were not a significant factor to the model. Thus a model without the MA term was refitted for the annual seasonality model: SARMA(1,0,1)(1,0,0)[52]. After this adjustment, the model coefficients for SARMA(1,0,1)(1,0,0)[52] model were all significant as shown below.
+```{r SARMA_reduced, echo=FALSE}
+annual_SARMA_AR = Arima(df_weekly_ts, order = c(1, 0, 1), seasonal = list(order = c(1, 0, 0), period = 52))
+#summary(annual_SARMA_AR)
+#print("Coefficient estimates for SARMA(1,0,1)(1,0,0) w/ annual seasonal component:")
+coeftest(annual_SARMA_AR)
+```
+
+Finally, we compared the AIC values of the ARMA, annual SARMA, and bi-annual SARMA models:
+```{r AIC, echo=FALSE}
+AIC_table = data.frame(AIC(arima_model,annual_SARMA_AR,biannual_SARMA))
+  kable(AIC_table, digits = 2, escape = FALSE, caption = "AIC Table for Model Selection") %>%
+    kable_styling(full_width = FALSE)
+```
+
+SARMA($1,1$) $\times$ ($1,0$)$_{52}$ had the lowest AIC of 3386.05, while SARMA($1,1$) $\times$ ($1,1$)$_{26}$ had a AIC value of 3386.13 which is close to the lowest AIC value. To further check for the appropriate model, residual analysis was performed.
+
+### 4.3 Model Diagnostics {.tabset}
+We check the residuals of the SARMA models to ensure that they are white noise. Using the `forecast` package's `checkresiduals()` function, we can see that the residuals of SARMA($1,1$) $\times$ ($1,0$)$_{52}$ and SARMA($1,1$) $\times$ ($1,1$)$_{26}$ are approximately white noise, with no significant autocorrelation. The Ljung-Box Test* tests the null hypothesis that the residuals are white noise. The Ljung-Box Test's p-values are 0.6765 and 0.5223 respectively, indicating that the residuals are not significantly different from white noise.
+
+#### SARMA($1,1$) $\times$ ($1,0$)$_{52}$ Residual Plot
+```{r arima_residuals, echo=FALSE}
+# Check residuals
+best_arima_model = annual_SARMA_AR
+best_arima_model2 = biannual_SARMA
+checkresiduals(best_arima_model, test = FALSE) # Remove the `test = FALSE` to see Ljung-Box Test information
+shapiro_test <- shapiro.test(best_arima_model$residuals)
+#shapiro_test
+```
+
+#### SARMA($1,1$) $\times$ ($1,1$)$_{26}$ Residual Plot
+```{r, echo=FALSE}
+checkresiduals(best_arima_model2, test = FALSE) # Remove the `test = FALSE` to see Ljung-Box Test information
+shapiro_test2<- shapiro.test(best_arima_model2$residuals)
+#shapiro_test2
+```
+
+We also use the Shapiro-Wilk test* to test the normality of the residuals. The null hypothesis is that the residuals are normally distributed. The p-values of the Shapiro-Wilk tests are `r round(shapiro_test$p.value, 4)` and `r round(shapiro_test2$p.value, 4)` respectively, indicating that the residuals are normally distributed.
+
+These diagnostic tests indicate that the model captures the underlying patterns in the data well.
+
+(*More detailed explanations of the Ljung-Box Test and Shapiro-Wilks Test can be found in the Appendix.)
+
+---
+
+# 5. Forecasting
+
+### 5.1. 2024 Flight Weekly Flight Delay Data
+
+To compare our model's performance on new data, we compare the forecasting performance of our three time series models on the number of delayed flights in 2024 (per week) up to November*. The models are:
+
+1. $ARMA(1,1)$: A non-seasonal ARMA model that captures short-term dependencies in the data.
+2. $SARMA(1,0,1)\times(1,0,1)[52]$: A seasonal ARMA model incorporating yearly seasonality (52-week period), accounting for long-term seasonal patterns.
+3. $SARMA(1,0,1)\times(1,0,1)[26]$: A seasonal ARMA model with a biannual seasonal component (26-week period), allowing for mid-year cyclical effects.
+
+(*See appendix for more information on the data)
+
+```{r, include=FALSE}
+data_2024 = read.csv("on_time_ts_2024.csv")
+data_2024 <- data_2024 %>%
+  mutate(FlightDate = as.Date(FlightDate))
+data_2024_weekly <- data_2024 %>%
+  group_by(Week = floor_date(FlightDate, "week")) %>%
+  summarise(n_delay = sum(n_delay, na.rm = TRUE)) %>%
+  ungroup()
+data_2024_ts <- ts(data_2024_weekly$n_delay, start = c(2024, 1), frequency = 52)
+```
+
+Using the `forecast()` function, we predict flight delays for the next 48 weeks based on each model. The results are shown below:
+
+```{r,echo=FALSE}
+forecast_arma <- forecast(arima_model, h = 48)
+forecast_annual <- forecast(annual_SARMA_AR, h = 48)
+forecast_biannual <- forecast(biannual_SARMA, h = 48)
+
+updatemenus <- list(list(
+  y = 1,
+  buttons = list(
+    # Overview
+    list(
+      label = 'Overview',
+      method = 'update',
+      args = list(
+        list(visible = list(TRUE, TRUE, FALSE, FALSE, TRUE, FALSE, FALSE, TRUE, FALSE, FALSE)),
+        list(title = 'Overview of All 3 Models')
+      )
+    ),
+   
+    # ARMA
+    list(
+      label = 'ARMA',
+      method = 'update',
+      args = list(
+        list(visible = list(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)),
+        list(title = 'ARMA Model')
+      )
+    ),
+   
+    # Annual SARMA
+    list(
+      label = 'Annual SARMA',
+      method = 'update',
+      args = list(
+        list(visible = list(TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE)),
+        list(title = 'Annual SARMA Model')
+      )
+    ),
+   
+    # Bi-Annual SARMA
+    list(
+      label = 'Biannual SARMA',
+      method = 'update',
+      args = list(
+        list(visible = list(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, TRUE, TRUE)),
+        list(title = 'Biannual SARMA Model')
+      )
+    )
+  )
+))
+
+full_dat_weekly <- full_join(subset(df_weekly, Week != as.Date('2023-12-31')), data_2024_weekly, by = join_by(Week, n_delay))
+arma_dat <- data.frame(Week = data_2024_weekly$Week, pred_delay = forecast_arma$mean)
+ann_sarma_dat <- data.frame(Week = data_2024_weekly$Week, pred_delay = forecast_annual$mean)
+biann_sarma_dat <- data.frame(Week = data_2024_weekly$Week, pred_delay = forecast_biannual$mean)
+ci_x <- c(data_2024_weekly$Week, rev(data_2024_weekly$Week))
+arma_ci_80_y <- c(forecast_arma$lower[, 1], rev(forecast_arma$upper[, 1]))
+arma_ci_95_y <- c(forecast_arma$lower[, 2], rev(forecast_arma$upper[, 2]))
+ann_sarma_ci_80_y <- c(forecast_annual$lower[, 1], rev(forecast_annual$upper[, 1]))
+ann_sarma_ci_95_y <- c(forecast_annual$lower[, 2], rev(forecast_annual$upper[, 2]))
+biann_sarma_ci_80_y <- c(forecast_biannual$lower[, 1], rev(forecast_biannual$upper[, 1]))
+biann_sarma_ci_95_y <- c(forecast_biannual$lower[, 2], rev(forecast_biannual$upper[, 2]))
+
+p <- plot_ly(data = full_dat_weekly, x = ~Week, y = ~n_delay, type = 'scatter', mode = 'lines', name = 'Actual', line = list(color='rgb(0,0,0)')) %>%
+  add_trace(data = arma_dat, x = ~ Week, y = ~pred_delay, mode = 'lines', name = 'ARMA', line = list(color='rgb(225,0,0)', visible = FALSE)) %>%
+  add_polygons(x = ci_x, y = arma_ci_80_y, fillcolor = 'rgba(255,0,0,.3)', line = list(color = 'rgba(255,0,0,.3)'), name = '80% CI', visible = FALSE) %>%
+  add_polygons(x = ci_x, y = arma_ci_95_y, fillcolor = 'rgba(255,0,0,.1)', line = list(color = 'rgba(255,0,0,.1)'), name = '95% CI', visible = FALSE) %>%
+  add_trace(data = ann_sarma_dat, x = ~ Week, y = ~pred_delay, mode = 'lines', name = 'Annual', line = list(color='rgb(0,255,0)', visible = FALSE)) %>%
+  add_polygons(x = ci_x, y = ann_sarma_ci_80_y, fillcolor = 'rgba(0,255,0,.3)', line = list(color = 'rgba(0,255,0,.3)'), name = '80% CI', visible = FALSE) %>%
+  add_polygons(x = ci_x, y = ann_sarma_ci_95_y, fillcolor = 'rgba(0,255,0,.1)', line = list(color = 'rgba(0,255,0,.1)'), name = '95% CI', visible = FALSE) %>%
+  add_trace(data = biann_sarma_dat, x = ~ Week, y = ~pred_delay, mode = 'lines', name = 'Biannual', line = list(color='rgb(0,0,255)', visible = FALSE)) %>%
+  add_polygons(x = ci_x, y = biann_sarma_ci_80_y, fillcolor = 'rgba(0,0,255,.3)', line = list(color = 'rgba(0,0,255,.3)'), name = '80% CI', visible = FALSE) %>%
+  add_polygons(x = ci_x, y = biann_sarma_ci_95_y, fillcolor = 'rgba(0,0,255,.1)', line = list(color = 'rgba(0,0,255,.1)'), name = '95% CI', visible = FALSE)
+
+p <- p %>%
+  layout(updatemenus = updatemenus, xaxis = list(title='Date'), yaxis = list(title='Number of Delays', range = c(10000, 160000)), title = 'Overview of All 3 Models')
+
+p
+```
+
+The ARMA(1,1) model forecasts flight delays with a stable point estimate around 90,000 delays, showing slight gradual decreases over time.  Over time, the forecast remains relatively consistent, but its uncertainty increases, reflected in wider intervals as the forecast extends. The model provides reasonable predictions, though with growing uncertainty as the year progresses.  Both the annual and biannual models are quite similar.  Generally the biannual model follows the trend of the actual data closer, but both underpredict the variability, annual much more than biannual.  Like the ARMA, uncertainty in both also increases over time.  Overall, while all of the models provide reasonable predictions, they all suggest that long-term forecasts may be less reliable as they all increase in uncertainty over time.
+
+### 5.2 Model Performance
+
+To compare the performance of our models on forecasting future patterns in weekly flight delays, we compare their mean absolute percentage errors* (MAPE).
+
+(*See appendix for more information on MAPE)
+
+```{r, echo=FALSE}
+actual_values <- data_2024_ts
+# ARMA(1,1)
+forecast_values <- forecast_arma$mean  # Predicted values
+mape_arma <- mean(abs((actual_values - forecast_values) / actual_values)) * 100
+# cat("ARMA(1,1) MAPE:", mape_arma, "%\n")
+
+#SARMA(52)
+forecast_values <- forecast_annual$mean
+mape_sarma_annual <- mean(abs((actual_values - forecast_values) / actual_values)) * 100
+# cat("Annual SARMA MAPE:", mape_sarma_annual, "%\n")
+
+#SARMA(26)
+forecast_values <- forecast_biannual$mean  # Predicted values
+mape_sarma_biannual <- mean(abs((actual_values - forecast_values) / actual_values)) * 100
+# cat("Biannual SARMA MAPE:", mape_sarma_biannual, "%\n")
+
+results <- data.frame(
+  Model = c("ARMA(1,1)", "Annual SARMA(52)", "Biannual SARMA(26)"),
+  MAPE = c(mape_arma, mape_sarma_annual, mape_sarma_biannual)
+)
+
+kable(results, col.names = c("Model", "MAPE (%)"), caption = "Model MAPE Comparison")
+```
+
+The SARMA models (both annual and biannual) outperform the ARMA(1,1) model in terms of prediction accuracy. The biannual SARMA model provides the most accurate forecast, with the lowest MAPE of approximately 19.2%, meaning that, on average, the predictions are off by about 19.2%.
+
+This suggests that incorporating seasonality into flight delay predictions improves model performance, with the biannual seasonality slightly outperforming the annual seasonality.
+
+---
+
+# 6. Conclusion
+
+One of the goals of this project was to identify trends and patterns within the distribution of flight delays over time. To that end, we observed that flight delays are concentrated in the winter and summer months. Time series decomposition confirmed this, as it was found that the seasonal component peaks in summer and winter. We also assessed the seasonality of flight delays, which the decomposition also showed evidence of.  In addition, the superior performance of the SARMA models that accounted for seasonal variation over the ARMA in terms of both AIC and MAPE, further confirms the presence of seasonal variation within the data.  Concerning our third goal, the performance of the models, none are particularly notable.  The ARMA performed worse than the SARMA models, both of which underestimated the variability of the real data. 
+
+In undertaking this project, we have shown without a doubt that flight delays are influenced by time, and that they are concentrated in summer and winter.  While we have proven that models predicting delays are possible, our models underperformed and were unable to fully capture the variability within the data.  One point of focus future researchers may want to consider are superior models that are better at accounting for the variation within flight delays our models could not.  Such research would assist both passengers and airlines in scheduling and planning by enabling them to be prepared for possible delays.  Additionally, while we have demonstrated when flight delays tend to occur, we make no substantive claims on why they occur.  Investigating the underlying causes of delays will no doubt be of benefit in reducing the number of delays.
+
+---
+
+# 7. Scholarship
+
+### 7.1 Comparison to Past Projects
+While no group seemed to directly analyze data similar to ours, we began to look at projects analyzing data that we thought would have a similar seasonal trend as ours, such as the "Power Consumption"[5] and "Wind Power Production" [6] from STATS 531 Winter 2024, to see how they approached data that might have similar highs and lows in a biannual or annual setting. Both projects focused on choosing the right orders for the seasonal component, comparing the AIC score for models with various combinations of p and q values. However, along with the correct orders, our final models were between annual and biannual models. We considered AIC score along with forecasting accuracy to carry out our model selection process, selecting the biannual model as our final model. Another major difference compared to previous projects such as Wind Power Production[6] is that we were able to compare the forecasted values and the actual values since we left out the most recent data from model building. This allowed us to use a different metric to check for the liability of our final model.
+
+A number of the plots and methodology are derived from the STATS 531 course notes of Edward Ionides [4]. Even if source code was not directly taken from these notes, they have influenced the approach and techniques used in this project.
+
+---
+
+# 8. Appendix
+
+### 8.1 Data Cleaning
+The Bureau of Transportation Statistics stores the Reporting Carrier On-Time Performance data into separate .csv files for each month of each year.  Each row  in the data corresponds to a single flight.  The individual datasets from the years 2019 to 2023 were compiled.  All variables except the date (FlightDate), departure delay in minutes (DepDelay), arrival delay in minutes (ArrDelay), and if a flight was cancelled or not (Cancelled) were dropped.   Then the total number of departure delays, arrival delays, and flight cancellations were aggregated by date.  Total delays for each day was computed by summing its respective departure delays and arrival delays.  Note that when a flight was cancelled both DepDelay and ArrDelay were marked NA.  To account for this, flight cancellations were not counted as delays of either type, and simply ignored.  A similar process was performed on data from 2024 up to November (December data has not been released yet) to create the test data, although flight cancellations were omitted.
+
+### 8.2 Ljung-Box Test
+The Ljung-Box test [7] is a statistical test used to check whether there is significant autocorrelation in a time series. It tests the null hypothesis that the residuals (or errors) from a model are independently distributed, meaning they do not exhibit significant autocorrelation.
+
+The Ljung-Box test may be defined as:
+
+- $H_0$: The data is not correlated.
+- $H_a$: The data is correlated.
+
+The test statistic, $Q$ is calculated as
+$$
+Q = n(n+2) \sum_{k=1}^h \frac{\hat{\rho}_k^2}{n-k}
+$$
+
+Where:
+
+- $n$ is the sample size.
+- $\hat{\rho}_k$ is the sample autocorrelation at lag $k$.
+- $h$ is the number of lags being tested.
+
+If the value of $Q$ exceeds a critical value from the chi-squared distribution, we reject the null hypothesis, suggesting that there is significant autocorrelation in the residuals. If not, we fail to reject the null hypothesis, indicating that the residuals are likely independent.
+
+### 8.3 Shapiro-Wilk Test
+The Shapiro-Wilk test [8] is a statistical test used to assess whether a given sample comes from a normally distributed population. It is especially useful for small to moderate sample sizes, as it has high power for detecting deviations from normality.
+
+The Shapiro-Wilk test may be defined as:
+
+- $H_0$: The data follows a normal distribution.
+- $H_a$: The data do not follow a normal distribution.
+
+The test statistic, $W$ is calculated as
+$$
+W = \frac{(\sum_{i=1}^n a_ix_{(i)})^2}{\sum_{i=1}^n (x_i - \bar{x})^2}
+$$
+
+Where:
+
+- $x_{(i)}$ is the *i*-th order statistics.
+- $\bar{x}$ is the sample mean.
+- $a_i$ are constants determined by the sample size, given by $(a_1, ..., a_n) = \frac{m^TV^{-1}}{||V^{-1}m||}$
+
+The value of $W$ ranges between 0 and 1. A value of $W$ close to 1 indicates that the sample is likely from a normal distribution, while values significantly less than 1 suggest a departure from normality.
+
+To determine whether to reject the null hypothesis, $W$ is compared to critical values from the Shapiro-Wilk distribution table, or through examining the p-value. If the p-value is smaller than a chosen significance level (usually 0.05), we reject the null hypothesis, indicating the data are not normally distributed. Otherwise, we fail to reject the null hypothesis, implying the data may follow a normal distribution.
+
+### 8.4 Mean Absolute Percentage Error (MAPE)
+The mean absolute percentage error (MAPE) [9] is a measure of prediction accuracy in forecasting, where lower values indicate better predictive accuracy.
+
+The MAPE is calculated as
+$$
+MAPE = 100 \frac{1}{n} \sum^{n}_{t=1} |\frac{A_t = F_t}{A_t}|
+$$
+
+Where:
+
+- $n$ is the number of predictions
+- $A_t$ is the actual value at time $t$
+- $F_t$ is the predicted value at time $t$
+
+---
+
+**References:**
+
+1. Newsweek - [The US Airports That Had the Most Delayed Flights in 2024] (https://www.newsweek.com/american-us-airports-most-delayed-flights-cancellations-survey-2014677)
+2. Airlines for America - [U.S. Passenger Carrier Delay Costs](https://www.airlines.org/dataset/u-s-passenger-carrier-delay-costs/)
+3. Bureau of Transport Statistics [Carrier On-Time Performance](https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ)
+4. STATS 531 Class Notes Winter 2025 - [Course Website](https://ionides.github.io/531w25/#class-notes)
+5. STATS 531 Winter 2024 - [Project 6 Report](https://ionides.github.io/531w24/midterm_project/project06/blinded.html)
+6. STATS 531 Winter 2024 - [Project 11 Source Code](https://github.com/ionides/531w24/blob/main/midterm_project/project11/blinded.Rmd)
+7. Wikipedia - [Ljung-Box Test](https://en.wikipedia.org/wiki/Ljung%E2%80%93Box_test)
+8. Wikipedia - [Shapiro-Wilk Test](https://en.wikipedia.org/wiki/Shapiro%E2%80%93Wilk_test)
+9. Wikipedia - [Mean Absolute Percentage Error (MAPE)](https://en.wikipedia.org/wiki/Mean_absolute_percentage_error)

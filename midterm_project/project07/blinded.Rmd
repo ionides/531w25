@@ -1,0 +1,381 @@
+---
+title: "Forecasting Daily Gold Prices Using GARCH and ARIMA Models"
+subtitle: "STATS 531 Midterm Project"
+date: "Feburary 21, 2025"
+output:
+  html_document:     
+    toc: true
+    toc_float: true  
+    toc_depth: 4  
+---
+
+# Introduction
+
+Gold prices are influenced by various economic factors, including inflation, geopolitical events, and currency fluctuations, making accurate forecasting crucial for investors and policymakers. Time series models such as the **Autoregressive Integrated Moving Average (ARIMA)** and **Generalized Autoregressive Conditional Heteroskedasticity (GARCH)** are widely used for financial forecasting due to their ability to capture trend, seasonality, and volatility in price movements.
+
+This project uses historical daily gold price data from 2015 to 2021, sourced from [Kaggle](https://www.kaggle.com/datasets/nisargchodavadiya/daily-gold-price-20152021-time-series), to develop predictive models for future price movements. This datset includes key attributes such as **Open, High, Low, Close Price, Volume, and Percentage Change (Chg.)**. Note that the Open, High, Low and Close Price are in Indian Rupees (₹) per 10 grams of gold.
+
+### Contextualizing This Project Within Past 531 Projects
+From the past midterm projects and peer reviews, such as those referenced, we gain valuable insights into how ARIMA and GARCH models have been applied to different datasets and forecasting tasks. Our work builds on these foundations but differentiates itself by focusing specifically on gold price forecasting while comparing ARIMA and GARCH in terms of both price prediction and volatility modeling. We have also learned the importance of evaluating residual diagnostics, ensuring that model assumptions hold before forecasting. Many projects have also emphasized the need for context-aware forecasting, recognizing that external events (e.g., geopolitical factors) can significantly impact financial time series. Reviewing multiple past projects as a team has helped us refine our methodology and ensure that our conclusions are robust and well-grounded.
+
+# Data Preprocess
+
+In the preprocessing step, we **filtered the data to include only records from January 3, 2022, onwards**, allowing us to focus on recent trends. This subset contains 731 observations and it will be used for time series analysis and forecasting. Moreover, the last 3 months' data in this subset serves as a "test set" to testify our forecast. Thus, we will have 47 observations in this "test set".
+
+```{r, echo=FALSE}
+library(forecast)
+library(ggplot2)
+library(dplyr)
+library(kableExtra)
+library(lubridate)
+library(zoo)
+library(fGarch, quietly = TRUE)
+
+data <- read.csv("/Users/cathy/Desktop/Gold\ Price.csv", header = TRUE)
+data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
+subset_data <- subset(data, Date >= as.Date("2022-01-03"))
+head(subset_data)
+# write.csv(subset_data, "/Users/cathy/Desktop/subset_gold_price.csv")
+# cutoff_date <- as.Date("2024-09-02")
+# test_data <- subset(subset_data, Date >= cutoff_date)
+# subset_data <- subset(subset_data, Date < cutoff_date) 
+```
+
+# EDA
+
+## 1. Summary Statistics
+
+```{r, echo=FALSE}
+subset_data <- subset(data, Date >= as.Date("2022-01-03"))
+#subset_data <- read.csv("/Users/cathy/Desktop/subset_gold_price.csv")
+summary(subset_data)
+```
+
+The gold price dataset spans from **January 3, 2022, to November 6, 2024**. The price ranges between **47,471 and 79,257**, with a mean of **59,441**, indicating a general increase over time. The **"Chg." (percentage change)** variable shows fluctuations from **-5.5% to 2.97%**, suggesting volatility in gold prices.
+
+## 2. Histogram and Density Plot
+
+```{r, echo=FALSE}
+ggplot(subset_data, aes(x = Price)) + 
+  geom_histogram(binwidth = 500, fill = "blue", alpha = 0.6, color = "black") + 
+  labs(title = "Histogram of Gold Prices", x = "Gold Price", y = "Frequency")
+
+ggplot(subset_data, aes(x = Price)) +
+  geom_density(fill = "red", alpha = 0.4) +
+  labs(title = "Density Plot of Gold Prices", x = "Gold Price", y = "Density")
+```
+
+The histogram shows a **multi-modal distribution**, indicating that gold prices have shifted significantly over different periods. The density plot confirms the presence of **multiple peaks**, reinforcing the idea that gold prices have followed different trends over time. There are several peaks in both plots, which potentially correspond to different market regimes or events affecting gold prices.
+
+## 3. Seasonal and Trend Decomposition (STL)
+
+```{r, echo=FALSE}
+#subset_data <- subset(data, Date >= as.Date("2022-01-03"))
+subset_data$Price = 1 + log(subset_data$Price) #log-transform
+gold_ts <- ts(subset_data$Price, start = c(2022, 1), frequency = 365) 
+stl_decomp <- stl(gold_ts, s.window = "periodic")
+plot(stl_decomp, main = "STL Decomposition of Daily Gold Prices")
+```
+
+The **trend component** shows a general **downward movement**, with a sharp decline in early 2023, followed by stabilization. The **seasonal component** exhibits periodic fluctuations, indicating that gold prices experience regular seasonal patterns. The **remainder component** highlights volatility, suggesting that external shocks play a role in price movements.
+
+# Model Selection: ARIMA
+
+### Model Formulation of ARIMA(p, d, q)
+
+$$ ARIMA(p, d, q) $$
+
+where:
+
+-   $p$ is the number of **autoregressive (AR)** terms.
+-   $d$ is the degree of **differencing** required to make the series stationary.
+-   $q$ is the number of **moving average (MA)** terms.
+
+The general form of the **ARIMA model** can be written as:
+
+$$ \phi(B) (1 - B)^d Y_t = \theta(B) \epsilon_t $$
+
+where:
+
+-   $B$ is the **backward shift operator** such that $B Y_t = Y_{t-1}$.
+-   $\phi(B) = 1 - \phi_1 B - \phi_2 B^2 - \dots - \phi_p B^p$ represents the **AR polynomial**.
+-   $(1 - B)^d$ represents the **differencing operation**.
+-   $\theta(B) = 1 + \theta_1 B + \theta_2 B^2 + \dots + \theta_q B^q$ represents the **MA polynomial**.
+-   $\epsilon_t$ is a **white noise process** with $E[\epsilon_t] = 0$ and $Var(\epsilon_t) = \sigma^2$.
+
+### Model Assumptions
+
+For the ARIMA model to be valid, the following **assumptions** must hold:
+
+1.  The time series should be **stationary** (achieved via differencing if needed).
+2.  The residuals $\epsilon_t$ should be **independent and identically distributed (i.i.d.)**.
+3.  The model parameters $\phi$ and $\theta$ should satisfy the **invertibility and stationarity conditions**.
+
+### AIC Table
+
+```{r, echo=FALSE}
+cutoff_date <- as.Date("2024-09-02")
+test_data <- subset(subset_data, Date >= cutoff_date)
+subset_data <- subset(subset_data, Date < cutoff_date) 
+
+data <- ts(subset_data$Price, start = c(2022, 1), frequency = 365)
+
+p_values <- 0:8
+d_values <- 1    
+q_values <- 0:8
+
+aic_matrix <- matrix(NA, nrow = length(p_values), ncol = length(q_values),
+                     dimnames = list(paste0("AR", p_values), paste0("MA", q_values)))
+
+for (p in p_values) {
+  for (q in q_values) {
+    try({
+      model <- Arima(data, order = c(p, d_values, q), method = "ML")
+      aic_matrix[p + 1, q + 1] <- model$aic
+    }, silent = TRUE)
+  }
+}
+
+aic_df <- as.data.frame(aic_matrix)
+
+kable(aic_df, format = "html", caption = "AIC Scores for Different ARIMA Models") %>%
+  kable_styling(full_width = FALSE)
+```
+
+The Akaike Information Criterion (AIC) is used to compare models, with lower values indicating a better fit while balancing model complexity. **ARIMA(3,1,4)** should be selected as the final model since it has the relative low AIC, indicating the best balance of goodness-of-fit and complexity.
+
+```{r, echo=FALSE}
+arima_model <- Arima(subset_data$Price, order = c(3,1,4), method = "ML")
+summary(arima_model)
+```
+
+### Wilks' Likelihood Ratio Test for ARIMA(3,1,4) Model
+
+We perform a Likelihood Ratio Test to compare the ARIMA(3, 1, 4) with an ARIMA(0,1,0) model to evaluates whether the additional parameters in the full model significantly improve the fit.
+
+```{r, echo=FALSE}
+arima0 = Arima(subset_data$Price, order = c(0,1,0), method = "ML")
+
+l1 <- logLik(arima_model)
+l0 <- logLik(arima0)
+
+chi_stat = 2 * (l1 - l0)
+p_value = pchisq(chi_stat, df = 1, lower.tail = FALSE)
+
+cat("Chi square statistic: ", chi_stat, "\n")
+cat("p value: ", p_value, "\n")
+```
+
+The chi-square statistic = 30.10 and p-value = 4.1e-08, which is highly significant (p \< 0.05).
+
+This strongly rejects the null hypothesis, indicating that the full ARIMA model provides a significantly better fit than the simple random walk model.Therefore, the ARIMA model captures meaningful patterns in the data and is preferable for forecasting gold prices.
+
+# Model Selection: GARCH
+
+## Model Assumptions
+
+Garch Model(Generalized Autoregressive Conditional Heteroskedasticity) is commonly used in financial time series modeling. For a log-return time series $r_t$, $a_t = r_t - \mu_t$ is the innovation sequence, where $\mu_t$ is the mean value. {a_t} fits GARCH(m,s) model, if $a_t$ satisfies:
+
+```{=tex}
+\begin{align}
+a_t & = \sigma_t\epsilon_t \\
+\sigma_t^2 & = \alpha_0 + \sum_{i = 1}^{m}\alpha_i a_{t-i}^2 + \sum_{j = 1}^s \beta_j \sigma_{t-j}^2
+\end{align}
+```
+$\epsilon_t \quad i.i.d. N(0,1)$ We choose ARIMA(3,1,4) as the mean model. Since GARCH(1,1) is most used among recent studies, we directly use residuals of ARIMA(3,1,4) to fit GARCH(1,1) model.
+
+```{r, echo=FALSE}
+residuals <- residuals(arima_model)
+plot(residuals)
+```
+
+```{r, echo=FALSE}
+# fit  GARCH(1,1) model
+mod1 <- garchFit(formula = ~ 1 + garch(1, 1), data = residuals, trace = FALSE)
+summary(mod1)
+```
+
+From the GARCH model fitting results, the normality test for the standardized residuals fails. However, the residuals no longer exhibit autocorrelation or ARCH effects. The formula is as follows:
+
+```{=tex}
+\begin{align}
+r_t & = a_t,\quad a_t = \sigma_t \epsilon_t, \quad \epsilon_t i.i.d. \sim N(0,1) \\
+\sigma_t^2 & = 0.09131 a_{t-1}^2 + 0.8022 \sigma_{t-1}^2
+\end{align}
+```
+```{r, echo=FALSE}
+plot(mod1, which=13)
+vola <- volatility(mod1)
+plot(ts(vola,start = c(2022,1),frequency = 260),
+     xlab="year", ylab="volatility")
+```
+
+In early 2020 and March 2024, gold prices fluctuated significantly.
+
+At the same time, by observing the QQ plot, we can see that the standardized residuals do not follow a normal distribution. Therefore, we attempt to fit a conditionally t-distribution and a conditionally biased t-distribution.
+
+```{r, echo=FALSE}
+mod2 <- garchFit(formula = ~ 1 + garch(1, 1), data = residuals,cond.dist = "std", trace = FALSE)
+summary(mod2)
+plot(mod2,which = 13)
+```
+
+```{r, echo=FALSE}
+mod3 <- garchFit(formula = ~ 1 + garch(1, 1), data = residuals,cond.dist = "sstd", trace = FALSE)
+summary(mod3)
+plot(mod3,which = 13)
+```
+
+By examining the fitting results, we can see that the AIC is the lowest when fitting the conditional t-distribution, and the standardized residuals follow a normal distribution. Therefore, we choose this model as the final model. The model's equation can be written as follows:
+
+```{=tex}
+\begin{align}
+r_t & = a_t,\quad a_t = \sigma_t \epsilon_t, \quad \epsilon_t i.i.d. \sim t^*(4.07) \\
+\sigma_t^2 & = 0.04 a_{t-1}^2 + 0.9211 \sigma_{t-1}^2
+\end{align}
+```
+# Model Diagnosis
+
+## ARIMA Diagnosis
+
+### Inverse Roots of AR and MA Polynomials
+
+```{r, echo=FALSE}
+arima_model <- Arima(subset_data$Price, order = c(3,1,4), method = "ML")
+ggtsdisplay(arima_model$residuals, main="Inverse Roots of ARMA(3,4)")
+```
+
+The top panel shows residuals, which appear randomly distributed without clear patterns, suggesting **no strong autocorrelation remains.**\
+The ACF (left bottom panel) shows **most lags are within the blue confidence bounds, confirming residuals are uncorrelated.**\
+The PACF (right bottom panel) also shows **no significant spikes, indicating the model captures the data well.**\
+Overall, this suggests that the ARIMA(3,1,4) model has adequately removed autocorrelation from the series.
+
+```{r, echo=FALSE}
+ar_roots <- polyroot(c(1, -arima_model$model$phi))  
+ma_roots <- polyroot(c(1, arima_model$model$theta))  
+
+ar_inv_roots <- 1 / Mod(ar_roots)
+ma_inv_roots <- 1 / Mod(ma_roots)
+
+roots_df <- data.frame(
+  Real = c(Re(ar_inv_roots), Re(ma_inv_roots)),
+  Imaginary = c(Im(ar_inv_roots), Im(ma_inv_roots)),
+  Type = rep(c("AR", "MA"), times = c(length(ar_inv_roots), length(ma_inv_roots)))
+)
+
+ggplot(roots_df, aes(x = Real, y = Imaginary, color = Type)) +
+  geom_point(size = 4) +
+  ggtitle("Inverse Roots of ARIMA(3,1,4)") +
+  xlab("Real") + ylab("Imaginary") +
+  xlim(-1, 1) + ylim(-1, 1) +
+  annotate("path", x = cos(seq(0, 2*pi, length.out = 100)), 
+           y = sin(seq(0, 2*pi, length.out = 100)), 
+           color = "black", linetype = "solid") +  
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+```
+
+This **unit circle plot** checks for model stationarity and invertibility.\
+**All AR (red) and MA (blue) roots are inside the unit circle**, confirming that the model is stable and invertible.\
+No roots lie on or outside the unit boundary, ensuring valid forecasting capability.
+
+### Residual Diagnostics
+
+```{r, echo=FALSE}
+checkresiduals(arima_model)
+```
+
+1.  The **Ljung-Box test** is used to check if residuals are independent.\
+    The **p-value = 0.1974 is greater than 0.05**, meaning we **fail to reject the null hypothesis that residuals are white noise.**\
+    This further confirms that the model has captured the time series structure well, and no significant autocorrelation remains.
+
+2.  The **top panel** shows residuals fluctuating randomly, indicating **no strong pattern** remains.
+
+    The **ACF plot (bottom left)** shows residuals are **mostly uncorrelated**, meaning the model sufficiently explains the data.
+
+    The **histogram (bottom right)** approximates a **normal distribution**, supporting the assumption of normally distributed residuals.
+
+    These indicate that the ARIMA(3,1,4) model fits well and that its residuals resemble **white noise**, making it a good candidate for forecasting.
+
+## GARCH Diagnosis
+
+```{r, echo=FALSE}
+std_res = residuals(mod2, standardize = TRUE)
+plot(std_res, type = "l", main = "Standardized Residuals", col = "red")
+```
+
+```{R, echo=FALSE}
+plot(mod2, which=3)
+```
+
+From the summary of the previous model, we can see that the standardized residuals approximately follow a normal distribution. The Ljung-Box test indicates that the model has passed the white noise test. Additionally, by examining the volatility fit, we find that the overall fit is good, except for a few outliers (early 2020 and mid-2024).
+
+# Forecasting
+
+## ARIMA
+
+```{r, echo=FALSE}
+ts_data <- ts(subset_data$Price, start = c(2022, 1), frequency = 365)
+ts_train <- ts(subset_data$Price, start = c(2022, 1), frequency = 365)
+
+arima_model <- Arima(ts_data, order = c(3,1,4), method = "ML")
+
+forecast_arima <- forecast(arima_model, h = 47)
+
+autoplot(forecast_arima) +
+  autolayer(ts_data, series = "Historical Data", color = "black") +
+  ggtitle("Forecast from ARIMA(3,1,4)") +
+  xlab("Year") + ylab("Gold Price") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+## GARCH
+
+```{r, echo=FALSE}
+ts_test <- ts(test_data$Price, start = end(ts_train) + c(0, 1), frequency = 365)
+forecast_results <- predict(mod2, n.ahead = length(ts_test))
+
+predicted_vol <- forecast_results$standardDeviation
+train_volatility <- volatility(mod2)  # Extracts conditional volatility from training data
+predicted_vol_aligned <- predicted_vol[-1]
+
+time_index_test <- time(ts_test)[-1]
+time_index_train <- time(ts_train)
+
+plot(time_index_train, train_volatility, type = "l", col = "black", lwd = 2,
+     ylim = range(c(train_volatility, predicted_vol_aligned)),
+     xlab = "Time", ylab = "Volatility",
+     main = "Forecast from GARCH")
+
+lines(time_index_test, predicted_vol_aligned, col = "red", lwd = 2)
+legend("topright", legend = c("Training Set Volatility", "Forecasted Volatility"),
+       col = c("black", "red"), lwd = 2)
+
+```
+
+# Conclusion
+
+The **ARIMA(3,1,4) model** effectively captures the **short-term trends** in gold prices, with forecasts aligning with recent movements. Residual diagnostics confirm that the model is **well-fitted**, and stability checks ensure **reliable predictions**. However, it did not account for volatility clustering, leading to potential underestimation of risk during turbulent periods.
+
+**GARCH(1,1)** focused on **modeling volatility**, capturing periods of high and low market uncertainty. While it performed well in forecasting price fluctuations, it required additional transformation to predict actual price levels.
+
+## Limitations& Future Direction
+Our models do not account for **external market factors**, and its long-term forecasting ability is limited. Future improvements could include **ARIMAX and machine learning models** to better capture volatility. A **hybrid ARIMA-GARCH approach** could improve accuracy by leveraging both mean and volatility dynamics for a more comprehensive forecast.
+
+# References
+
+1.  Ionides, E. L. (2022). *Modeling and Analysis of Time Series Data: Chapter 8 - Smoothing in the time and frequency domains.* Retrieved from <https://ionides.github.io/531w22/midterm_project/project22/blinded.html>.
+
+2.  *Past Midterm Project - Project 10.* Retrieved from <https://ionides.github.io/531w24/midterm_project/project10/blinded.html>.
+
+3.  Chodavadiya, N. (2021). *Daily Gold Price (2015-2021) Time Series Dataset.* Retrieved from <https://www.kaggle.com/datasets/nisargchodavadiya/daily-gold-price-20152021-time-series>.
+
+4.  *Past Midterm Project - Project 22.* Retrieved from: [https://ionides.github.io/531w22/midterm_project/project22/blinded.html](https://ionides.github.io/531w22/midterm_project/project22/blinded.html#Diagnosis)
+
+5.  *Past* *Midterm Project - Project 14: ARMA-GARCH Model.* Retrieved from <https://ionides.github.io/531w24/midterm_project/project14/blinded.html#arma-garch-model>.
+
+6.  Peking University. (n.d.). *Financial Time Series - GARCH Model.* Retrieved from <https://www.math.pku.edu.cn/teachers/lidf/course/fts/ftsnotes/html/_ftsnotes/fts-garch.html#garch-garch-model>.
+
+7.   ChatGPT (2025). <https://openai.com/chatgpt>.
