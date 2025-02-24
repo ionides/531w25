@@ -100,7 +100,7 @@ A time series model $X_{0:N}$ is a \myemph{Markov process} model if the conditio
 \begin{flalign}
 \nonumber
 \negListSpace\mbox{[\MP1]} \hspace{10mm}
-f_{X_n|X_{1:n-1}}(x_n\given x_{1:n-1}) &= f_{X_n|X_{n-1}}(x_n\given x_{n-1}). &
+f_{X_n|X_{0:n-1}}(x_n\given x_{0:n-1}) &= f_{X_n|X_{n-1}}(x_n\given x_{n-1}). &
 \end{flalign}
 for all $n\in 1:N$
 \item We may suppose there is an underlying continuous time, $t$, such that $X_n$ occurs at time $t_n$.
