@@ -1,0 +1,24 @@
+
+\color{blue}
+
+**Solution**. 1(A), 2(A), 3(B), 4(B)\
+For part 3, we have in general that
+\begin{equation}
+\var\{U\} = E[\var\{U|V\}] + \var E[U|V].
+\end{equation}
+Such identities hold when everything is conditioned on another variable, so we have
+\begin{equation}
+\var\{U|Z\} = E[\var\{U|V,Z\} | Z] + \var\{ E[U|V,Z] | Z\}.
+\end{equation}
+Setting $U=X_{n+1}$, $V=X_{n}$,  $Z=Y_{1:n}$, we have 
+\begin{equation}
+\var\{X_{n+1}\, |\, X_n,Y_{1:n}\} = E\big[\var\{X_{n+1}\, |\, X_n,Y_{1:n}\} \, \big| \, X_{n} \big] + \var\big\{ E[X_{n+1}|X_{n},Y_{1:n}] \, \big| X_{n} \big\}.
+\end{equation}
+The POMP model structure assumes $X_{n+1}$ and $Y_{1:n}$ are conditionally independent given $X_n$ and so
+\begin{equation}
+\var\{X_{n+1}|_n\} = E[\var\{X_{n+1}|X_n\} | X_{1:n}] + \var\{ E[X_{n+1}|X_{n}]| X_{1:n}\}.
+\end{equation}
+
+
+\color{black}
+
