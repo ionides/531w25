@@ -6,7 +6,7 @@ output:
     toc: yes
 ---
 
-A few days after the midterm projects are submitted, you should expect to receive an email similar to the following. Summary points from past midterm review reports can be found from the [2021](https://ionides.github.io/531w21/midterm_project/), [2022](https://ionides.github.io/531w22/midterm_project/), and [2024](https://ionides.github.io/531w24/midterm_project/) versions of 531. You are welcome to look at these for ideas when writing your reports. Reviews are graded according to a [posted rubric](../rubric_midterm_review.html).
+A few days after the midterm projects are submitted, you should expect to receive an email similar to the following. Summary points from past midterm review reports can be found from the [2021](https://ionides.github.io/531w21/midterm_project/), [2022](https://ionides.github.io/531w22/midterm_project/), and [2024](https://ionides.github.io/531w24/midterm_project/) versions of 531. You are welcome to look at these for ideas when writing your reports.  Some sample reports from previous years are available: [sample 1](sample-mt-peer-review-w24-1.pdf), [sample 2](sample-mt-peer-review-w24-2.pdf), [sample 3](sample-mt-peer-review-w24-3.pdf). Reviews are graded according to a [posted rubric](../rubric_midterm_review.html).
 
 <tt>
 Review assignments for foobar
