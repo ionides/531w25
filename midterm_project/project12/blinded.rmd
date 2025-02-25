@@ -33,7 +33,7 @@ behavior. In this study, we aim to forecast the volatility of the S&P
 500 using a combination of statistical and time series modeling
 techniques, including ARIMA, SARIMA, and GARCH models.
 
-```{r, echo=FALSE}
+```{r include=FALSE}
 library(ggplot2)
 library(dplyr)
 library(tseries)
@@ -623,7 +623,7 @@ for (arma in arma_orders) {
     spec <- ugarchspec(
       mean.model = list(armaOrder = arma),
       variance.model = list(model = "sGARCH", garchOrder = garch),
-      distribution.model = "std"
+      distribution.model = "norm"
     )
     
     fit <- tryCatch(ugarchfit(spec, data = df, solver = "hybrid"), error = function(e) NULL)
@@ -653,7 +653,7 @@ set.seed(123)
 spec_arma_garch <- ugarchspec(
   variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
   mean.model     = list(armaOrder = c(2, 1)),
-  distribution.model = "std"
+  distribution.model = "norm"
 )
 
 fit_arma_garch <- ugarchfit(spec = spec_arma_garch, data = df)

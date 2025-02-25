@@ -68,7 +68,7 @@ where $\hat\theta$ is a point estimate such as an MLE.
 
 \item A model-based \myemph{point forecast} of $y_{N+1:N+h}$ is
 \begin{equation}
-\E\big[Y_{N+1:N+h} \big| Y_{1:N}=y^*_{1:N};\hat\theta big].
+\E\big[Y_{N+1:N+h} \big| Y_{1:N}=y^*_{1:N};\hat\theta \big].
 \end{equation}
 
 \item Point forecasts and probabilistic forecasts have many applications in business and elsewhere.
