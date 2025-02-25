@@ -1,0 +1,539 @@
+---
+title: "Synthetic Market Dynamics: A Predictive Time Series Odyssey"
+author: 
+date: "2025-02-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(data.table)            # Efficient data handling
+library(xts)                   # Time series manipulation
+library(TTR)                   # Smoothing and technical indicators
+library(rugarch)               # GARCH modeling
+library(stochvol)              # Stochastic volatility modeling
+library(forecast)              # ARMA modeling
+library(PerformanceAnalytics)  # Financial time series metrics
+library(xgboost)               # Machine Learning
+library(ggplot2)               # Visualization
+library(brms)                  # Bayesian modeling
+library(changepoint)           # Market regime detection
+library(quantmod)              # For benchmark data (e.g., SPY)
+library(zoo)                   # For rollapply
+library(rBayesianOptimization) # For hyperparameter tuning
+library(MSGARCH)
+library(lubridate)
+library(ADGofTest)
+library(nortest)  
+library(dplyr)
+library(tseries) 
+
+file_path <- '/Users/pratikpatil/Downloads/sorted_trades_chronological.csv'
+df <- fread(file_path)  # fread is faster than read.csv for large files
+setDF(df)               # Convert data.table to data.frame for compatibility
+df$Timestamp <- as.POSIXct(df$Timestamp, format = "%Y-%m-%d %H:%M:%S")
+df <- df %>% arrange(Timestamp)
+```
+# 1. Introduction
+
+This report embarks on an analysis of synthetic trad data, aiming to model time-dependent patters, volatility, and profitability in a controlled yet insightful manner. The primary objective is to explore the dynamics of simulated trade activity, uncovering recurrent trends, assessing risk through volatility modeling, and evaluating the potential for profit or loss based on the data provided. By delving into these aspects, we seek to understand how trading strategies might perform under specific conditions, even if those conditions are artificially constrained. This analysis, though rooted in synthetic data, aims to lay a foundation for broader applications or further investigations into real-world financial scenarios.
+The data under scrutiny comprises simulated trads, each accompanied by timestamps, prices ranging from 0 to 1000, quantities, and trad types—either Buy or Sell. This synthetic dataset provides a structured environment for testing hypothesis and modeling behaviors without the unpredictable noise of actual markets. For instance, the timestamps allow us to track the sequential nature of trades, while the prices and quantities offer a basis for calculating profitability and volatility. However, it’s crucial to recognize the data’s synthetic nature, meaning it’s generated rather than drawn from real financial exchanges, which shapes both its strengths and its limitations.
+Speaking of limitations, the prices in this dataset are artificially bounded between 0 and 1000, a constraint that simplifies analysis but deviates from the unbounded fluctuations seen in real markets. Additionally, the trade activity lacks real-world seasonality—the cyclical patters driven by economic events, holidays, or market hours that typically influence trading. These factors mean that while the analysis can reveal time-dependent trends and volatility characteristics, its findings may not fully mirror real-world outcomes. Nevertheless, the controlled setting of synthetic data enables a focused exploration of trade dynamics, free from external variables that might obscure underlying patters. In the following sections, we will outline the methodologies employed, present the findings from our analysis, and discuss their implications.
+
+
+
+```{r timecalc_trades, include=TRUE}
+time_diffs <- diff(df$Timestamp)  # Differences in seconds
+avg_time_between_trades <- mean(as.numeric(time_diffs)) / 60  # Convert to minutes
+cat("1. Average time between trades:", round(avg_time_between_trades, 2), "minutes\n")
+
+df$Date <- as.Date(df$Timestamp)
+unique_days <- length(unique(df$Date))
+cat("2. Number of unique days with trades:", unique_days, "\n")
+
+trades_per_day <- df %>% group_by(Date) %>% summarise(count = n())
+avg_trades_per_day <- mean(trades_per_day$count)
+cat("3. Average number of trades per day:", round(avg_trades_per_day, 2), "\n")
+
+df$Week <- floor_date(df$Timestamp, "week")
+trades_per_week <- df %>% group_by(Week) %>% summarise(count = n())
+avg_trades_per_week <- mean(trades_per_week$count)
+cat("4. Average number of trades per week:", round(avg_trades_per_week, 2), "\n")
+
+df$Month <- floor_date(df$Timestamp, "month")
+trades_per_month <- df %>% group_by(Month) %>% summarise(count = n())
+avg_trades_per_month <- mean(trades_per_month$count)
+cat("5. Average number of trades per month:", round(avg_trades_per_month, 2), "\n")
+
+aggregate_trades <- function(df, bin_minutes) {
+  df_xts <- xts(rep(1, nrow(df)), order.by = df$Timestamp)
+  colnames(df_xts) <- "TradeCount"  # Assign column name to dummy variable
+  start_time <- min(index(df_xts))
+  end_time <- max(index(df_xts))
+  bin_index <- seq(start_time, end_time, by = paste(bin_minutes, "mins"))
+  if (end_time > tail(bin_index, 1)) {
+    bin_index <- c(bin_index, tail(bin_index, 1) + minutes(bin_minutes))
+  }
+  intervals <- findInterval(index(df_xts), bin_index)
+  all_intervals <- 1:(length(bin_index) - 1)
+  trade_counts <- table(factor(intervals, levels = all_intervals))
+  trade_bins <- xts(as.numeric(trade_counts), order.by = bin_index[-length(bin_index)])
+  return(list(total_trades = sum(trade_bins), num_bins = length(trade_bins)))
+}
+
+bin_minutes <- 30
+result <- aggregate_trades(df, bin_minutes)
+cat("6. Aggregating to", bin_minutes, "-minute bins yields", result$num_bins, 
+    "data points with a total of", result$total_trades, "trades.\n")
+
+buy_trades <- df %>% filter(TradeType == "Buy")
+sell_trades <- df %>% filter(TradeType == "Sell")
+avg_buy_price <- mean(buy_trades$Price)
+lowest_buy_price <- min(buy_trades$Price)
+highest_buy_price <- max(buy_trades$Price)
+avg_sell_price <- mean(sell_trades$Price)
+lowest_sell_price <- min(sell_trades$Price)
+highest_sell_price <- max(sell_trades$Price)
+cat("\n7. Buy/Sell Price Statistics:\n")
+cat("   Average Buy Price:", round(avg_buy_price, 2), "\n")
+cat("   Lowest Buy Price:", round(lowest_buy_price, 2), "\n")
+cat("   Highest Buy Price:", round(highest_buy_price, 2), "\n")
+cat("   Average Sell Price:", round(avg_sell_price, 2), "\n")
+cat("   Lowest Sell Price:", round(lowest_sell_price, 2), "\n")
+cat("   Highest Sell Price:", round(highest_sell_price, 2), "\n")
+```
+
+```{r Profi_Loss, include=TRUE}
+# Reset indices after sorting to ensure exact pairing
+buy_trades <- df %>% filter(TradeType == "Buy") %>% 
+  arrange(Timestamp) %>% 
+  mutate(row_id = row_number()) %>% 
+  select(-row_id)
+sell_trades <- df %>% filter(TradeType == "Sell") %>% 
+  arrange(Timestamp) %>% 
+  mutate(row_id = row_number()) %>% 
+  select(-row_id)
+
+n <- min(nrow(buy_trades), nrow(sell_trades))
+profit_loss <- (sell_trades$Price[1:n] - buy_trades$Price[1:n]) * buy_trades$Quantity[1:n]
+trade_durations <- as.numeric(difftime(sell_trades$Timestamp[1:n], buy_trades$Timestamp[1:n], units = "mins"))
+total_profit_loss <- sum(profit_loss)
+avg_trade_duration <- mean(trade_durations)
+
+cat("\n8. Profit/Loss Calculation:\n")
+cat("   Total Profit/Loss:", round(total_profit_loss, 2), "\n")
+if (total_profit_loss > 0) {
+  cat("   The trades resulted in a net profit.\n")
+} else if (total_profit_loss < 0) {
+  cat("   The trades resulted in a net loss.\n")
+} else {
+  cat("   The trades broke even.\n")
+}
+cat("   Average Trade Duration:", round(avg_trade_duration, 2), "minutes\n")
+```
+
+# 2. Trade activity Analysis
+The synthetic trad data, despite its limitations, provides a rich ground for analysis. The frequency of trads is evident from the average time between trads, which is 0.11 minutes, with activity spanning over 366 unique days. The average number of trads per day reaches 13661.2, with 94339.62 trads per week, and an impressive 416666.7 per month, indicating a high volume of trading. When aggregating the data into 30-minute bins, we get 17568 data pints, representing a total of 5 million trads. 
+Buy prices average at 500, with a lowest of 0 and a highest of 1000. Sell prices mirror this, also averaging at 500, with the same lowest and highest values of 0 and 1000. 
+The total profit/loss stands at 301181211, showing a net profit. The average trade duration is 167.44 minutes, offering insight into the trading strategies’ effectiveness in this simulated market.
+
+
+```{r VaR/CVaR, include=TRUE}
+df_xts <- xts(df$Price, order.by = df$Timestamp)
+colnames(df_xts) <- "Price"  # Assign column name
+daily_prices <- period.apply(df_xts, endpoints(df_xts, "days"), mean)
+daily_returns <- ROC(daily_prices, type = "discrete")
+daily_returns <- daily_returns[!is.na(daily_returns)]
+sorted_returns <- sort(daily_returns)
+confidence_level <- 0.95
+var_95 <- quantile(sorted_returns, 1 - confidence_level)
+cvar_95 <- mean(sorted_returns[sorted_returns <= var_95])
+cat("\nRisk Metrics (VaR/CVaR):\n")
+cat("   Value at Risk (VaR) at 95% confidence:", round(var_95, 4), "\n")
+cat("   Conditional Value at Risk (CVaR) at 95% confidence:", round(cvar_95, 4), "\n")
+
+# Plot with fixed data frame
+ggplot(data.frame(returns = as.vector(coredata(daily_returns))), aes(x = returns)) +
+  geom_histogram(bins = 50, fill = "blue", alpha = 0.7) +
+  geom_vline(xintercept = var_95, color = "red", linetype = "dashed", 
+             aes(label = sprintf("VaR (95%%) = %.4f", var_95))) +
+  geom_vline(xintercept = cvar_95, color = "green", linetype = "dashed", 
+             aes(label = sprintf("CVaR (95%%) = %.4f", cvar_95))) +
+  labs(title = "Daily Returns Distribution with VaR/CVaR", x = "Daily Returns", y = "Frequency") +
+  theme(legend.position = "top") +
+  guides(color = guide_legend(title = NULL))
+ggsave("var_cvar_plot.png", width = 12, height = 6)
+```
+
+# 3. VAR/CVar
+Value at Risk (VaR) at 95% Confidence: r round(var_95, 4) (1.21%). There is a 5% chance that daily losses will exceed 1.21% of the investment, providing a threshold for potential downside risk in this simulated market. Conditional Value at Risk (CVaR) at 95% Confidence: r round(cvar_95, 4) (1.49%).   In the worst 5% of cases, the average loss is expected to be 1.49%, offering deeper insight into extreme loss scenarios beyond the VaR threshold. A histogram of daily returns with 50 bins, filled in blue with 70% opacity, and dashed red (VaR) and green (CVaR) lines. This plot visualizes the distribution of daily returns, with the VaR (-0.0121) marking the 5th percentile of losses and CVaR (-0.0149) indicating the average loss in the worst 5% of cases. It aids in understanding the risk profile, highlighting the left tail of potential losses.
+
+```{r Trade_Volume_Analysis, include=FALSE}
+total_volume <- sum(df$Quantity)
+daily_volume <- df %>% group_by(Date) %>% summarise(total_quantity = sum(Quantity))
+weekly_volume <- df %>% group_by(Week) %>% summarise(total_quantity = sum(Quantity))
+monthly_volume <- df %>% group_by(Month) %>% summarise(total_quantity = sum(Quantity))
+cat("\n9. Trade Volume Analysis:\n")
+cat("   Total Trade Volume:", total_volume, "\n")
+cat("   Daily Trade Volume:\n")
+print(summary(daily_volume$total_quantity))
+cat("   Weekly Trade Volume:\n")
+print(summary(weekly_volume$total_quantity))
+cat("   Monthly Trade Volume:\n")
+print(summary(monthly_volume$total_quantity))
+```
+
+```{r Trade_Type, include=FALSE}
+trade_type_counts <- table(df$TradeType)
+cat("\n10. Trade Type Distribution:\n")
+print(trade_type_counts)
+cat("   Percentage of Buy Trades:", round(trade_type_counts["Buy"] / nrow(df) * 100, 2), "%\n")
+cat("   Percentage of Sell Trades:", round(trade_type_counts["Sell"] / nrow(df) * 100, 2), "%\n")
+```
+
+```{r Clustering, include=TRUE}
+features <- na.omit(df[, c("Price", "Quantity")])
+set.seed(42)  # For reproducibility
+kmeans_result <- kmeans(features, centers = 5)
+df$Cluster <- kmeans_result$cluster
+cluster_summary <- df %>% group_by(Cluster) %>% summarise(
+  mean_price = mean(Price),
+  std_price = sd(Price),
+  mean_quantity = mean(Quantity),
+  sum_quantity = sum(Quantity)
+)
+cat("\nClustering Trades:\n")
+cat("Cluster Summary:\n")
+print(cluster_summary)
+
+# Plot
+ggplot(df, aes(x = Price, y = Quantity, color = factor(Cluster))) +
+  geom_point(alpha = 0.6) +
+  scale_color_viridis_d() +
+  labs(title = "Trade Clusters", x = "Price", y = "Quantity", color = "Cluster") +
+  theme(legend.position = "right")
+ggsave("cluster_plot.png", width = 12, height = 6)
+```
+
+# 4. Clustering
+This scatter plot groups trades into five clusters based on their price and quantity characteristics using k-means clustering. Each cluster is color-coded, allowing a visual distinction between different trade behaviors. The spread of points across the axes helps identify whether certain groups of trades follow similar pricing and volume patterns. If the clusters are well-separated, it suggests that there are distinct trading strategies or market conditions influencing trade execution. Conversely, if clusters overlap significantly, it may indicate homogeneity in trade characteristics, reducing the effectiveness of clustering for predictive purposes.
+
+```{r Price_Volatility, include=TRUE}
+price_std <- sd(df$Price)
+daily_price_range <- df %>% group_by(Date) %>% summarise(
+  min_price = min(Price),
+  max_price = max(Price),
+  range = max_price - min_price
+)
+cat("\n11. Price Volatility:\n")
+cat("   Price Volatility (Std Dev):", round(price_std, 2), "\n")
+cat("   Daily Price Range:\n")
+print(summary(daily_price_range))
+```
+
+```{r Time_Based, include=TRUE}
+df$Hour <- hour(df$Timestamp)
+hourly_trade_count <- df %>% group_by(Hour) %>% summarise(count = n())
+df$DayOfWeek <- wday(df$Timestamp, label = TRUE)
+daily_trade_count <- df %>% group_by(DayOfWeek) %>% summarise(count = n())
+cat("\n12. Time-Based Patterns:\n")
+cat("   Hourly Trade Activity:\n")
+print(hourly_trade_count)
+cat("   Daily Trade Activity:\n")
+print(daily_trade_count)
+```
+
+```{r Outlier_Detection, include=TRUE}
+df$PriceZScore <- scale(df$Price)
+outliers <- df[abs(df$PriceZScore) > 3, ]
+cat("\n13. Outlier Detection:\n")
+cat("   Number of Price Outliers:", nrow(outliers), "\n")
+cat("   Price Outliers:\n")
+print(outliers[, c("Timestamp", "Price", "Quantity")])
+```
+
+```{r visualize, include=TRUE}
+daily_prices_df <- data.frame(Date = index(daily_prices), Price = coredata(daily_prices))
+ggplot(daily_prices_df, aes(x = Date, y = Price)) +
+  geom_line(color = "blue") +
+  labs(title = "Daily Average Price", x = "Date", y = "Price")
+ggsave("daily_price_plot.png", width = 12, height = 6)
+```
+
+# 5. Daily Price
+This time series plot illustrates the variation in daily average prices over the observation period. The x-axis represents the timeline, while the y-axis shows the average price recorded each day. The smoothness or volatility of this line helps in identifying market stability or turbulence. Large fluctuations may indicate speculative trading or market inefficiencies, whereas a relatively stable price trend suggests an equilibrium state. Additionally, any abrupt changes in price could signal external influences such as macroeconomic factors or simulated market interventions.
+
+```{r Seasonality, include=TRUE}
+# Assuming daily_prices is an xts object with one column
+daily_prices_ts <- ts(as.vector(coredata(daily_prices)), frequency = 30)  # Monthly seasonality
+
+# Optional checks to confirm the data is univariate
+print(ncol(daily_prices))       # Should print 1
+print(NCOL(daily_prices_ts))    # Should print NULL or 1
+
+# Perform decomposition
+decomposition <- decompose(daily_prices_ts, type = "additive")
+cat("\nSeasonality Decomposition:\n")
+plot(decomposition)
+```
+
+
+
+```{r STL, include=TRUE}
+stl_result <- stl(daily_prices_ts, s.window = "periodic")
+cat("\nSTL Decomposition (Robust):\n")
+plot(stl_result)
+ggplot(data.frame(Date = index(daily_prices), Residuals = stl_result$time.series[, "remainder"]), 
+       aes(x = Date, y = Residuals)) +
+  geom_line() +
+  labs(title = "STL Residuals Over Time", x = "Date", y = "Residual Value")
+ggsave("stl_residuals.png", width = 12, height = 6)
+```
+# 6. Seasonality Decomposition Plot
+The decomposition plot breaks down the time series of daily prices into three components: trend, seasonality, and residual noise. The trend component captures the long-term movement in prices, revealing whether the market is experiencing growth or decline. The seasonal component isolates repetitive patterns within the data, helping to determine whether certain days, weeks, or months exhibit consistent price behaviors. Lastly, the residual component accounts for unexplained fluctuations, indicating potential anomalies or unpredictable volatility. This decomposition is critical for constructing models that separate underlying market behaviors from short-term noise.
+
+
+```{r TradeVolume, include=TRUE}
+daily_volume_xts <- period.apply(xts(df$Quantity, order.by = df$Timestamp, colnames = "Quantity"), endpoints(df_xts, "days"), sum)
+ggplot(data.frame(Date = index(daily_volume_xts), Volume = coredata(daily_volume_xts)), 
+       aes(x = Date, y = Volume)) +
+  geom_line(color = "green") +
+  labs(title = "Daily Trade Volume", x = "Date", y = "Volume")
+ggsave("daily_volume_plot.png", width = 12, height = 6)
+```
+
+```{r priceDistribution, include=TRUE}
+ggplot(df, aes(x = Price)) +
+  geom_histogram(bins = 50, fill = "orange") +
+  labs(title = "Price Distribution", x = "Price", y = "Frequency")
+ggsave("price_dist_plot.png", width = 12, height = 6)
+```
+
+```{r Hourly_Trade, include=TRUE}
+ggplot(hourly_trade_count, aes(x = Hour, y = count)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(title = "Hourly Trade Activity", x = "Hour of Day", y = "Number of Trades")
+ggsave("hourly_activity_plot.png", width = 12, height = 6)
+```
+
+```{r daily_trade, include=TRUE}
+ggplot(daily_trade_count, aes(x = DayOfWeek, y = count)) +
+  geom_bar(stat = "identity", fill = "darkcyan") +
+  labs(title = "Daily Trade Activity", x = "Day of Week", y = "Number of Trades")
+ggsave("daily_activity_plot.png", width = 12, height = 6)
+```
+
+```{r ARIMA Model, include=TRUE}
+cat("\nARIMA Model for Time Series Forecasting:\n")
+auto_arima_model <- auto.arima(daily_prices_ts, seasonal = FALSE, stepwise = TRUE, trace = TRUE,
+                               max.p = 5, max.q = 5, max.d = 2)  # Match Python limits
+cat("Auto ARIMA Summary:\n")
+print(summary(auto_arima_model))
+
+# Fit detailed ARIMA model for full diagnostics
+best_order <- auto_arima_model$arma[c(1, 6, 2)]  # Extract p, d, q
+model <- arima(daily_prices_ts, order = best_order)
+cat("Detailed ARIMA Fit Summary:\n")
+print(summary(model))
+
+Acf(model$residuals, main = "ACF of Residuals")
+Pacf(model$residuals, main = "PACF of Residuals")
+adf_test <- adf.test(model$residuals)
+kpss_test <- kpss.test(model$residuals)
+cat("\nADF Test for Stationarity:\n")
+cat("   ADF Statistic:", round(adf_test$statistic, 4), ", p-value:", round(adf_test$p.value, 4), "\n")
+cat("KPSS Test for Stationarity:\n")
+cat("   KPSS Statistic:", round(kpss_test$statistic, 4), ", p-value:", round(kpss_test$p.value, 4), "\n")
+forecast_result <- forecast(model, h = 30)
+cat("\nForecasted Prices for the Next 30 Days:\n")
+print(forecast_result$mean)
+plot(forecast_result, main = "Price Forecast with ARIMA", xlab = "Date", ylab = "Price")
+```
+
+# 7. ARIMA Model Forecast Plot
+This plot represents the 30-day forecast generated by the ARIMA model, with a shaded confidence interval indicating the uncertainty in predictions. The x-axis corresponds to future time periods, while the y-axis represents predicted price values. If the forecast line remains constant, it implies that the model has detected no significant trend in the data, potentially due to a stationary series. However, an upward or downward projection could indicate the expected direction of price movement. The confidence interval is particularly important, as a narrow range suggests higher predictive confidence, whereas a wider range indicates uncertainty.
+The autocorrelation function (ACF) and partial autocorrelation function (PACF) plots help assess the residuals from the ARIMA model. The ACF plot displays how past values influence future values, providing insight into lag dependencies. If significant lags persist, it may indicate an under-fitted model, requiring additional autoregressive or moving average components. The PACF plot isolates direct relationships at different lag intervals, helping refine model selection. If these plots show a rapid decline in correlation, it suggests the data follows a weak dependence structure, validating the choice of a simpler ARIMA model.
+
+```{r Egarch, include=TRUE}
+cat("\nEGARCH Model for Volatility Modeling:\n")
+# Define daily_returns without scaling
+daily_returns <- ROC(daily_prices, type = "discrete")
+daily_returns <- daily_returns[!is.na(daily_returns)]  # Remove NA values
+
+# Check if daily_returns is valid
+if (length(daily_returns) < 2) {
+  stop("Insufficient data in daily_returns for modeling.")
+}
+
+# Minimal specification to test functionality
+spec <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(0,0)),
+  distribution.model = "sstd"
+)
+
+# Fit with default solver first
+egarch_fit <- ugarchfit(spec = spec, data = daily_returns)
+
+# Check convergence with default solver
+if (egarch_fit@fit$convergence == 0) {
+  cat("EGARCH fit converged successfully with default solver.\n")
+  print(egarch_fit@fit$matcoef)
+} else {
+  cat("EGARCH fit failed with default solver. Retrying with explicit solver...\n")
+  # Retry with explicit solver
+  spec <- ugarchspec(
+    variance.model = list(model = "eGARCH", garchOrder = c(1,1)),
+    mean.model = list(armaOrder = c(0,0)),
+    distribution.model = "sstd",
+    solver = "nlminb"
+  )
+  egarch_fit <- ugarchfit(spec = spec, data = daily_returns)
+  if (egarch_fit@fit$convergence == 0) {
+    cat("EGARCH fit converged successfully with nlminb solver.\n")
+    print(egarch_fit@fit$matcoef)
+  } else {
+    cat("EGARCH fit still failed. Likely a package version or data issue.\n")
+  }
+}
+
+vol_forecast <- ugarchforecast(egarch_fit, n.ahead = 30)
+cat("\nForecasted Volatility for the Next 30 Days:\n")
+print(vol_forecast@forecast$sigmaFor)
+
+volatility_values <- as.vector(coredata(vol_forecast@forecast$sigmaFor))
+ggplot(data.frame(Days = 1:30, Volatility = volatility_values), 
+       aes(x = Days, y = Volatility)) +
+  geom_line(color = "orange") +
+  labs(title = "Volatility Forecast with EGARCH", x = "Days Ahead", y = "Volatility")
+ggsave("volatility_forecast.png", width = 12, height = 6)
+```
+# 8. Volatility Forecast Using EGARCH
+This plot visualizes the predicted volatility for the next 30 days based on the EGARCH model. The x-axis represents time, while the y-axis measures the expected volatility. A declining trend indicates reduced market uncertainty, whereas an upward trend suggests increasing risk. The EGARCH model captures asymmetry in volatility, meaning it accounts for situations where negative price shocks have a larger effect than positive ones. If the forecasted volatility stabilizes over time, it implies that market fluctuations are expected to settle within a predictable range.
+
+```{r Advanced_Volatility_Models, include=TRUE}
+# Compute log returns at the original frequency
+returns <- diff(log(df_xts$Price))
+# Get the timestamps
+timestamps <- index(returns)
+# Create a sequence of 30-minute intervals
+start_time <- floor_date(min(timestamps), "minutes")
+end_time <- ceiling_date(max(timestamps), "minutes")
+bin_times <- seq(start_time, end_time, by = "30 min")  # Changed from "5 min" to "30 min"
+
+# Find the endpoints: the last observation in each 30-minute bin
+ep <- findInterval(bin_times, timestamps, left.open = FALSE)
+ep <- unique(c(0, ep))
+
+# Compute realized volatility for each 30-minute interval
+rv_30min <- period.apply(returns^2, ep, sum)
+# Set the index to the end of each bin
+index(rv_30min) <- timestamps[ep[-1]]
+
+# Aggregate to daily realized volatility
+rv_daily <- period.apply(rv_30min, endpoints(rv_30min, "days"), sum)
+
+# Align rv_daily with daily_returns
+rv_daily <- rv_daily[index(rv_daily) %in% index(daily_returns)]
+rv_daily <- na.omit(rv_daily)
+
+# Extract values for HAR-RV model
+rv_values <- as.vector(coredata(rv_daily))
+har_data <- data.frame(
+  RV = rv_values,
+  RV_1 = lag(rv_values, 1),
+  RV_5 = rollmean(lag(rv_values, 1), 5, align = "right", fill = NA),
+  RV_22 = rollmean(lag(rv_values, 1), 22, align = "right", fill = NA)
+)
+har_data <- na.omit(har_data)
+
+# Fit HAR-RV model
+har_model <- lm(RV ~ RV_1 + RV_5 + RV_22, data = har_data)
+cat("\nHAR-RV Model Results:\n")
+print(summary(har_model))
+```
+```{r figarch, include=TRUE}
+# Check for NA values in daily_returns
+if (any(is.na(daily_returns))) {
+  stop("daily_returns contains NA values. Please remove them before fitting the model.")
+}
+
+# Define FIGARCH specification (using default solver)
+figarch_spec <- ugarchspec(variance.model = list(model = "fiGARCH", garchOrder = c(1,1)),
+                           mean.model = list(armaOrder = c(0,0)))
+figarch_fit <- ugarchfit(spec = figarch_spec, data = daily_returns)
+
+# Volatility model comparison
+cat("\nVolatility Model Comparison:\n")
+
+# EGARCH AIC and BIC
+egarch_aic <- egarch_fit@fit$ics["AIC"]
+egarch_bic <- egarch_fit@fit$ics["BIC"]
+cat("EGARCH: AIC=", ifelse(is.numeric(egarch_aic) && !is.na(egarch_aic), round(egarch_aic, 1), "NA"), 
+    ", BIC=", ifelse(is.numeric(egarch_bic) && !is.na(egarch_bic), round(egarch_bic, 1), "NA"), "\n")
+
+# FIGARCH AIC and BIC
+figarch_aic <- figarch_fit@fit$ics["AIC"]
+figarch_bic <- figarch_fit@fit$ics["BIC"]
+cat("FIGARCH: AIC=", ifelse(is.numeric(figarch_aic) && !is.na(figarch_aic), round(figarch_aic, 1), "NA"), 
+    ", BIC=", ifelse(is.numeric(figarch_bic) && !is.na(figarch_bic), round(figarch_bic, 1), "NA"), "\n")
+
+# HAR-RV AIC and BIC
+har_aic <- AIC(har_model)
+har_bic <- BIC(har_model)
+cat("HAR-RV: AIC=", ifelse(is.numeric(har_aic) && !is.na(har_aic), round(har_aic, 1), "NA"), 
+    ", BIC=", ifelse(is.numeric(har_bic) && !is.na(har_bic), round(har_bic, 1), "NA"), "\n")
+```
+
+# 9. Price Distribution Histogram
+This histogram shows the distribution of trade prices across all transactions. The x-axis represents price bins, while the y-axis indicates the frequency of trades executed at each price level. If the distribution is centered around a particular value (e.g., 500), it suggests a mean-reverting behavior, which could indicate market efficiency. However, if the distribution is skewed or exhibits heavy tails, it implies price asymmetry or speculative trading behavior. This histogram is useful for understanding whether price movements follow a normal distribution or exhibit signs of abnormal deviations.
+
+# 10. Forecasted Volatility from the HAR-RV Model
+This plot presents the volatility forecast over a set horizon using the HAR-RV model. The x-axis represents the time horizon, while the y-axis displays the expected realized volatility. If the HAR-RV model predicts stable volatility, it suggests that past returns contain limited information about future uncertainty. However, if volatility predictions exhibit fluctuations, it implies the presence of clustering effects, where high-volatility periods are followed by sustained turbulence. This forecast helps assess whether markets are expected to remain calm or experience erratic price swings.
+
+# 11. Volatility Model Comparison (AIC/BIC Scores)
+This table-like visualization compares different volatility models (EGARCH, FIGARCH, and HAR-RV) based on their Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC). A lower AIC/BIC score indicates a better model fit. If one model consistently has lower values than the others, it suggests a superior ability to capture volatility patterns. If multiple models yield similar scores, it implies that they explain the data equally well, making model selection a matter of preference or additional robustness checks.
+
+# Results
+The synthetic market dataset revealed a highly active trading environment characterized by an average of 13,661 trades per day and 416,667 trades per month, with consecutive trades occurring every 0.11 minutes (6.6 seconds). Aggregating these trades into 30-minute intervals produced 17,568 bins, collectively representing 5 million simulated transactions. Despite the constrained price bounds (0–1000), the dataset exhibited significant price volatility, with a standard deviation of 288.71. Trading activity proved profitable overall, generating a net profit of 301,181,211 units. Risk metrics highlighted manageable downside exposure: Value at Risk (VaR) at 95% confidence stood at -1.21%, while Conditional Value at Risk (CVaR) for the worst 5% of scenarios averaged -1.49%. Time series modeling using ARIMA(0,0,0) confirmed price stability, with daily prices clustering tightly around the synthetic mean of 500. Volatility forecasting via EGARCH identified slight asymmetry (γ1 = 0.644), with forecasts stabilizing at 0.0069 over a 30-day horizon.
+
+Clustering analysis partitioned trades into five distinct groups differentiated by transaction volume rather than price, as all clusters shared identical mean prices (500) and volatility (std = 289). Cluster 4 dominated in scale, averaging 9,003 units per trade (total 8.98 billion units). Temporal patterns showed minimal variability, with hourly trade counts ranging narrowly between 20,000–21,000 and weekly activity fluctuating modestly (709,000–724,000 trades/weekday), reflecting the absence of real-world seasonality. Daily price ranges remained artificially stable, averaging 0.073 (min) and 999.9 (max), while outlier detection and STL decomposition confirmed no anomalous prices or meaningful trend/seasonal components. These findings underscore the dataset’s utility for controlled strategy testing—high-frequency activity and stable mean prices enabled clear volatility and risk assessments—while also exposing limitations, such as unrealistic price bounds and the exclusion of external market influences.
+
+# References
+ - Andersen, T. G., Bollerslev, T., Diebold, F. X., & Labys, P. (2003). Modeling and Forecasting Realized Volatility. Econometrica, 71(2), 579–625. https://doi.org/10.1111/1468-0262.00418
+Reference for HAR-RV (Heterogeneous Autoregressive Realized Volatility) model.
+
+ - Baillie, R. T., Bollerslev, T., & Mikkelsen, H. O. (1996). Fractionally Integrated Generalized Autoregressive Conditional Heteroskedasticity. Journal of Econometrics, 74(1), 3–30. https://doi.org/10.1016/0304-4076(95)01749-6
+Reference for FIGARCH (Fractionally Integrated GARCH) model.
+
+ - Box, G. E. P., Jenkins, G. M., & Reinsel, G. C. (2015). Time Series Analysis: Forecasting and Control (5th ed.). Wiley.
+Foundational reference for ARIMA modeling.
+
+ - Cleveland, R. B., Cleveland, W. S., McRae, J. E., & Terpenning, I. (1990). STL: A Seasonal-Trend Decomposition Procedure Based on Loess. Journal of Official Statistics, 6(1), 3–73.
+Reference for STL (Seasonal-Trend Decomposition using LOESS) method.
+
+ - Hartigan, J. A., & Wong, M. A. (1979). Algorithm AS 136: A K-Means Clustering Algorithm. Journal of the Royal Statistical Society. Series C (Applied Statistics), 28(1), 100–108. https://doi.org/10.2307/2346830
+Reference for k-means clustering.
+
+ - Jorion, P. (2006). Value at Risk: The New Benchmark for Managing Financial Risk (3rd ed.). McGraw-Hill.
+Reference for Value at Risk (VaR) and risk management concepts.
+
+ - Nelson, D. B. (1991). Conditional Heteroskedasticity in Asset Returns: A New Approach. Econometrica, 59(2), 347–370. https://doi.org/10.2307/2938260
+Seminal paper on the EGARCH (Exponential GARCH) model.
+
+ - Rockafellar, R. T., & Uryasev, S. (2000). Optimization of Conditional Value-at-Risk. Journal of Risk, 2(3), 21–42. https://doi.org/10.21314/JOR.2000.038
+Reference for Conditional Value at Risk (CVaR).
+
+ - Tsay, R. S. (2005). Analysis of Financial Time Series (2nd ed.). Wiley.
+Comprehensive resource for volatility modeling, GARCH variants, and outlier detection.
+
+ - Hyndman, R. J., & Athanasopoulos, G. (2021). Forecasting: Principles and Practice (3rd ed.). OTexts. https://otexts.com/fpp3/
+Practical guide for time series forecasting, including ARIMA and diagnostics (e.g., ADF/KPSS tests).
+
+- R Core Team. (2023). R: A Language and Environment for Statistical Computing. R Foundation for Statistical Computing. https://www.R-project.org/
+Reference for R packages and functions (e.g., xts, rugarch, forecast) used in the analysis.
+
+
+
+
+
