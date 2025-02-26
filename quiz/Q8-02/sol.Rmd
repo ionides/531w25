@@ -1,0 +1,24 @@
+
+\color{blue}
+
+**Solution**. (A)\
+A nice way to see (1) is in the frequency domain. $X_n$ is AR(1) and so has spectruum $\sigma^2_\epsilon/|1-a \exp{i\omega}|^2 = \sigma^2_\epsilon/(1+a^2-2a\cos(\omega))$. $\eta_n$ has spectrum $\sigma^2_\eta$, and so $Y_n$ has spectrum
+\begin{eqnarray}
+\sigma^2_\eta + \frac{\sigma^2_epsilon}{1+a^2-2a\cos(\omega)}
+&=& \frac{\sigma^2_\eta(1+a^2)+\sigma^2_\epsilon - 2a\sigma^2_eta\cos(\omega)}{
+1+a^2-2a\cos(\omega)}
+\\
+&=&
+ \sigma^2 \frac{(1+b^2)- 2b\cos(\omega) }{1+a^2-2a\cos(\omega)}
+\end{eqnarray}
+where $\sigma$ and $b$ solve
+\begin{eqnarray}
+\sigma^2 (1+b^2) &=& \sigma^2_\eta(1+a^2)+\sigma^2_\epsilon,
+\\
+\sigma^2 b &=& a\sigma^2_eta
+\end{eqnarray}
+(2) is the same set of equations as (1).
+(3) is the ARMA(1,1) case of the LG-POMP representation of a general ARMA model givein in Chapter 11.
+
+\color{black}
+
