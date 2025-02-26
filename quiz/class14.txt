@@ -1,0 +1,29 @@
+
+Class 14 discussion problem
+
+Solve the question at https://ionides.github.io/531w25/quiz/class14.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+Multiple choice question title: POMP representations of ARMA: https://ionides.github.io/531w25/quiz/class14.pdf
+
+Question text: The question is posted at https://ionides.github.io/531w25/quiz/class14.pdf
+
+Answers: 
+
+(A) Only (3)
+(B) (1) and (2) but not (3)
+(C) (2) and (3) but not (1)
+(D) (1) and (3) but not (2)
+(E) (1), (2) and (3)
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer. You are expected to write between one and three sentences.
+
+Due to time constraints, you may like to focus on the justification for whether or not (1) matches ARMA(1,1).
+
+For this assignment, the credit is for the showing some reasoning, not for correctness. 
+
+
+
+

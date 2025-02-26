@@ -17,8 +17,16 @@ where $\sigma$ and $b$ solve
 \\
 \sigma^2 b &=& a\sigma^2_eta
 \end{eqnarray}
-(2) is the same set of equations as (1).
+
+(2) is the same set of equations as (1), as seen by setting $X_n^\prime = \left(\begin{array}{c} X_n \\ \epsilon_n \end{array}\right)$.
+
 (3) is the ARMA(1,1) case of the LG-POMP representation of a general ARMA model givein in Chapter 11.
+Specifically, set $X_n = \left(\begin{array}{c} Y_n \\ b \epsilon_n \end{array}\right)$, and see that the process model becomes
+\begin{equation}\nonumber
+\left(\begin{array}{c} Y_n \\ b \epsilon_n \end{array}\right)
+=
+\left(\begin{array}{c} a Y_{n-1} + b\epsilon_{n-1} + \epsilon_n \\ b \epsilon_n \end{array}\right).
+\end{equation}
 
 \color{black}
 
