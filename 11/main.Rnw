@@ -683,7 +683,7 @@ Y_n \\
 \\
 \vdots
 \\
-\ar_r Y_{n-1} + \ma_{r-1} \omega_t
+\ar_r Y_{n-1} + \ma_{r-1} \omega_n
 \end{array}\right)$
 
 \vspace{2mm}
@@ -894,7 +894,7 @@ We can identify matrices $\matA$, $\matB$, $\covmatX$ and $\covmatY$ giving a ti
 
 \vspace{1mm}
 
-\item  A \myemph{smoothing spline} for an equally spaced time series $\data{y_{1:N}}$ collected at times $t_{1:N}$ is the sequence $x_{1:N}$ minimizing the \myemph{penalized sum of squares (PSS)}, which is defined as
+\item  A \myemph{smoothing spline} for an equally spaced time series $\data{y_{1:N}}$ collected at times $t_{1:N}$ is the sequence $x_{1:N}$ minimizing the \myemph{penalized sum of squares (PSS)}, defined as
 \begin{flalign}
 \nonumber
 \negListSpace\mbox{[SS1]} \hspace{15mm}
