@@ -27,7 +27,7 @@ output:
 | 8. [Water Level in Lake Malawi](project08/blinded.html) |  [Review comments](project08/comments.html) |
 | 9. [House Prices in Seattle](project09/blinded.html) |  [Review comments](project09/comments.html) |
 | 10. [Consumer Price Index](project10/blinded.html) |  [Review comments](project10/comments.html) |
-| 11. [Environmental Noise Polution](project11/blinded.pdf) |  [Review comments](project11/comments.html) |
+| 11. [Environmental Noise Pollution](project11/blinded.pdf) |  [Review comments](project11/comments.html) |
 | 12. [S&P 500 Volatility](project12/blinded.html) |  [Review comments](project12/comments.html) |
 | 13. [Vanguard S&P 500 ETF](project13/blinded.html) |  [Review comments](project13/comments.html) |
 | 14. [Tesla Stock](project14/blinded.html) |  [Review comments](project14/comments.html) |
