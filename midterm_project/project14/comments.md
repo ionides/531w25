@@ -32,7 +32,7 @@ output:
 
 1. The report would benefit having a clear explanation of how ARMA and GARCH interact with one another since we haven’t studied GARCH models. The authors provide the R output of the ARMA-GARCH model, but fail to discuss anything about it. There is a lot of information displayed in the R output and a discussion on the key points would greatly aid the reader in understanding.
 
-1.The conclusion, "Our Fourier analysis revealed dominant frequencies in Tesla’s returns, while Wavelet analysis captured non-stationary volatility fluctuations, particularly around earnings releases. These insights provide a more comprehensive understanding of stock price behavior, offering valuable implications for short-term traders and risk management strategies." seems unfounded. No wavelet analysis was presented, and no dominant frequencies were found.
+1. The conclusion, "Our Fourier analysis revealed dominant frequencies in Tesla’s returns, while Wavelet analysis captured non-stationary volatility fluctuations, particularly around earnings releases. These insights provide a more comprehensive understanding of stock price behavior, offering valuable implications for short-term traders and risk management strategies." seems unfounded. No wavelet analysis was presented, and no dominant frequencies were found.
 
 1. The project could have been strengthened by the consideration of covariate time series and/or model breakpoints to help understand why Tesla stock sometimes seemed to change behavior. 
 
