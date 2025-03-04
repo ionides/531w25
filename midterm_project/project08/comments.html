@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="DATASCI/STATS 531, Winter 2025" />
+<meta name="author" content="DATASCI/STATS 531/631, Winter 2025" />
 
 
-<title>Midterm projects</title>
+<title>Review comments on Project 8</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,150 +349,68 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Midterm projects</h1>
-<h4 class="author">DATASCI/STATS 531, Winter 2025</h4>
+<h1 class="title toc-ignore">Review comments on Project 8</h1>
+<h4 class="author">DATASCI/STATS 531/631, Winter 2025</h4>
 
 </div>
 
 
-<hr />
-<ul>
-<li><p>Projects are posted anonymously below. Source code and data are
-available from <a href="https://github.com/ionides/531w25/tree/main/midterm_project">https://github.com/ionides/531w25/midterm_project</a></p></li>
-<li><p>After the course is over and the class grades are assigned, you
-may choose to request to have your name attached to the
-project.</p></li>
-</ul>
-<hr />
-<table>
-<colgroup>
-<col width="35%" />
-<col width="35%" />
-<col width="28%" />
-</colgroup>
-<tbody>
-<tr class="odd">
-<td align="left">1. <a href="project01/blinded.html">Flight
-Delays</a></td>
-<td align="left"><a href="project01/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">2. <a href="project02/blinded.html">U.S. Airline
-Traffic Analysis</a></td>
-<td align="left"><a href="project02/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">3. <a href="project03/blinded.html">Solar Power
-Generation</a></td>
-<td align="left"><a href="project03/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">4. <a href="project04/blinded.html">Ireland COVID-19
-Cases</a></td>
-<td align="left"><a href="project04/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">5. <a href="project05/blinded.html">Complexity of U.S.
-Baby Names</a></td>
-<td align="left"><a href="project05/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">6. <a href="project06/blinded.html">Bitcoin and NASDAQ
-Composite Prices</a></td>
-<td align="left"><a href="project06/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">7. <a href="project07/blinded.html">Gold
-Prices</a></td>
-<td align="left"><a href="project07/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">8. <a href="project08/blinded.html">Water Level in Lake
-Malawi</a></td>
-<td align="left"><a href="project08/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">9. <a href="project09/blinded.html">House Prices in
-Seattle</a></td>
-<td align="left"><a href="project09/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">10. <a href="project10/blinded.html">Consumer Price
-Index</a></td>
-<td align="left"><a href="project10/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">11. <a href="project11/blinded.pdf">Environmental Noise
-Polution</a></td>
-<td align="left"><a href="project11/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">12. <a href="project12/blinded.html">S&amp;P 500
-Volatility</a></td>
-<td align="left"><a href="project12/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">13. <a href="project13/blinded.html">Vanguard S&amp;P
-500 ETF</a></td>
-<td align="left"><a href="project13/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">14. <a href="project14/blinded.html">Tesla
-Stock</a></td>
-<td align="left"><a href="project14/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">15. <a href="project15/blinded.html">Car
-Accidents</a></td>
-<td align="left"><a href="project15/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">16. <a href="project16/blinded.html">Simulated Trade
-Activity</a></td>
-<td align="left"><a href="project16/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">17. <a href="project17/blinded.html">Tesla Stock
-2</a></td>
-<td align="left"><a href="project17/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<hr />
+<div id="strengths" class="section level3">
+<h3>Strengths</h3>
+<ol style="list-style-type: decimal">
+<li><p>An in-depth investigation of ARIMA likelihood maximization
+issues, discovering things beyond what was covered in class.</p></li>
+<li><p>A careful discussion of differencing, and its role in helping to
+identify causal relationships while avoiding spurious relationships
+between trends. However, suitable detrending may be able to do those
+things too, perhaps better.</p></li>
+<li><p>The Comparison with Past Projects section provides context and
+identifies a novel contribution.</p></li>
+<li><p>Extensive references and footnotes demonstrate strong
+scholarship</p></li>
+</ol>
+</div>
+<div id="specific-comments" class="section level3">
+<h3>Specific comments</h3>
+<ol style="list-style-type: decimal">
+<li><p>The team provide summaries of marginal distributions, e.g.,
+“Average aligned with the median,” which have little value when the data
+distribution varies substantially with time.</p></li>
+<li><p>The residual plot (and quantile plot) show one massive outlier
+and one slightly less dramatic, but nevertheless large, outlier. It
+would be good to examine these data points individually for possible
+data collection issues. How sure are we that they are correctly
+recorded? Do they match known extreme weather events?</p></li>
+<li><p>Could the problem with identifying a precipitation/level effect
+be due to a lag relationship? Though, the lag effect should be via
+run-off into the lake, so perhaps this is not plausible. Alternatively,
+lake level could depend on integrated rainfall over several months,
+which could be hard to detect in this analysis.</p></li>
+<li><p>Using covariates with differenced ARIMA (d&gt;0) is delicate.
+What model do you think you are fitting? Here, we want the covariances
+to be fitted to the differenced data because the covariates are
+hypothesized to affect the change of water level not directly the level
+itself.</p></li>
+<li><p>The authors state: “Evaporation is a major contributor to water
+loss in Lake Malawi, often exceeding the Shire River outflow” which begs
+the question if lake outflow should be another water component to take
+into consideration since runoff only is for entering the lake.</p></li>
+<li><p>For the log transformation, different specifications are proposed
+but it is unclear how the team picked the “best”.</p></li>
+<li><p>The raw MAE suggests that evaporation was the easiest to predict.
+However, the weighted MAE changes the story completely “forecasting
+errors for evaporation pose a more significant challenge to predicting
+water levels than those for precipitation”. Since this may seem
+paradoxical, it would be worth the authors defining what weighting the
+MAE for each variable by its impact on water level means. Perhaps giving
+the formulas of how they computed the weighted MAE without looking in
+the source code.</p></li>
+<li><p>The start of the Regression section looks to explain trending
+data linearly in terms of non-trending covariates. This seems doomed to
+failure and could be avoided. There is good rationale for differencing
+the level data, as is done subsequently.</p></li>
+</ol>
+</div>
 
 
 

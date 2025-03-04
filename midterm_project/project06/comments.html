@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="DATASCI/STATS 531, Winter 2025" />
+<meta name="author" content="DATASCI/STATS 531/631, Winter 2025" />
 
 
-<title>Midterm projects</title>
+<title>Review comments on Project 6</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,150 +349,67 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Midterm projects</h1>
-<h4 class="author">DATASCI/STATS 531, Winter 2025</h4>
+<h1 class="title toc-ignore">Review comments on Project 6</h1>
+<h4 class="author">DATASCI/STATS 531/631, Winter 2025</h4>
 
 </div>
 
 
-<hr />
-<ul>
-<li><p>Projects are posted anonymously below. Source code and data are
-available from <a href="https://github.com/ionides/531w25/tree/main/midterm_project">https://github.com/ionides/531w25/midterm_project</a></p></li>
-<li><p>After the course is over and the class grades are assigned, you
-may choose to request to have your name attached to the
-project.</p></li>
-</ul>
-<hr />
-<table>
-<colgroup>
-<col width="35%" />
-<col width="35%" />
-<col width="28%" />
-</colgroup>
-<tbody>
-<tr class="odd">
-<td align="left">1. <a href="project01/blinded.html">Flight
-Delays</a></td>
-<td align="left"><a href="project01/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">2. <a href="project02/blinded.html">U.S. Airline
-Traffic Analysis</a></td>
-<td align="left"><a href="project02/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">3. <a href="project03/blinded.html">Solar Power
-Generation</a></td>
-<td align="left"><a href="project03/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">4. <a href="project04/blinded.html">Ireland COVID-19
-Cases</a></td>
-<td align="left"><a href="project04/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">5. <a href="project05/blinded.html">Complexity of U.S.
-Baby Names</a></td>
-<td align="left"><a href="project05/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">6. <a href="project06/blinded.html">Bitcoin and NASDAQ
-Composite Prices</a></td>
-<td align="left"><a href="project06/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">7. <a href="project07/blinded.html">Gold
-Prices</a></td>
-<td align="left"><a href="project07/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">8. <a href="project08/blinded.html">Water Level in Lake
-Malawi</a></td>
-<td align="left"><a href="project08/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">9. <a href="project09/blinded.html">House Prices in
-Seattle</a></td>
-<td align="left"><a href="project09/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">10. <a href="project10/blinded.html">Consumer Price
-Index</a></td>
-<td align="left"><a href="project10/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">11. <a href="project11/blinded.pdf">Environmental Noise
-Polution</a></td>
-<td align="left"><a href="project11/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">12. <a href="project12/blinded.html">S&amp;P 500
-Volatility</a></td>
-<td align="left"><a href="project12/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">13. <a href="project13/blinded.html">Vanguard S&amp;P
-500 ETF</a></td>
-<td align="left"><a href="project13/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">14. <a href="project14/blinded.html">Tesla
-Stock</a></td>
-<td align="left"><a href="project14/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">15. <a href="project15/blinded.html">Car
-Accidents</a></td>
-<td align="left"><a href="project15/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">16. <a href="project16/blinded.html">Simulated Trade
-Activity</a></td>
-<td align="left"><a href="project16/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">17. <a href="project17/blinded.html">Tesla Stock
-2</a></td>
-<td align="left"><a href="project17/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<hr />
+<div id="strengths" class="section level3">
+<h3>Strengths</h3>
+<ol style="list-style-type: decimal">
+<li><p>Interestingly, no evidence is found for conditional
+heteroskedasticity. That may be because the data analyzed are monthly,
+and changes in variation in the stock market occur on shorter
+timescales. So, if your investing horizon is on the timescale of months,
+a random walk model may be sufficient.</p></li>
+<li><p>The contribution of this project is well placed in the context of
+previous midterm projects.</p></li>
+<li><p>Section numbers, figure labels, and a good balance between
+numerical results, figures and text, make this project easy to
+read.</p></li>
+</ol>
+</div>
+<div id="specific-comments" class="section level3">
+<h3>Specific comments</h3>
+<ol style="list-style-type: decimal">
+<li><p>EDA would be done better on the log scale. Percentage changes are
+relevant. Otherwise, the decompositions, etc, suffer from severe
+heteroskedasticity.</p></li>
+<li><p>Log-differencing is the right thing to do here, not just because
+differencing is a common way to try to transform to stationarity, but
+because financial theory suggests the log-difference is a meaningful
+quantity (the return).</p></li>
+<li><p>The use of <code>auto.arima()</code> to trouble-shoot numerical
+problems with <code>arima()</code> is problematitic:
+<code>auto.arima</code> calls <code>arima</code> for its maximization,
+so any problems are still there but just remain hidden. Nevertheless,
+<code>auto.arima</code> also avoids models with roots close to the unit
+circle, so it chooses ARMA(0,0) here.</p></li>
+<li><p>The report’s explanation of <code>auto.arima</code> suggests that
+it looks for the lowest AIC value, but we see from the table that lower
+AIC values exist. Is it a failure of AIC that it didn’t find these
+values, or is it looking for something other than AIC?</p></li>
+<li><p>In Section 3.6, what is the likelihood ratio test being conducted
+on? One can go into the code to find out: it’s a regression on Bitcoin
+return with ARMA errors, in fact white noise since it is ARMA(0,0), and
+the test is for contemporaneous NASDAQ return as a covariate. Also, 7
+significant figures is too much for a p-value.</p></li>
+<li><p>Spectral analysis might be clearer on the returns rather than the
+original data (similarly, the sample ACF). The Bitcoin sample ACF for
+returns suggests that there may be some identifiable periodicity that
+could be clearer in the frequency domain, though you might just see
+white noise.</p></li>
+<li><p>In Fig 7, the sample ACF is interpreted as evidence for
+non-stationarity. The sample ACF estimates autocorrelaton under an
+assumption of stationarity, so it is not a good way to assess
+stationarity itself. A time plot is better for that.</p></li>
+<li><p>Sometimes Bitcoin and NASDAQ are treated symmetrically, sometimes
+NASDAQ is studied as an explanatory variable for Bitcoin. The reasons
+for these two perspectives, and the transitions between them, could be
+explained more clearly.</p></li>
+</ol>
+</div>
 
 
 
