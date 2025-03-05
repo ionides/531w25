@@ -113,7 +113,7 @@ cat_file1 <- q_setup(8)
 
 \exam{\newpage}
 
-### Q2. Linear Gaussian POMP models
+### Q2. Likelihood evaluation; the particle filter
 
 ```{r q2-setup,include=F}
 cat_file2 <- q_setup(9)
@@ -125,7 +125,7 @@ cat_file2 <- q_setup(9)
 \exam{\newpage}
 
 
-### Q3. General POMP models: discrete and continuous state
+### Q3. Likelihood maximization; iterated filtering
 
 ```{r q3-setup,include=F}
 cat_file3 <- q_setup(10)
@@ -136,7 +136,7 @@ cat_file3 <- q_setup(10)
 
 \exam{\newpage}
 
-### Q4. Likelihood evaluation; the particle filter
+### Q4. Data analysis: epidemiological models
 
 ```{r q4-setup,include=F}
 cat_file4 <- q_setup(11)
@@ -147,7 +147,7 @@ cat_file4 <- q_setup(11)
 
 \exam{\newpage}
 
-### Q5. Likelihood maximization; iterated filtering
+### Q5. Data analysis: financial models
 
 ```{r q5-setup,include=F}
 cat_file5 <- q_setup(12)
@@ -158,7 +158,7 @@ cat_file5 <- q_setup(12)
 
 \exam{\newpage}
 
-### Q6. Data analysis via POMP models
+### Q6. Computing with POMP models
 
 ```{r q6-setup,include=F}
 cat_file6 <- q_setup(13)
