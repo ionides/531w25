@@ -1,0 +1,9 @@
+
+\color{blue}
+
+**Solution**. C.\
+Using the linear dependence, also called proportionality, of the computing effort on various algorithmic parameters, we calculate
+$$5\times (10000/1000)\times (20/10)\times (1/4)=75.$$
+
+\color{black}
+

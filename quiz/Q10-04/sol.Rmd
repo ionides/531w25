@@ -1,0 +1,12 @@
+
+\color{blue}
+
+**Solution**. E.\
+  This project team were able to show evidence of adequate global maximization for their model, but their maximized likelihood was 47 log units lower than ARMA model. The wide spread in likelihood, thousands of log units, shown in this convergence plot suggests that the numerics are not working smoothly.
+  This could mean that more particles are needed: $10^3$ particles is relatively low for a particle filter.
+  However, if the model fit is not great (as revealed by comparison against a benchmark) this makes the filtering harder as well as less scientifically satisfactory.
+  If the model is fitting substantially below ARMA benchmarks, it is worth considering some extra time on model development. 
+  Identifying time points with low effective sample size can help to identify which parts of the data are problemtic for the model to explain.
+
+\color{black}
+
