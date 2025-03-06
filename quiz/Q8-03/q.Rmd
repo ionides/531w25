@@ -1,11 +1,11 @@
 
 Scientifically, our conclusions should not depend on the units of measurement we use, but we can make errors if we don't get the details right.
 Suppose our data are two years of weekly aggregated case reports of a disease and we have a continuous-time model solved numerically by an Euler timestep of size $dt$.
-Which of the following is a correct explanation of our options for properly implementing this in a pomp object called \code{po}?
+Which of the following is a correct explanation of our options for properly implementing this in a pomp object called `po`?
 
-A.  The measurement times, \code{time(po)}, should be in units of weeks, such as $1,2,\dots,104$.
+A.  The measurement times, `time(po)`, should be in units of weeks, such as $1,2,\dots,104$.
 The latent process can be modeled using arbitrary time units, say days or weeks or years.
-The units of $dt$ should match the time units of the {\bf latent} process.
+The units of $dt$ should match the time units of the **latent** process.
 
 B. The measurement times, `time(po)`, should be in units of weeks, such as $1,2,\dots,104$.
 The latent process can be modeled using arbitrary time units, say days or weeks or years.

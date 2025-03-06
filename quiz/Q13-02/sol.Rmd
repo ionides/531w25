@@ -6,7 +6,7 @@ The error message was produced by the code below.
 `pomp` passes on the C compiler error message for you to inspect.
 Note the missing semicolon in the next-to-last line.
 
-```{error-code-missing-semicolon,eval=F}
+```{r error-code-missing-semicolon,eval=F}
   sir1 <- sir()
   sir2 <- pomp(
     sir1,
