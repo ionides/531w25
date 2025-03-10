@@ -148,8 +148,6 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 -------------
 
-<!--
-
 ## Final project
 
 
@@ -157,13 +155,17 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 * [Final peer review report instructions](final_project/final_review.html)
 
-* [2024 final projects](final_project/index.html)
+<!--
+* [2025 final projects](final_project/index.html)
+-->
 
-* You're welcome to browse previous final projects. The [2021](http://ionides.github.io/531w21/final_project/) and  [2022](http://ionides.github.io/531w22/final_project/)  final projects have a posted summary of peer review comments. Earlier projects from [2016](http://ionides.github.io/531w16/final_project/), [2018](http://ionides.github.io/531w18/final_project/), [2020](http://ionides.github.io/531w20/final_project/) may also be useful.
+* You're welcome to browse previous final projects. The  [2024](http://ionides.github.io/531w24/final_project/), [2022](http://ionides.github.io/531w22/final_project/) and  [2021](http://ionides.github.io/531w21/final_project/)  final projects have a posted summary of peer review comments. Earlier projects from [2016](http://ionides.github.io/531w16/final_project/), [2018](http://ionides.github.io/531w18/final_project/), [2020](http://ionides.github.io/531w20/final_project/) may also be useful.
 
 If building on old source code, note that there are some differences between versions of the software package **pomp**. The [**pomp** version 2 upgrade guide](https://kingaa.github.io/pomp/vignettes/upgrade_guide.html) can be helpful. There are various smaller changes between **pomp 2.0** and the current **pomp 5.6**.
 
 --------
+
+<!--
 
 ## Using the Great Lakes cluster
 
@@ -189,3 +191,5 @@ If building on old source code, note that there are some differences between ver
 
 This course and the code involved are made available with an [Creative Commons](LICENSE).
 A list of acknowledgments is [available](acknowledge.html).
+
+
