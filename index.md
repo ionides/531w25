@@ -96,19 +96,15 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 * [Piazza participation 2](participation/participation2.html), due Sun Feb 16, 11:59pm.
 
+* [Homework 5](hw05/hw05.html), due Sun Mar 16, 11:59pm.
+
 <!--
-* [Participation 4](participation/participation4.html), due Sun Feb 18, 11:59pm.
-
-* [Homework 5](hw05/hw05.html), due Sun Mar 17, 11:59pm.
 [Solution](hw05/sol05.html).
-
-* [Participation 5](participation/participation5.html), due Sun Mar 17, 11:59pm.
-
 
 * [Homework 6](hw06/hw06.html), due Sun Mar 24, 11:59pm. 
 [Solution](hw06/sol06.html).
 
-* [Participation 6](participation/participation6.html), due Sun Mar 24, 11:59pm.
+* [Participation 3](participation/participation6.html), due Sun Mar 24, 11:59pm.
 
 * [Homework 7](hw07/hw07.html), due Sun Mar 31, 11:59pm. Extended to Wed Apr 3.
 [Solution](hw07/sol07.html).
@@ -135,6 +131,8 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 ## Quizzes
 
 * Quiz 1. In class on Monday 2/17. [Sample questions](quiz/quiz1-all.pdf). [With solutions](quiz/quiz1-sol.pdf). [Sample quiz](quiz/quiz1-sample.pdf) randomly drawn from the quiz generator; the actual quiz will use a different seed.
+
+* Quiz 2. In class on Wednesday 4/16. [Sample questions](quiz/quiz2-all.pdf). [With solutions](quiz/quiz2-sol.pdf). Note: this quiz is still in development.
 
 ## Midterm project
 
