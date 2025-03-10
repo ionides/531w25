@@ -17,9 +17,9 @@ Chapter 11 Part 2 has overlap with Chapter 10. It may be no bad thing to see the
 |:---|:---|:---|
 | Slides  | |  [pdf](https://kingaa.github.io/sbied/intro/slides.pdf) |
 | Notes   | | [pdf](https://kingaa.github.io/sbied/intro/notes.pdf) |
-| Recording, Chapter 11, Part 1  | Time series analysis and mechanistic models in ecology and epidemiology | [(20 mins)](https://youtu.be/wn4bv3nz0kU) | 
-| Recording, Chapter 11, Part 2  | Introduction to POMP models | [(22 mins)](https://youtu.be/-P4lwVDHxjQ) |
-| Recording, Chapter 11, Part 3  | The pomp R package for POMP models | [(7 mins)](https://youtu.be/1MY8NuJ5fr4) |
+| Recording, Chapter 12, Part 1  | Time series analysis and mechanistic models in ecology and epidemiology | [(20 mins)](https://youtu.be/wn4bv3nz0kU) | 
+| Recording, Chapter 12, Part 2  | Introduction to POMP models | [(22 mins)](https://youtu.be/-P4lwVDHxjQ) |
+| Recording, Chapter 12, Part 3  | The pomp R package for POMP models | [(7 mins)](https://youtu.be/1MY8NuJ5fr4) |
 ----------------------
 
 <!--
