@@ -12,7 +12,7 @@ output:
 
 -----------
 
-**<big>Final project outline</big>**. Find a time series dataset of your choice. Carry out a time series analysis, taking advantage of what we have learned so far in this course. Write a report, submitted on Canvas as a zip file by the deadline, 11:59pm on Tuesday 4/23. The zip file should contain the following:
+**<big>Final project outline</big>**. Find a time series dataset of your choice. Carry out a time series analysis, taking advantage of what we have learned so far in this course. Write a report, submitted on Canvas as a zip file by the deadline, 11:59pm on Tuesday 4/22. The zip file should contain the following:
 
 1. A file called `blinded.Rmd` and its compiled version `blinded.html` which contain no identifying text. This version will be used for anonymous peer review and posted on the course website.
 
