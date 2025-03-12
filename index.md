@@ -50,7 +50,7 @@ Students registering for 631 are expected to have taken at least one core PhD-le
 
 12. [Introduction to simulation-based inference for epidemiological dynamics via the pomp R package](12/index.html)
 
-13. [Simulation of stochastic dynamic models](12/index.html)
+13. [Simulation of stochastic dynamic models](13/index.html)
 
 <!--
 14. [Likelihood for POMP models: Theory and practice](13/index.html)
