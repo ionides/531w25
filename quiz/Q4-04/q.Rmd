@@ -26,9 +26,9 @@ signif(shapiro.test(resid(arma22))$p.value,3)
 ```
 
 **A.** We should always be alert for the danger of seeing patterns in noise. The Shapiro-Wilk test is useful to confirm our assessment that the normal quantile plot shows long tails.\
-**B.** Presenting the Shapiro-Wilk test here is not very insightful here, since the long tails are fairly obvious from the normal quantile plot. However, adding this test demonstrates technical competence so it is better to include it than to omit it.\
+**B.** Presenting the Shapiro-Wilk test here is not very insightful here, since the long tails are obvious from the normal quantile plot. However, adding this test demonstrates technical competence so it is better to include it than to omit it.\
 **C.** Once the long tails are established from the normal quantile plot, the statistically relevant question is what to do about them (perhaps a log transform, perhaps a long-tailed model, perhaps a bootstrap simulation study to check whether the long tails affect the conclusions of the analysis). Presenting this test adds negative value to the analysis since it distracts attention from other more useful alternatives.\
-**D.** The Shapiro-Wilk test is useful, but has the problem that it only tells us about lack of normality, not whether the non-normality is due to skew or kurtosis. We should supplement with a Jarque Bera test to assess those.
+**D.** The Shapiro-Wilk test is useful, but has the problem that it only tells us about lack of normality, not whether the non-normality is due to skew or kurtosis. We should supplement with a Jarque-Bera test to assess those.
 
 
 
