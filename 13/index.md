@@ -16,10 +16,10 @@ The SIR model in epidemiology is closely related to predator-prey models in ecol
 | Notes   | | [pdf](https://kingaa.github.io/sbied/stochsim/notes.pdf) |
 | **R** script  | | [**R**](https://kingaa.github.io/sbied/stochsim/main.R)                                                                   |
 | Worked solutions to the Exercises | | [html](https://kingaa.github.io/sbied/stochsim/exercises.html)                    
-| Recording, Chapter 13, Part 1  | Compartment models | [(17 mins)](https://youtu.be/l5YCll5qcP0) | 
-| Recording, Chapter 13, Part 2  | Euler's method for simulating Markov processes | [(24 mins)](https://youtu.be/69F4oEjXkug) |
-| Recording, Chapter 13, Part 3  | Compartment models in the pomp package | [(47 mins)](https://youtu.be/XmUQR1Bp8C4) |
-| Recording, Chapter 13, Part 4  | Discussion of exercises | [(10 mins)](https://youtu.be/sNcNhvNY2Ro) |
+| Recording, Part 1  | Compartment models | [(17 mins)](https://youtu.be/l5YCll5qcP0) | 
+| Recording, Part 2  | Euler's method for simulating Markov processes | [(24 mins)](https://youtu.be/69F4oEjXkug) |
+| Recording, Part 3  | Compartment models in the pomp package | [(47 mins)](https://youtu.be/XmUQR1Bp8C4) |
+| Recording, Part 4  | Discussion of exercises | [(10 mins)](https://youtu.be/sNcNhvNY2Ro) |
 -----------
 
 <!--
