@@ -102,8 +102,10 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 [Solution](hw05/sol05.html).
 -->
 
-* [Homework 6](hw06/hw06.html), due Sun Mar 23, 11:59pm. 
+* [Homework 6](hw06/hw06.html), due Sun Mar 23, 11:59pm.
+<!--
 [Solution](hw06/sol06.html).
+-->
 
 * [Participation 3](participation/participation6.html), due Sun Mar 23, 11:59pm.
 
