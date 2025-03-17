@@ -2,7 +2,7 @@
 \color{blue}
 
 **Solution**. E.\
-"None of the above" is correct in two senses, since none of the reasons proposed are strong. We consider each in turn.
+"None of the above" is correct in two senses, since none of the reasons proposed are strong. Perhaps LBT had more value in an era of less computatoinal power, before maximum likelihood estimation became routine for ARMA models. LBT usually adds little or nothing to the methods covered in class. We consider each in turn.
 
 AIC values are a formal quantitative measure, just like p-values. They measure different things, as explained in the notes. Using p-values for model diagnostics is actually informal, since a formal p-value should correspond to a hypothesis specified before examining the data. So, (i) is not a good answer.
 

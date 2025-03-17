@@ -1,0 +1,32 @@
+
+Class 17 discussion problem
+
+Solve the question at https://ionides.github.io/531w25/quiz/class17.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+Multiple choice question title: Midterm project revisited: The Ljung-Box test: https://ionides.github.io/531w25/quiz/class17.pdf
+
+Question text: The question is posted at https://ionides.github.io/531w25/quiz/class17.pdf
+
+Answers: 
+
+A: (i) only
+
+B: (i, ii, iv)
+
+C: (i,iii, iv)
+
+D: (ii, iii, iv)
+
+E: None of the above
+
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer. You are expected to write between one and three sentences.
+
+For this assignment, the credit is for the showing some reasoning, not for correctness. 
+
+
+
+
