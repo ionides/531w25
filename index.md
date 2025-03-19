@@ -107,7 +107,7 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 [Solution](hw06/sol06.html).
 -->
 
-* [Participation 3](participation/participation6.html), due Sun Mar 23, 11:59pm.
+* [Participation 3](participation/participation3.html), due Sun Mar 23, 11:59pm.
 
 <!--
 * [Homework 7](hw07/hw07.html), due Sun Mar 31, 11:59pm. Extended to Wed Apr 3.
