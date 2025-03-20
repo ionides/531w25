@@ -132,6 +132,7 @@ make: gfortran-8.2: No such file or directory
 ```
 or one that otherwise refers to `gfortran`, then it is likely that you do not have the necessary version of **gfortran** installed.
 Have a look at [these instructions](https://mac.r-project.org/tools/) and contact me at the address above if these don’t work for you.
+Note that you may need to install specifically [gfortran-12.2](https://mac.r-project.org/tools/gfortran-12.2-universal.pkg).
 
 Some users have reported receiving an error complaining that 
 ```

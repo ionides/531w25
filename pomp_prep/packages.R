@@ -27,7 +27,6 @@ tidyverse
 tidyr
 magrittr
 pomp
-circumstance
 "
 )
 
@@ -52,4 +51,4 @@ inst_pkg <- function (pkglist, lib = Sys.getenv("R_LIBS_USER")) {
 }
 
 inst_pkg(pkglist,lib=lib)
-cat("first set of packages installed successfully to user directory\n\t(",lib,")!\n")
+cat("packages installed successfully to user directory\n\t(",lib,")!\n")
