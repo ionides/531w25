@@ -1,7 +1,7 @@
 
 \color{blue}
 
-**Solution**. (B)\
+**Solution**. B\
 (iv) is true by definition of a POMP model, and this rules out (iii).
 To see that (v) is not generally true, consider a Markov chain, $X_n$ on {1,2,3} which cycles $1\rightarrow 2 \rightarrow 3 \rightarrow 1$, with $X_0$ being uniform on {1,2,3}.
 Let $Y_n=A$ if $X_n\in\{1,2\}$ and $Y_n=B$ if $X_n=3$.

@@ -1,7 +1,7 @@
 
 \color{blue}
 
-**Solution**. (C)\
+**Solution**. C\
   For scientific calculations, you generally have to pick an arbitrary set of units and use it consistently.
   In `pomp`, this means that you have to use the same units for measurement times and within the latent process.
   For example, if your measurement times are in days (7,14,$\dots$) then rate parameters should have units $\mathrm{day}^{-1}$.
