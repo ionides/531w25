@@ -106,7 +106,7 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 [Solution](hw06/sol06.html).
 -->
 
-* [Participation 3](participation/participation3.html), due Sun Mar 23, 11:59pm.
+* [Piazza participation 3](participation/participation3.html), due Sun Mar 23, 11:59pm.
 
 * [Homework 7](hw07/hw07.html), due Sun Mar 30, 11:59pm.
 <!--
@@ -120,7 +120,7 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 * [Homework 8](hw08/hw08.pdf), due Sun Apr 14, 11:59pm.
 [Solution](hw08/sol08.pdf).
 
-* [Participation 8](participation/participation8.html), due Sun Apr 14, 11:59pm.
+* [Piazza participation 4](participation/participation4.html), due Sun Apr 14, 11:59pm.
 
 -->
 
