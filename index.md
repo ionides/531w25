@@ -54,9 +54,8 @@ Students registering for 631 are expected to have taken at least one core PhD-le
 
 14. [Likelihood for POMP models: Theory and practice](14/index.html)
 
-<!--
 15. [Likelihood maximization for POMP models](15/index.html)
-
+<!--
 16. [A case study of polio including covariates, seasonality & over-dispersion](16/index.html)
 
 17. [A case study of financial volatility and a POMP model with observations driving latent dynamics](17/index.html). With [notes on how to run the code on the Great Lakes Linux cluster](17/README.html).
