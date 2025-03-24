@@ -12,7 +12,7 @@
 <meta name="author" content="Edward L. Ionides" />
 
 
-<title>Modeling and Analysis of Time Series Data DATASCI/STATS 531.  Chapter 14: Likelihood for POMP models: Theory and practice</title>
+<title>Modeling and Analysis of Time Series Data DATASCI/STATS 531 Parallel statistical computing in R on greatlakes</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,28 +350,13 @@ display: none;
 
 
 <h1 class="title toc-ignore">Modeling and Analysis of Time Series
-Data<br>DATASCI/STATS 531. <br>Chapter 14: Likelihood for POMP models:
-Theory and practice</h1>
+Data<br>DATASCI/STATS 531<br>Parallel statistical computing in R on
+greatlakes</h1>
 <h4 class="author">Edward L. Ionides</h4>
 
 </div>
 
 
-<p>We continue using material from the short course <a href="https://kingaa.github.io/sbied/">Simulation-Based Inference for
-Epidemiological Dynamics</a> (SBIED). We review likelihood-based
-inference, and introduce the particle filter (also known as sequential
-Monte Carlo) which enables likelihood evaluation for general POMP
-models. We use the <code>pfilter()</code> implementation of particle
-filtering in pomp to investigate the likelihood surface for a
-Susceptible-Infected-Recovered (SIR) model.</p>
-<p>Sections I and II review material in Chapter 11, from a slightly
-different perspective, and you may want to watch this at 1.5 x speed if
-you are already comfortable with the material. Section III introduces
-the particle filter algorithm. Section IV reviews the likelihood-based
-inference topics of Chapter 5, in the context of POMP models. Sections V
-and VI look at the geometry of the likelihood for an SIR model. Section
-VII looks deeper at likelihood inference - there is overlap with Chapter
-5 but also some important new ideas.</p>
 <table>
 <colgroup>
 <col width="27%" />
@@ -382,63 +367,30 @@ VII looks deeper at likelihood inference - there is overlap with Chapter
 <tr class="odd">
 <td align="left">Slides</td>
 <td align="left"></td>
-<td align="center"><a href="https://kingaa.github.io/sbied/pfilter/slides.pdf">pdf</a></td>
+<td align="center"><a href="slides.pdf">pdf</a></td>
 </tr>
 <tr class="even">
-<td align="left">Annotated slides</td>
-<td align="left"></td>
-<td align="center"><a href="slides-annotated.pdf">pdf</a></td>
-</tr>
-<tr class="odd">
 <td align="left">Notes</td>
 <td align="left"></td>
-<td align="center"><a href="https://kingaa.github.io/sbied/pfilter/notes.pdf">pdf</a></td>
-</tr>
-<tr class="even">
-<td align="left"><strong>R</strong> script</td>
-<td align="left"></td>
-<td align="center"><a href="https://kingaa.github.io/sbied/pfilter/main.R"><strong>R</strong></a></td>
+<td align="center"><a href="notes.pdf">pdf</a></td>
 </tr>
 <tr class="odd">
-<td align="left">Recording, Section III</td>
-<td align="left">Computing the likelihood</td>
-<td align="center"><a href="https://youtu.be/uZZKglvJq0c">(27
-mins)</a></td>
+<td align="left">Test code for a parallel foreach loop</td>
+<td align="left"></td>
+<td align="center"><a href="test.R">test.R</a></td>
 </tr>
 <tr class="even">
-<td align="left">Recording, Section IV</td>
-<td align="left">Review of likelihood-based inference</td>
-<td align="center"><a href="https://youtu.be/68cX1ckgusY">(12
-mins)</a></td>
-</tr>
-<tr class="odd">
-<td align="left">Recording, Sections V,VI</td>
-<td align="left">Geometry of the likelihood function</td>
-<td align="center"><a href="https://youtu.be/oNpdp5WcdUQ">(31
-mins)</a></td>
-</tr>
-<tr class="even">
-<td align="left">Recording, Section VII</td>
-<td align="left">From likelihood evaluation toward inference</td>
-<td align="center"><a href="https://youtu.be/ZJ7mmC0E3zs">(17
-mins)</a></td>
-</tr>
-<tr class="odd">
+<td align="left">sbat file to run the foreach test on greatlakes</td>
 <td align="left"></td>
-<td align="left"></td>
-<td align="center"></td>
+<td align="center"><a href="test.sbat">test.sbat</a></td>
 </tr>
 </tbody>
 </table>
 <hr />
-<!--
-| Annotated slides | | [pdf](slides-annotated.pdf) |
--->
-<hr />
 <p><a href="../index.html">Back to course homepage</a><br />
 <a href="../acknowledge.html">Acknowledgements</a><br />
-<a href="http://github.com/kingaa/sbied/tree/master/pfilter">Source code
-for these notes</a></p>
+<a href="http://github.com/ionides/531w25/tree/master/greatlakes">Source
+code for these notes</a></p>
 <hr />
 
 

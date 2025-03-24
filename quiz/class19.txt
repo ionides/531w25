@@ -1,0 +1,32 @@
+
+Class 19 discussion problem
+
+Solve the question at https://ionides.github.io/531w25/quiz/class19.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+Multiple choice question title: Debugging pomp Csnippets: https://ionides.github.io/531w25/quiz/class19.pdf
+
+Question text: The question is posted at https://ionides.github.io/531w25/quiz/class19.pdf
+
+Answers: 
+
+A. Using R syntax within a C function that has the same name as an R function.
+
+B. A parameter is missing from the paramnames argument to pomp.
+
+C. Indexing past the end of an array because C labels indices starting at 0.
+
+D. Using beta as a parameter name when it is a declared C function.
+
+E. A missing semicolon at the end of a line.
+
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer. You are expected to write between one and three sentences.
+
+For this assignment, the credit is for the showing some reasoning, not for correctness. 
+
+
+
+
