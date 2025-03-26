@@ -1,0 +1,31 @@
+
+Class 20 discussion problem
+
+Solve the question at https://ionides.github.io/531w25/quiz/class20.pdf. Give a letter answer to the multiple choice question and some supporting reasoning.
+
+
+Multiple choice question title: Effective sample size: https://ionides.github.io/531w25/quiz/class20.pdf
+
+Question text: The question is posted at https://ionides.github.io/531w25/quiz/class20.pdf
+
+Answers: 
+
+A: There is a problem with data, perhaps an error recording an observation.
+
+B: There is a problem with the model which means that it cannot explain something in the data.
+
+C: The model and data have no major problems, but the model happens to be problematic for the particle filter algorithm.
+
+D: At least one of A, B, and C.
+
+E: Either A or B or both, but not C. If the model fits the data well, the particle filter is guaranteed to work well. 
+
+2. essay question title: Supporting reasoning
+
+Give some supporting reasoning for your answer. You are expected to write between one and three sentences.
+
+For this assignment, the credit is for the showing some reasoning, not for correctness. 
+
+
+
+
