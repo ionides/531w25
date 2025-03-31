@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="Instructor: Edward L. Ionides" />
+<meta name="author" content="STATS/DATASCI 531, Winter 2022" />
 
 
-<title>DATASCI/STATS 531/631 (Winter 2025)  ‘Modeling and Analysis of Time Series Data’</title>
+<title>Chapter 15 discussion question</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -255,7 +255,6 @@ if (window.hljs) {
 
 
 
-
 <style type="text/css">
 .main-container {
   max-width: 940px;
@@ -277,9 +276,6 @@ button.code-folding-btn:focus {
 summary {
   display: list-item;
 }
-details > summary > p:only-child {
-  display: inline;
-}
 pre code {
   padding: 0;
 }
@@ -299,8 +295,8 @@ pre code {
   border-radius: 4px;
 }
 
-.tabset-dropdown > .nav-tabs > li.active:before, .tabset-dropdown > .nav-tabs.nav-tabs-open:before {
-  content: "\e259";
+.tabset-dropdown > .nav-tabs > li.active:before {
+  content: "";
   font-family: 'Glyphicons Halflings';
   display: inline-block;
   padding: 10px;
@@ -308,9 +304,16 @@ pre code {
 }
 
 .tabset-dropdown > .nav-tabs.nav-tabs-open > li.active:before {
-  content: "\e258";
-  font-family: 'Glyphicons Halflings';
+  content: "";
   border: none;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open:before {
+  content: "";
+  font-family: 'Glyphicons Halflings';
+  display: inline-block;
+  padding: 10px;
+  border-right: 1px solid #ddd;
 }
 
 .tabset-dropdown > .nav-tabs > li.active {
@@ -355,232 +358,24 @@ pre code {
 
 
 
-<h1 class="title toc-ignore">DATASCI/STATS 531/631 (Winter 2025)
-<br>‘Modeling and Analysis of Time Series Data’</h1>
-<h4 class="author">Instructor: Edward L. Ionides</h4>
+<h1 class="title toc-ignore">Chapter 15 discussion question</h1>
+<h4 class="author">STATS/DATASCI 531, Winter 2022</h4>
 
 </div>
 
-<div id="TOC">
-<ul>
-<li><a href="#course-description" id="toc-course-description">Course
-description</a></li>
-<li><a href="#class-notes" id="toc-class-notes">Class notes</a></li>
-<li><a href="#homework-and-participation-assignments" id="toc-homework-and-participation-assignments">Homework and
-participation assignments</a></li>
-<li><a href="#quizzes" id="toc-quizzes">Quizzes</a></li>
-<li><a href="#midterm-project" id="toc-midterm-project">Midterm
-project</a></li>
-<li><a href="#final-project" id="toc-final-project">Final
-project</a></li>
-<li><a href="#using-the-great-lakes-cluster" id="toc-using-the-great-lakes-cluster">Using the Great Lakes
-cluster</a></li>
-<li><a href="#acknowledgements-and-license" id="toc-acknowledgements-and-license">Acknowledgements and
-License</a></li>
-</ul>
-</div>
 
 <hr />
-<div id="course-description" class="section level2">
-<h2>Course description</h2>
-<p>This course gives an introduction to time series analysis using time
-domain methods and frequency domain methods. The goal is to acquire the
-theoretical and computational skills required to investigate data
-collected as a time series. The first half of the course will develop
-classical time series methodology, including auto-regressive moving
-average (ARMA) models, regression with ARMA errors, and estimation of
-the spectral density. The second half of the course will focus on state
-space model techniques for fitting structured dynamic models to time
-series data. We will progress from fitting linear, Gaussian dynamic
-models to fitting nonlinear models for which Monte Carlo methods are
-required. Examples will be drawn from ecology, economics, epidemiology,
-finance and elsewhere.</p>
-<p>Additional information is in the <a href="syllabus.html">syllabus</a>. Online discussion is on <a href="https://piazza.com/umich/winter2025/datascistats531">piazza</a>.</p>
-<p>631 includes a <a href="631.html">reading group</a> where we discuss
-a research paper each week. Students registering for 631 are expected to
-have taken at least one core PhD-level class such as STATS 600.</p>
-<hr />
-</div>
-<div id="class-notes" class="section level2">
-<h2>Class notes</h2>
 <ol style="list-style-type: decimal">
-<li><p><a href="01/index.html">Introduction</a></p></li>
-<li><p><a href="02/index.html">Estimating trend and
-autocovariance</a></p></li>
-<li><p><a href="03/index.html">Stationarity, white noise, and some basic
-time series models</a></p></li>
-<li><p><a href="04/index.html">Linear time series models and the algebra
-of ARMA models</a></p></li>
-<li><p><a href="05/index.html">Parameter estimation and model
-identification for ARMA models</a></p></li>
-<li><p><a href="06/index.html">Extending the ARMA model: Seasonality,
-integration and trend</a></p></li>
-<li><p><a href="07/index.html">Introduction to time series analysis in
-the frequency domain</a></p></li>
-<li><p><a href="08/index.html">Smoothing in the time and frequency
-domains</a></p></li>
-<li><p><a href="09/index.html">Case study: An association between
-unemployment and mortality?</a></p></li>
-<li><p><a href="10/index.html">Forecasting</a></p></li>
-<li><p><a href="11/index.html">Introduction to partially observed Markov
-process models</a></p></li>
-<li><p><a href="12/index.html">Introduction to simulation-based
-inference for epidemiological dynamics via the pomp R
-package</a></p></li>
-<li><p><a href="13/index.html">Simulation of stochastic dynamic
-models</a></p></li>
-<li><p><a href="14/index.html">Likelihood for POMP models: Theory and
-practice</a></p></li>
-<li><p><a href="15/index.html">Likelihood maximization for POMP
-models</a></p></li>
-<li><p><a href="16/index.html">A case study of polio including
-covariates, seasonality &amp; over-dispersion</a></p></li>
+<li><strong>Interpreting a benchmark likelihood</strong>. Two models are fitted to case counts on an epidemic. Model 1 is an SIR POMP model with a negative binomial measurement model, and model 2 is a linear regression model estimating a cubic trend. The log likelihoods are <span class="math inline">\(\ell_1 = −2037.91\)</span> and <span class="math inline">\(\ell_2 = −2031.28\)</span> respectively. Which of the following assessments do you agree with most? Note that we can view the linear model as a benchmark, in the sense of Chapter 15.</li>
 </ol>
-<!--
-17. [A case study of financial volatility and a POMP model with observations driving latent dynamics](17/index.html). With [notes on how to run the code on the Great Lakes Linux cluster](17/README.html).
-
-18. [A case study of measles: Dynamics revealed in long time series](18/index.html)
-
-19. [A case study of ebola: Model criticism and forecasting](19/index.html)
-
--->
-<!--
-
-There are further POMP case studies, in a similar style, on [Ebola modeling](https://kingaa.github.io/sbied/ebola/index.html), [measles transmission](https://kingaa.github.io/sbied/measles/index.html), and [dynamic variation in the rate of human sexual contacts](https://kingaa.github.io/sbied/contacts/index.html).
-
---------
-
--->
-</div>
-<div id="homework-and-participation-assignments" class="section level2">
-<h2>Homework and participation assignments</h2>
-<ul>
-<li><p><a href="hw00/hw00.html">Homework 0</a>. Some course preparation.
-Nothing to submit.</p></li>
-<li><p><a href="hw01/hw01.html">Homework 1</a>, due Sun Jan 19, 11:59pm.
-<a href="hw01/sol01.html">Solution</a>.</p></li>
-<li><p><a href="hw02/hw02.html">Homework 2</a>, due Tue Jan 28, 11:59pm.
-<a href="hw02/sol02.html">Solution</a>.</p></li>
-<li><p><a href="participation/participation1.html">Piazza participation
-1</a>, due Tue Jan 28, 11:59pm.</p></li>
-<li><p><a href="hw03/hw03.html">Homework 3</a>, due Sun Feb 9, 11:59pm.
-<a href="hw03/sol03.html">Solution</a>.</p></li>
-<li><p><a href="hw04/hw04.html">Homework 4</a>, due Sun Feb 16, 11:59pm.
-<a href="hw04/sol04.html">Solution</a>.</p></li>
-<li><p><a href="participation/participation2.html">Piazza participation
-2</a>, due Sun Feb 16, 11:59pm.</p></li>
-<li><p><a href="hw05/hw05.html">Homework 5</a>, due Sun Mar 16,
-11:59pm.</p></li>
-</ul>
-<!--
-[Solution](hw05/sol05.html).
--->
-<ul>
-<li><p><a href="hw06/hw06.html">Homework 6</a>, due Sun Mar 23, 11:59pm.
-<!--
-[Solution](hw06/sol06.html).
---></p></li>
-<li><p><a href="participation/participation3.html">Piazza participation
-3</a>, due Sun Mar 23, 11:59pm.</p></li>
-<li><p><a href="hw07/hw07.html">Homework 7</a>, due Sun Mar 30.
-<strong>Deadline extended to Wed Apr 2, due to canceled class</strong>,
-11:59pm.</p></li>
-</ul>
-<!--
-
-[Solution](hw07/sol07.html).
-
-
-* [Participation 7](participation/participation7.html), due Sun Mar 31, 11:59pm. Extended to Wed Apr 3.
-
-
-* [Homework 8](hw08/hw08.pdf), due Sun Apr 14, 11:59pm.
-[Solution](hw08/sol08.pdf).
-
-* [Piazza participation 4](participation/participation4.html), due Sun Apr 14, 11:59pm.
-
--->
-<!--
-
-* There is no assigned homework for the last two weeks of the semester. You should work on your final project. The remaining lectures contain material that will be useful for your final projects.
-
--------------------
-
--->
-</div>
-<div id="quizzes" class="section level2">
-<h2>Quizzes</h2>
-<ul>
-<li><p>Quiz 1. In class on Monday 2/17. <a href="quiz/quiz1-all.pdf">Sample questions</a>. <a href="quiz/quiz1-sol.pdf">With solutions</a>. <a href="quiz/quiz1-sample.pdf">Sample quiz</a> randomly drawn from the
-quiz generator; the actual quiz will use a different seed.</p></li>
-<li><p>Quiz 2. In class on Wednesday 4/16. <a href="quiz/quiz2-all.pdf">Sample questions</a>. <a href="quiz/quiz2-sol.pdf">With solutions</a>. Note: this quiz is still
-in development.</p></li>
-</ul>
-</div>
-<div id="midterm-project" class="section level2">
-<h2>Midterm project</h2>
-<ul>
-<li><p><a href="midterm_project/midterm_project_info.html">Information</a>.</p></li>
-<li><p><a href="midterm_project/midterm_review.html">Midterm peer review
-report instructions</a></p></li>
-<li><p><a href="midterm_project/index.html">2025 midterm
-projects</a></p></li>
-<li><p>You are welcome to browse previous midterm projects. The course
-websites from <a href="http://ionides.github.io/531w21/midterm_project/">2021</a>, <a href="http://ionides.github.io/531w22/midterm_project/">2022</a> and <a href="http://ionides.github.io/531w24/midterm_project/">2024</a> have a
-posted summary of peer review comments. Earlier projects are also
-available, from <a href="http://ionides.github.io/531w16/midterm_project/">2016</a>, <a href="http://ionides.github.io/531w18/midterm_project/">2018</a> and <a href="http://ionides.github.io/531w20/midterm_project/">2020</a>.</p></li>
-</ul>
+<ol style="list-style-type: upper-alpha">
+<li><p>We should not compare the models using these likelihoods. They correspond to different model structures, so it is an apples-to-oranges comparison.</p></li>
+<li><p>We can compare them, but the difference is in the 4th significant figure, so the likelihoods are statistically indistinguishable.</p></li>
+<li><p>The linear model has a noticeably higher likelihood. Our mechanistic model needs to be updated to beat this benchmark before we can responsibly interpret the fitted model. If a simple regression model has higher likelihood than a more complex mechanistic model, one should prefer the simpler model.</p></li>
+<li><p>The linear model has a noticeably higher likelihood. The mechanistic model is somewhat validated by being not too far behind the simple regression model. We are justified in cautiously interpreting the mechanistic model, while continuing to look for further improvements.</p></li>
+<li><p>The log likelihoods cannot properly be compared as presented, but could be if we used a Gaussian measurement model for the POMP (or a negative binomial generalized linear model instead of least squares for the regression).</p></li>
+</ol>
 <hr />
-</div>
-<div id="final-project" class="section level2">
-<h2>Final project</h2>
-<ul>
-<li><p><a href="final_project/final_project_info.html">Information</a></p></li>
-<li><p><a href="final_project/final_review.html">Final peer review
-report instructions</a></p></li>
-</ul>
-<!--
-* [2025 final projects](final_project/index.html)
--->
-<ul>
-<li>You’re welcome to browse previous final projects. The <a href="http://ionides.github.io/531w24/final_project/">2024</a>, <a href="http://ionides.github.io/531w22/final_project/">2022</a> and <a href="http://ionides.github.io/531w21/final_project/">2021</a> final
-projects have a posted summary of peer review comments. Earlier projects
-from <a href="http://ionides.github.io/531w16/final_project/">2016</a>,
-<a href="http://ionides.github.io/531w18/final_project/">2018</a>, <a href="http://ionides.github.io/531w20/final_project/">2020</a> may also
-be useful.</li>
-</ul>
-<p>If building on old source code, note that there are some differences
-between versions of the software package <strong>pomp</strong>. The <a href="https://kingaa.github.io/pomp/vignettes/upgrade_guide.html"><strong>pomp</strong>
-version 2 upgrade guide</a> can be helpful. There are various smaller
-changes between <strong>pomp 2.0</strong> and the current
-<strong>pomp</strong>.</p>
-<hr />
-</div>
-<div id="using-the-great-lakes-cluster" class="section level2">
-<h2>Using the Great Lakes cluster</h2>
-<ul>
-<li><p>Great Lakes access will be set up after the midterm project and
-used for the second half of the course.</p></li>
-<li><p><a href="greatlakes/index.html">Introductory notes</a> for using
-our class account on the greatlakes cluster. This is optional but may be
-helpful for your final project.</p></li>
-<li><p>If you are already familiar with using R on Great Lakes, all you
-need to know is the class account:
-<code>datasci531w25_class</code>.</p></li>
-<li><p>You are expected to use our class account only for computations
-related to DATASCI/STATS 531.</p></li>
-<li><p>Please share knowledge about cluster computing between group
-members, and/or on piazza, to help everyone who wants to learn these
-skills.</p></li>
-<li><p>Cluster-related questions can also be emailed to the U-M
-Information and Technology Services helpdesk, <a href="mailto:help@umich.edu" class="email">help@umich.edu</a></p></li>
-</ul>
-<hr />
-</div>
-<div id="acknowledgements-and-license" class="section level2">
-<h2>Acknowledgements and License</h2>
-<p>This course and the code involved are made available with an <a href="LICENSE">Creative Commons</a>. A list of acknowledgments is <a href="acknowledge.html">available</a>.</p>
-</div>
 
 
 
