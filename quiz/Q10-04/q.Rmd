@@ -1,7 +1,7 @@
 
-![Diagnostic plot](data/mif-diagnostics-poor.pdf "Iterated filtering diagnostics")
+![Diagnostic plot for a COVID-19 model](data/mif-diagnostics-poor.pdf "Iterated filtering diagnostics")
 
-The iterated filtering convergence diagnostics plot shown above come from a [student project](https://ionides.github.io/531w21/final_project/project15/blinded.html), calculated using $10^3$ particles. What is the best interpretation?
+The iterated filtering convergence diagnostics plot shown comes from a [student project](https://ionides.github.io/531w21/final_project/project15/blinded.html) from 2021 investigating COVID-19. The calculation used $10^3$ particles. What is the best interpretation?
 
 A: Everything seems to be working fine. There is a clear consensus from the different searches concerning the highest likelihood that can be found. Therefore, the search is doing a good job of maximization. Occasional searches get lost, such as the purple line with a low likelihood, but that is not a problem.
 
