@@ -8,5 +8,7 @@
   If the model is fitting substantially below ARMA benchmarks, it is worth considering some extra time on model development. 
   Identifying time points with low effective sample size can help to identify which parts of the data are problemtic for the model to explain.
 
+In this case, the clearest clue happens to come from the benchmark ARMA comparison. The model would have fitted better with overdispersion on the latent process. If the model has a substantial flaw, this can make filtering hard but it is unproductive to bandaid the problem by using massive computational effort. It is better to fix the model.
+
 \color{black}
 
