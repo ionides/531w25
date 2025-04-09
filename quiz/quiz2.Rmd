@@ -14,7 +14,7 @@ csl: ecology.csl
 ```{r preliminaries,echo=FALSE,cache=FALSE}
 ALL <- TRUE
 SOL <- TRUE
-SOL <- FALSE
+#SOL <- FALSE
 QLABELS <- TRUE
 EXAM <- FALSE
 #EXAM <- TRUE
