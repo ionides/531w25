@@ -4,7 +4,7 @@ Class 23 discussion problem
 Solve the question at https://ionides.github.io/531w25/quiz/class23.pdf. Answer the multiple choice question and give some supporting reasoning.
 
 
-Multiple choice question title: Iterated filtering diagnostics: COVID-19: https://ionides.github.io/531w25/quiz/class23.pdf
+Multiple choice question title: GARCH likelihood: https://ionides.github.io/531w25/quiz/class23.pdf
 
 Question text: The question is posted at https://ionides.github.io/531w25/quiz/class23.pdf
 
@@ -14,11 +14,11 @@ A: The positive values of the log-likelihood are implausible. Perhaps the softwa
 
 B: The models are nested and so a larger model should mathematically have a larger likelihood. In this table, the larger model usually has lower likelihood, so optimization is problematic.
 
-C: This table would make more sense if `logLik` in fact returns an AIC value. The preferred model is $(p,q)=(1,4)$.
+C: This table would make more sense if logLik in fact returns an AIC value. The preferred model is (p,q)=(1,4).
 
-D: The preferred model is $(p,q)=(1,1)$ since it is both the simplest model and the one with the highest log-likelihood.
+D: The preferred model is (p,q)=(1,1) since it is both the simplest model and the one with the highest log-likelihood.
 
-E: `tseries::garch` produces something that is not the likelihood of $y_{1:N}$ or the AIC, and so we cannot readily compare it between models.
+E: tseries::garch produces a number that is not the likelihood of the model for the data, or the AIC, and so we cannot readily compare it between models.
 
 
 
