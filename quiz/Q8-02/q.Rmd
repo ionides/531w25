@@ -1,11 +1,11 @@
 
 Which of the following linear Gaussian POMP model have an observable variable $Y_{n}$ with distribution matching an ARMA(1,1) model? Here, $\epsilon_n$ and $\eta_n$ are Gaussian white noise. $X_n$ is 1-dimensional in (1) and 2-dimensional in (2) and (3).
 
-\(A) Only (3)\
-\(B) (1) and (2) but not (3)\
-\(C) (2) and (3) but not (1)\
-\(D) (1) and (3) but not (2)\
-\(E) (1), (2) and (3)
+**A**. Only (3)\
+**B**. (1) and (2) but not (3)\
+**C**. (2) and (3) but not (1)\
+**D**. (1) and (3) but not (2)\
+**E**. (1), (2) and (3)
 
 \begin{equation}
 \left.

@@ -28,11 +28,11 @@ In system2(command = R.home(\"bin/R\"), args = c(\"CMD\", \"SHLIB\", \"-c\",  :
 ```
 Which of the following is a plausible cause for this error?
 
-A: Using R syntax within a C function that has the same name as an R function.\
-B: A parameter is missing from the `paramnames` argument to `pomp`.\
-C: Indexing past the end of an array because C labels indices starting at 0.\
-D: Using `beta` as a parameter name when it is a declared C function.\
-E: A missing semicolon at the end of a line.
+**A**. Using R syntax within a C function that has the same name as an R function.\
+**B**. A parameter is missing from the `paramnames` argument to `pomp`.\
+**C**. Indexing past the end of an array because C labels indices starting at 0.\
+**D**. Using `beta` as a parameter name when it is a declared C function.\
+**E**. A missing semicolon at the end of a line.
 
 <!--
 This question was written for the [SBIED short course](https://kingaa.github.io/sbied/)

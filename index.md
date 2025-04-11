@@ -132,7 +132,7 @@ There are further POMP case studies, in a similar style, on [Ebola modeling](htt
 
 * Quiz 1. In class on Monday 2/17. [Sample questions](quiz/quiz1-all.pdf). [With solutions](quiz/quiz1-sol.pdf). [Sample quiz](quiz/quiz1-sample.pdf) randomly drawn from the quiz generator; the actual quiz will use a different seed.
 
-* Quiz 2. In class on Wednesday 4/16. [Sample questions](quiz/quiz2-all.pdf). [With solutions](quiz/quiz2-sol.pdf). Note: this quiz is still in development.
+* Quiz 2. In class on Wednesday 4/16. [Sample questions](quiz/quiz2-all.pdf). [With solutions](quiz/quiz2-sol.pdf). [Sample quiz](quiz/quiz2-sample.pdf) randomly drawn from the quiz generator; the actual quiz will use a different seed.
 
 ## Midterm project
 

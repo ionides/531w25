@@ -6,7 +6,7 @@ output:
     toc: no
 ---
 
-On Wednesday 4/24, or soon after, you should receive by email an assignment for two final project peer review reports. Summary points from past final review reports are available online for  [2024](https://ionides.github.io/531w24/final_project/), [2022](https://ionides.github.io/531w22/final_project/) and [2021](https://ionides.github.io/531w21/final_project/). Reviews are graded according to the same [posted rubric](../rubric_midterm_review.html) as for the midterm.
+On Wednesday 4/23, or soon after, you should receive by email an assignment for two final project peer review reports. Summary points from past final review reports are available online for  [2024](https://ionides.github.io/531w24/final_project/), [2022](https://ionides.github.io/531w22/final_project/) and [2021](https://ionides.github.io/531w21/final_project/). You are welcome to look at these for ideas when writing your reports. A [sample report](sample-final-peer-review/main.pdf) is also provided. Reviews are graded according to the same [posted rubric](../rubric_midterm_review.html) as for the midterm.
 
 All the projects will be listed at https://ionides.github.io/531w25/final_project/index.html within a day or two, but you should have access to the particular projects you are refereeing via Canvas. Let me know if you do not.
 

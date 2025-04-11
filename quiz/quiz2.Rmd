@@ -14,10 +14,10 @@ csl: ecology.csl
 ```{r preliminaries,echo=FALSE,cache=FALSE}
 ALL <- TRUE
 SOL <- TRUE
-#SOL <- FALSE
+SOL <- FALSE
 QLABELS <- TRUE
 EXAM <- FALSE
-#EXAM <- TRUE
+EXAM <- TRUE
 if(EXAM){
   ALL <- FALSE
   SOL <- FALSE
@@ -27,12 +27,11 @@ if(EXAM){
 
 \newcommand\exam[1]{#1}
 <!-- \renewcommand\exam[1]{} to remove exam formatting -->
-\renewcommand\exam[1]{}
  
 ```{r setup,echo=FALSE,cache=FALSE}
 # library(mat2tex)
 library(png)
-set.seed(48)
+# set.seed(119)
 knitr::opts_chunk$set(cache = FALSE)
 
 q_setup <- function(n){
@@ -97,7 +96,7 @@ cat("**This version lists all the questions currently in the quiz generator. The
 
 **Instructions. You have a time allowance of 30 minutes. The quiz may be ended early if everyone is done. The quiz is closed book, and you are not allowed access to any notes. Any electronic devices in your possession must be turned off and remain in a bag on the floor.**
 
-**For each question, circle one letter answer and provide some supporting reasoning.**
+**For each question, circle one letter answer and provide supporting reasoning. If you run out of space, you may continue on the back of the page, but please indicate to the reader that you are doing so.**
 
 
 \exam{\newpage}
@@ -110,6 +109,7 @@ cat_file1 <- q_setup(8)
 
 ```{r q1, child = cat_file1}
 ```
+\exam{Supporting reasoning:}
 
 \exam{\newpage}
 
@@ -121,6 +121,7 @@ cat_file2 <- q_setup(9)
 
 ```{r q2, child = cat_file2}
 ```
+\exam{Supporting reasoning:}
 
 \exam{\newpage}
 
@@ -133,6 +134,7 @@ cat_file3 <- q_setup(10)
 
 ```{r q3, child = cat_file3}
 ```
+\exam{Supporting reasoning:}
 
 \exam{\newpage}
 
@@ -144,6 +146,7 @@ cat_file4 <- q_setup(11)
 
 ```{r q4, child = cat_file4}
 ```
+\exam{Supporting reasoning:}
 
 \exam{\newpage}
 
@@ -155,6 +158,7 @@ cat_file5 <- q_setup(12)
 
 ```{r q5, child = cat_file5}
 ```
+\exam{Supporting reasoning:}
 
 \exam{\newpage}
 
@@ -166,6 +170,7 @@ cat_file6 <- q_setup(13)
 
 ```{r q6, child = cat_file6}
 ```
+\exam{Supporting reasoning:}
 
 
 
