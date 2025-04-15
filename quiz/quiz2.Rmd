@@ -14,10 +14,10 @@ csl: ecology.csl
 ```{r preliminaries,echo=FALSE,cache=FALSE}
 ALL <- TRUE
 SOL <- TRUE
-# SOL <- FALSE
+SOL <- FALSE
 QLABELS <- TRUE
 EXAM <- FALSE
-# EXAM <- TRUE
+EXAM <- TRUE
 if(EXAM){
   ALL <- FALSE
   SOL <- FALSE
@@ -29,7 +29,7 @@ if(EXAM){
 <!-- uncomment to remove exam formatting
 \renewcommand\exam[1]{}
 -->
-\renewcommand\exam[1]{} 
+
  
 ```{r setup,echo=FALSE,cache=FALSE}
 # library(mat2tex)
