@@ -14,10 +14,10 @@ csl: ecology.csl
 ```{r preliminaries,echo=FALSE,cache=FALSE}
 ALL <- TRUE
 SOL <- TRUE
-SOL <- FALSE
+# SOL <- FALSE
 QLABELS <- TRUE
 EXAM <- FALSE
-EXAM <- TRUE
+# EXAM <- TRUE
 if(EXAM){
   ALL <- FALSE
   SOL <- FALSE
@@ -26,12 +26,15 @@ if(EXAM){
 ```
 
 \newcommand\exam[1]{#1}
-<!-- \renewcommand\exam[1]{} to remove exam formatting -->
+<!-- uncomment to remove exam formatting
+\renewcommand\exam[1]{}
+-->
+\renewcommand\exam[1]{} 
  
 ```{r setup,echo=FALSE,cache=FALSE}
 # library(mat2tex)
 library(png)
-# set.seed(119)
+# set.seed(42)
 knitr::opts_chunk$set(cache = FALSE)
 
 q_setup <- function(n){
