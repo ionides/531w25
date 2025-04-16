@@ -9,6 +9,7 @@ output: html_document
 | &nbsp;       | &nbsp;      |
 |:-------------|:-----------:|
 | slides  | [pdf](slides.pdf) |
+| annotated slides | [pdf](slides-annotated.pdf) |
 | notes   | [pdf](notes.pdf) |
 | **R** script | [**R**](main.R) |
 | Running the notes on greatlakes | [HTML](README.html), [sbat](r-3.sbat) |
