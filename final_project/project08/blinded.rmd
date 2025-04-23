@@ -1,0 +1,1079 @@
+---
+title: "STATS 531 Final Project - Netflix Returns Analysis"
+author: "blinded"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    code_folding: hide
+  pdf_document:
+    toc: true
+    toc_depth: '4'
+---
+
+```{r packages, include=FALSE, message=FALSE, warning=FALSE}
+packages <- c(
+  "quantmod", "zoo", "ggplot2", "dplyr", "tidyverse", "lubridate",
+  "tseries", "forecast", "knitr", "patchwork", "rugarch"
+)
+
+# Install any packages that are missing
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+
+```{r obtain_data, include=FALSE}
+# Obtain OHLCV data for NFLX and SPY from Yahoo Finance
+getSymbols(c("NFLX", "SPY"), src = "yahoo", from = "2015-01-01", to = "2025-04-01")
+
+# Save NFLX data if not already saved, ensuring consistent column names
+if (!file.exists("nflx_ohlcv.csv")) {
+  colnames(NFLX) <- sub("NFLX\\.", "", colnames(NFLX))
+  write.zoo(NFLX, file = "nflx_ohlcv.csv", sep = ",")
+}
+
+# Save SPY data if not already saved, ensuring consistent column names
+if (!file.exists("spy_ohlcv.csv")) {
+  colnames(SPY) <- sub("SPY\\.", "", colnames(SPY))
+  write.zoo(SPY, file = "spy_ohlcv.csv", sep = ",")
+}
+```
+
+# 1. Introduction
+
+Netflix (NFLX) has become a prominent example of a high-growth, high-volatility tech stock. Its price often reacts sharply to earnings reports and subscriber numbers, making it an interesting case study for analyzing firm-specific risk and return dynamics. In contrast, the SPY ETF, which tracks the S&P 500, reflects broader market trends. By comparing these two, we can explore how individual stock behavior differs from the aggregate market.
+
+In this project, we analyze daily OHLCV* data for NFLX over several years and benchmark it against SPY. Our goal is to study the evolution and volatility of log returns, and to assess whether more flexible models, like a Partially Observed Markov Process (POMP), can better capture the dynamics of a return-driven process influenced by narrative and earnings cycles.
+
+Our analysis is guided by the following research questions:
+
+- **How do NFLX's returns evolve over time?**  
+  *We examine the volatility and short-term dynamics in the return series, focusing on structural breaks and firm-specific effects.*
+
+- **How does NFLX compare to the broader market (SPY)?**  
+  *We evaluate volatility and correlation to understand how Netflix reacts relative to overall market movements.*
+
+- **Can we model NFLX's return dynamics using POMP?**  
+  *We explore the use of a Partially Observed Markov Process (POMP) approach to capture hidden states driving price changes because it is an more interpretable model for volatility comparing to GARCH. This enables us to understand the stock market better.*
+
+To address these questions, we begin by examining the raw data through exploratory analysis. This includes cleaning and visualizing the Netflix and SPY time series, identifying structural patterns, and preparing the data for modeling.
+
+
+*\*OHLCV data refers to the Open, High, Low, Close, and Volume data for a given stock or ETF. This data is useful for understanding the return movements and trading volume of a security over time.*
+
+---
+
+# 2. EDA/Preprocessing
+
+In this section, we load, clean, and perform initial exploratory data analysis (EDA) on our datasets. We have obtained OHLCV data for both NFLX and SPY from Yahoo Finance via the `quantmod` package in R [1], covering the period from January 1, 2015, to April 1, 2025. We will check for missing values, visualize the data, and split it into training and holdout sets.
+
+### 2.1 Loading and Cleaning Data
+
+We perform a quick check for missing values and split the data into training and holdout sets using December 31, 2022, as the cutoff for training data.
+
+```{r load-data, message=FALSE, warning=FALSE, include=FALSE}
+nflx <- read.csv("nflx_ohlcv.csv") %>%
+  mutate(Date = as.Date(Index))
+spy <- read.csv("spy_ohlcv.csv") %>%
+  mutate(Date = as.Date(Index))
+
+# Check for missing values
+if (sum(is.na(nflx)) > 0) {
+  cat("NFLX data contains", sum(is.na(nflx)), "missing values.\n")
+}
+if (sum(is.na(spy)) > 0) {
+  cat("SPY data contains", sum(is.na(spy)), "missing values.\n")
+}
+
+# Split the data into training (up to 12-31-2022) and holdout sets
+nflx_train <- nflx %>% filter(Date <= as.Date("2022-12-31"))
+nflx_holdout <- nflx %>% filter(Date > as.Date("2022-12-31"))
+
+spy_train <- spy %>% filter(Date <= as.Date("2022-12-31"))
+spy_holdout <- spy %>% filter(Date > as.Date("2022-12-31"))
+
+# Inspect the data structures
+glimpse(nflx_train)
+glimpse(spy_train)
+```
+
+### 2.2 Data Visualization
+
+We visualize the time series of log returns for both NFLX and SPY. This helps us understand the overall trends and patterns in the data. 
+Log returns are preferred in financial analysis because they are time-additive, allowing for straightforward aggregation over multiple periods. Additionally, log returns are symmetric and representative of percentage changes, making them easier to interpret and compare across assets. 
+
+```{r visualize_data, message=FALSE, warning=FALSE}
+nflx_train$log_return <- c(0, diff(log(nflx_train$Close)))
+# Plot NFLX closing prices
+ggplot(nflx_train, aes(x = Date, y = log_return)) +
+  geom_line(color = "red") +
+  labs(title = "NFLX Log Returns Over Time", x = "Date", y = "Log Returns") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal()
+
+spy_train$log_return <- c(0, diff(log(spy_train$Close)))
+# Plot SPY closing prices
+ggplot(spy_train, aes(x = Date, y = log_return)) +
+  geom_line(color = "black") +
+  labs(title = "SPY Log Returns Over Time", x = "Date", y = "Log Returns") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal()
+```
+
+While log returns fluctuate around zero without a long-term trend, they show clear periods of elevated volatility (most notably during the COVID-19 crash in early 2020). With a more clear understanding of the return dynamics and basic trends, we next assess whether the time series are stationary, a prerequisite for many modeling techniques used later in this analysis.
+
+---
+
+# 3. Stationarity and Trend Analysis
+
+Before modeling, we evaluate whether the raw price series are stationary. We begin by using the Augmented Dickey-Fuller (ADF) test and then supplement this with Autocorrelation (ACF) and Partial Autocorrelation (PACF) plots for deeper insights.
+
+### 3.1 Testing for Stationarity: ADF, ACF, & PACF
+
+We first apply the ADF test to the log returns of NFLX and SPY. The ADF test has a null hypothesis that the series contains a unit root, which corresponds to a particular form of non-stationarity. If the p-value is above 0.05, we fail to reject the null, suggesting that the series may contain a unit root and require differencing.
+
+```{r adf_tests, message=FALSE, warning=FALSE}
+# Augmented Dickey-Fuller test for NFLX Close Price
+adf_nflx <- adf.test(nflx_train$log_return)
+print(adf_nflx)
+
+# Augmented Dickey-Fuller test for SPY Close Price
+adf_spy <- adf.test(spy_train$log_return)
+print(adf_spy)
+```
+
+The p-values for both series are below 0.05, indicating that we reject the null hypothesis of a unit root and conclude that the series are stationary. However, it's important to note that the ADF test may not always be decisive in practice. Rejection (or failure to reject) the null can stem from the test being sensitive to specific types of non-stationarity, and poor model fit under the ADF's assumptions can result in misleading conclusions. As such, we treat this test as a diagnostic tool rather than definitive evidence.
+
+To further examine the structure of the series, we plot the ACF and PACF for each:
+
+```{r acf_pacf, message=FALSE, warning=FALSE}
+# ACF and PACF plots for NFLX log_returns
+acf(nflx_train$log_return, main = "ACF of NFLX Log Returns")
+pacf(nflx_train$log_return, main = "PACF of NFLX Log Returns")
+
+# ACF and PACF plots for SPY log_returns
+acf(spy_train$log_return, main = "ACF of SPY Log Returns")
+pacf(spy_train$log_return, main = "PACF of SPY Log Returns")
+```
+
+The ACF plots show slow decay for both series, which is characteristic of non-stationary series. The PACF plots show significant lags as well, further supporting this assessment. Taken together with the ADF results, these diagnostics confirm that log returns are already stationary and do not require further differencing.
+
+### 3.2 Time Series Decomposition
+
+We now decompose each time series into its trend, seasonal, and residual components using STL decomposition. A frequency of 252 is chosen to approximate the number of trading days in a year, providing a relevant periodic context for the analysis. The close price is used here instead of log returns because decomposition is more meaningful on the original price series to capture long-term trends and seasonal patterns, which are not present in log returns.
+
+```{r decomp, message=FALSE, warning=FALSE}
+# Create time series objects with frequency = 252 (trading days per year)
+nflx_ts <- ts(nflx_train$Close, frequency = 252)
+spy_ts <- ts(spy_train$Close, frequency = 252)
+
+# Perform STL decomposition on NFLX data
+nflx_stl <- stl(nflx_ts, s.window = "periodic")
+plot(nflx_stl, main = "STL Decomposition of NFLX Closing Price", col = "red")
+
+# Perform STL decomposition on SPY data
+spy_stl <- stl(spy_ts, s.window = "periodic")
+plot(spy_stl, main = "STL Decomposition of SPY Closing Price")
+```
+
+The STL decomposition for NFLX reveals a pronounced upward trend with significant fluctuations, which reflects long-term company growth and investor expectations. The seasonal component appears minimal, indicating that recurring, cyclical patterns (such as quarterly effects) do not strongly drive NFLX's return movements. The residual component captures a high degree of idiosyncratic volatility and unpredictable short-term shocks.
+
+Conversely, the SPY decomposition shows a smoother, more gradual trend reflective of the broader, more diversified market. Its muted seasonal effects underscore that regular cyclicality is not a dominant factor, and the lower residual variability confirms fewer abrupt market shocks compared to NFLX.
+
+While differencing ensures stationarity in the mean, it does not address the dynamic behavior of volatility, which is particularly prominent in financial time series. In the next section, we explore both empirical and model-based methods to capture volatility dynamics in NFLX and SPY.
+
+---
+
+# 4. Volatility Modeling
+
+In this section, we analyze the volatility of Netflix (NFLX) and SPY (S&P 500 ETF) closing prices using both empirical methods and model-based approaches. Volatility provides insights into the risk associated with return movements and helps us understand the dynamics of financial time series.
+
+### 4.1 Empirical Volatility
+
+We start by estimating empirical volatility using daily returns. These daily returns are calculated as the first differences of the natural logarithm of closing prices (i.e., log returns), which are the standard metric in financial volatility modeling. Volatility is measured as the rolling standard deviation of log returns over a 30-day window. The daily log return $r_t$ is calculated as:
+
+$$r_t = \log\left(\frac{P_t}{P_{t-1}}\right)$$
+
+Where $P_t$ is the closing price on day $t$
+
+The 30-day rolling empirical volatility $\sigma_t$ at time $t$ is then given by:
+
+$$\sigma_t = \sqrt{\frac{1}{n - 1} \sum_{i = t - n + 1}^{t} (r_i - \bar{r})^2}$$
+
+Where,
+
+* $n = 30$ is the window size,
+* $r_i$ are the returns in the window, and
+* $\bar{r}$ is the mean return over the 30-day window.
+
+This rolling volatility captures the dynamic risk profile of the asset over time.
+
+```{r, empirical_volatility}
+# Calculate daily returns for NFLX and SPY
+nflx_returns <- nflx_train$log_return
+spy_returns <- spy_train$log_return
+
+# Rolling standard deviation (30-day window) for volatility
+nflx_rolling_vol <- rollapply(nflx_returns, width = 30, FUN = sd, align = "right", fill = NA)
+spy_rolling_vol <- rollapply(spy_returns, width = 30, FUN = sd, align = "right", fill = NA)
+
+# Plot rolling volatility
+ggplot() +
+  geom_line(aes(x = nflx_train$Date, y = nflx_rolling_vol), color = "red", na.rm = TRUE) +
+  geom_line(aes(x = spy_train$Date, y = spy_rolling_vol), color = "black", na.rm = TRUE) +
+  labs(title = "Rolling 30-Day Volatility: NFLX vs SPY", x = "Date", y = "Volatility (Std. Dev.)") +
+  theme_minimal()
+```
+
+**Key Observations:**
+
+* NFLX consistently exhibits higher volatility than SPY, reflecting its sensitivity to company-specific factors compared to the broader market.
+* Both assets experienced a sharp increase in volatility during the COVID-19 market crash in early 2020, highlighting systemic market stress.
+* NFLX's volatility generally ranges between 2% and 5%, while SPY remains below 2%, indicating greater stability in the index.
+
+### 4.2 Basic GARCH Modeling
+
+To capture time-dependent volatility, we fit a Generalized Autoregressive Conditional Heteroskedasticity (GARCH) model to the returns data. Specifically, we use a GARCH(1,1) model, which accounts for both past shocks and persistence in volatility.
+
+The GARCH(1,1) model [2] is defined by:
+
+$$R_t = \mu + \epsilon_t, \quad \epsilon_t = z_t \cdot \sigma_t$$
+
+$$\sigma_t^2 = \omega + \alpha \cdot \epsilon_{t - 1}^2 + \beta \cdot \sigma_{t-1}^2$$
+
+Where:
+
+* $R_t$ is the return at time t
+* $\epsilon_t$ is the return's deviation from its mean, i.e., the innovation or shock
+* $\sigma_t^2$ is the conditional variance at time t
+* $z_t$ is a white noise process
+* $\omega, \alpha, \beta$ are parameters to be estimated, where:
+  * $\omega$ is a constant term
+  * $\alpha$ controls the impact of past shocks
+  * $\beta$ regulates the persistence of volatility from the past period
+
+We fit the GARCH(1,1) model to the returns data for both NFLX and SPY. The model provides estimates of conditional volatility, allowing us to understand how shocks to prices influence future volatility.
+
+```{r, garch_modeling, include=FALSE}
+nflx_dates <- nflx_train$Date
+nflx_returns_xts <- xts(nflx_returns, order.by = nflx_dates)
+
+spy_dates <- spy_train$Date
+spy_returns_xts <- xts(spy_returns, order.by = spy_dates)
+
+# Specify the GARCH model (GARCH(1,1) for both NFLX and SPY)
+garch_spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+                         mean.model = list(armaOrder = c(0, 0), include.mean = TRUE))
+
+# Fit the GARCH model to NFLX and SPY returns
+nflx_garch <- ugarchfit(spec = garch_spec, data = nflx_returns_xts)
+spy_garch  <- ugarchfit(spec = garch_spec, data = spy_returns_xts)
+
+# Summary of the GARCH models
+summary(nflx_garch)
+summary(spy_garch)
+```
+
+```{r}
+# Plot the conditional volatility estimates from the GARCH models
+nflx_cond_vol <- sigma(nflx_garch)
+spy_cond_vol <- sigma(spy_garch)
+
+# Convert the xts objects to data frames
+nflx_vol_df <- data.frame(Date = index(nflx_cond_vol), Volatility = as.numeric(nflx_cond_vol))
+spy_vol_df  <- data.frame(Date = index(spy_cond_vol),  Volatility = as.numeric(spy_cond_vol))
+
+# Plot the conditional volatility estimates
+ggplot() +
+  geom_line(data = nflx_vol_df, aes(x = Date, y = Volatility), color = "red") +
+  geom_line(data = spy_vol_df, aes(x = Date, y = Volatility), color = "black") +
+  labs(title = "Conditional Volatility from GARCH(1,1) Models: NFLX vs SPY", x = "Date", y = "Volatility (Conditional)") +
+  theme_minimal()
+```
+
+
+The GARCH(1,1) models provide deeper insights into the volatility dynamics:
+
+* NFLX exhibits higher baseline volatility with long-lasting clusters of high volatility. SPY demonstrates quicker mean reversion and lower overall risk.
+* Both assets show significant spikes during market stress periods, such as the COVID-19 crash.
+* The GARCH model highlights how systematic risk can overshadow idiosyncratic risk during extreme events.
+
+### 4.3 Enhanced GARCH: GJR-GARCH with Skewed t-distribution
+
+While the standard GARCH(1,1) model captures time-varying volatility and clustering, it assumes that positive and negative shocks to returns have symmetric effects on future volatility. However, financial markets often exhibit leverage effects—situations where negative shocks lead to greater increases in volatility than equally-sized positive shocks. To address this, we fit a GJR-GARCH(1,1) model [3], which introduces asymmetry into the volatility equation, and further improve flexibility by adopting a skewed Student's t-distribution to accommodate fat tails in return distributions.
+
+The conditional variance equation in the GJR-GARCH(1,1) model is defined as:
+
+$$\sigma_t^2 = \omega + \alpha \cdot \epsilon_{t - 1}^2 + \gamma \cdot \mathbb{I}(\epsilon_{t-1} < 0) \cdot \epsilon_{t-1}^2 + \beta \cdot \sigma_{t - 1}^2$$
+
+Where,
+
+* $\epsilon_{t-1}$ is the innovation (shock) at time $t-1$
+* $\mathbb{I}(\cdot)$ is an indicator function that is 1 when the shock is negative (leverage effect)
+* $\omega, \alpha, \beta$ have the same interpretations as in GARCH(1,1)
+* $\gamma$ captures the asymmetry in response to negative shocks
+
+This enhanced specification allows the model to better capture real-world behavior in financial time series, particularly for volatile assets like Netflix.
+
+```{r, include=FALSE}
+# GJR-GARCH(1,1) specification with skewed Student's t-distribution
+gjr_spec <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
+  distribution.model = "sstd"
+)
+
+# Fit models for NFLX and SPY returns
+nflx_gjr <- ugarchfit(spec = gjr_spec, data = nflx_returns_xts, solver = "hybrid")
+spy_gjr <- ugarchfit(spec = gjr_spec, data = spy_returns_xts, solver = "hybrid")
+
+# Summarize model fits
+summary(nflx_gjr)
+summary(spy_gjr)
+```
+
+```{r}
+# Extract conditional volatility estimates
+nflx_vol <- sigma(nflx_gjr)
+spy_vol <- sigma(spy_gjr)
+
+# Format for plotting
+nflx_vol_df <- data.frame(Date = index(nflx_vol), Volatility = as.numeric(nflx_vol))
+spy_vol_df  <- data.frame(Date = index(spy_vol),  Volatility = as.numeric(spy_vol))
+
+# Plot GJR-GARCH Conditional Volatility
+ggplot() +
+  geom_line(data = nflx_vol_df, aes(x = Date, y = Volatility), color = "red") +
+  geom_line(data = spy_vol_df, aes(x = Date, y = Volatility), color = "black") +
+  labs(title = "Conditional Volatility (GJR-GARCH): NFLX vs SPY",
+       x = "Date", y = "Volatility (Conditional)") +
+  theme_minimal()
+```
+
+
+The GJR-GARCH models enhance volatility analysis by capturing asymmetry and fat-tailed behavior:
+
+* NFLX continues to show higher volatility than SPY, but the GJR-GARCH model reveals more pronounced peaks, especially after negative shocks.
+* Volatility clustering is amplified under this model, with stronger persistence observed during and after market downturns.
+* The inclusion of the leverage effect allows GJR-GARCH to better reflect real-world market behavior, making it more sensitive to crisis periods and extreme events.
+
+
+```{r}
+# Get number of observations used in the GARCH model
+n_obs <- length(nflx_returns)
+
+# Compute total AIC manually from per-observation AIC
+garch_aic <- round(infocriteria(nflx_garch)["Akaike", 1] * n_obs, 2)
+gjr_aic   <- round(infocriteria(nflx_gjr)["Akaike", 1] * n_obs, 2)
+
+garch_comparison <- data.frame(
+  Feature = c(
+    "Shock Symmetry",
+    "Tail Behavior",
+    "Volatility Spikes",
+    "Sensitivity to Bad News",
+    "Suitability for NFLX",
+    "AIC (NFLX)"
+  ),
+  `GARCH(1,1)` = c(
+    "Assumes symmetric response",
+    "Normal distribution",
+    "Present but smoother",
+    "Not modeled",
+    "Baseline model",
+    garch_aic
+  ),
+  `GJR-GARCH (Skewed t)` = c(
+    "Captures asymmetry (leverage effect)",
+    "Skewed Student’s t-distribution (fat tails)",
+    "More pronounced, esp. for NFLX",
+    "$$\\gamma \\cdot \\mathbb{I}(\\epsilon < 0)$$",
+    "More realistic for high-volatility assets",
+    gjr_aic
+  ),
+  check.names = FALSE
+)
+
+kable(garch_comparison, escape = FALSE, caption = "Comparison of GARCH(1,1) vs GJR-GARCH Models (NFLX)")
+```
+
+---
+
+# 5. Forecasting
+
+Understanding the volatility structure informs how we should approach forecasting. In this section, we apply ARIMA models to the differenced closing price series and evaluate their predictive performance, with special attention to the challenges posed by volatility in NFLX.
+
+### 5.1 ARIMA Model 
+
+ARIMA (AutoRegressive Integrated Moving Average) models are widely used for time series forecasting due to their ability to handle trends and autocorrelation effectively. The model parameters $(p,d,q)$ are selected automatically using the Akaike Information Criterion (AIC) to optimize fit.
+
+### 5.2 Model Fitting and Forecasting
+
+Using the auto.arima function, we automate the selection of the ARIMA model parameters (p,d,q) to minimize the Akaike Information Criterion (AIC). This aligns with our need to produce efficient forecasts underlying the structurally complex datasets of NFLX and SPY.
+
+```{r}
+# Fit an ARIMA model to the differenced NFLX and SPY data
+nflx_arima <- auto.arima(nflx_train$log_return)
+spy_arima <- auto.arima(spy_train$log_return)
+
+# Summary of the ARIMA models
+summary(nflx_arima)
+summary(spy_arima)
+
+# Forecasting the next 30 days for NFLX and SPY
+nflx_forecast <- forecast(nflx_arima, h = 30)
+spy_forecast <- forecast(spy_arima, h = 30)
+
+# Plot the forecasts
+autoplot(nflx_forecast) + ggtitle("ARIMA Forecast for NFLX Log Returns")
+autoplot(spy_forecast) + ggtitle("ARIMA Forecast for SPY Log Returns")
+```
+
+**NFLX Forecast Analysis:**
+
+* The ARIMA(2,0,2) model captures NFLX's complex dynamics, balancing autoregressive (AR) and moving average (MA) components to account for its volatile behavior. This structure reflects the stock's sensitivity to external shocks and momentum effects.
+* Residual analysis reveals heteroscedasticity with pronounced volatility spikes during periods of market disruptions, particularly after observation 1500. Extreme outliers, including negative residuals exceeding -100 points, highlight the stock's erratic return movements.
+* Forecasts exhibit significant variability due to NFLX's historical volatility patterns.
+
+**SPY Forecast Analysis:**
+
+* The ARIMA(2,0,0) model reflects SPY's stable nature by relying solely on autoregressive components to capture return dynamics. This simpler structure aligns with SPY's lower volatility compared to individual stocks.
+* Residual analysis indicates unmodeled dependencies, with significant autocorrelation spikes at lags 7 and 9. These patterns suggest that the model may not fully capture SPY's return dynamics, potentially impacting predictive accuracy.
+* Despite challenges in residual autocorrelation, SPY's forecasts remain consistent with narrower prediction intervals and lower residual variance.
+
+### 5.3 Interpretation and Diagnostics
+
+We perform diagnostic checks to validate the models' fit and ensure reliable predictions.
+
+```{r}
+# Check model diagnostics for NFLX ARIMA
+checkresiduals(nflx_arima)
+
+# Check model diagnostics for SPY ARIMA
+checkresiduals(spy_arima)
+
+# Print AIC and BIC for both models
+# cat("NFLX ARIMA AIC:", nflx_arima$aic, "BIC:", nflx_arima$bic, "\n")
+# cat("SPY ARIMA AIC:", spy_arima$aic, "BIC:", spy_arima$bic, "\n")
+```
+
+**NFLX ARIMA Model Insights:**
+
+* **Model Fit:** With an AIC of `r round(nflx_arima$aic, 2)` and BIC of `r round(nflx_arima$bic, 2)`, the selected ARIMA model provides a reasonable balance between parsimony and explanatory power. The model captures the noisy, volatile dynamics of NFLX returns, with an estimated residual variance typical of a high-volatility stock ($\sigma^2 = 0.0008542$).
+
+* **Residual Independence:** The Ljung-Box test (p-value = 0.1249) indicates no significant autocorrelation in the residuals, suggesting that the model sufficiently captures the underlying serial dependence.
+
+* **Forecast Implications:** The model's forecasts exhibit wide variability, reflective of Netflix's historical volatility. This makes short-term forecasting inherently uncertain and suggests cautious use in predictive applications.
+
+**SPY ARIMA Model Insights:**
+
+* **Model Fit:** The model for SPY achieves a lower AIC of -12289.01 and BIC of -12232.93, which is expected given SPY's smoother and more predictable return series. The tighter model reflects lower volatility and fewer large shocks, typical of diversified market indices.
+
+* **Residual Independence:** The Ljung-Box test returns a significant p-value of 0.03009, indicating autocorrelation in the residuals. This suggests systematic biases that may require further refinement of the model.
+
+* **Forecast Implications:** Although SPY's forecasts are narrower and have lower residual variance, caution is needed due to unmodeled dependencies impacting accuracy. Without addressing these dependencies, the model may not fully capture the underlying dynamics of SPY returns. 
+
+Model diagnostics confirm that the ARIMA(2,0,2) model provides a moderately good fit for NFLX log returns, with acceptable residual independence and variance. The ARIMA(2,0,0) model for SPY, while achieving superior AIC/BIC scores and lower forecast error, fails to fully decorrelate its residuals. 
+
+```{r}
+arima_diag <- data.frame(
+  Asset = c("NFLX", "SPY"),
+  `ARIMA Order` = c("(2,0,2)", "(2,0,0)"),
+  AIC = c("-8508.01", "-12289.01"),
+  BIC = c("-8479.97", "-12232.93"),
+  `Ljung-Box p-value` = c("0.1249", "0.03009"),
+  `Residual Variance` = c("0.0008542", "0.0001303"),
+  check.names = FALSE
+)
+
+kable(arima_diag, caption = "Summary of ARIMA Model Diagnostics for NFLX and SPY")
+```
+
+These findings suggest that while ARIMA models offer a useful baseline, more sophisticated frameworks, particularly those that account for volatility clustering or latent dynamics, may improve forecast accuracy for both assets.
+
+---
+
+# 6. POMP Analysis
+
+For this section, the codes are based on STATS 531 Winter 22 Project 7 [11]. Our models are implemented from STATS 531 Ch.13, 14, 17 Lecture Notes [14], and Breto (2014)[16].
+
+## 6.1 Model Specification
+
+Our POMP model treats each day's centered log-return $Y_n$ of NFLX (and likewise SPY) as a noisy observation of the latent volatility process. Concretely, we write
+
+$$
+Y_n=\exp \left\{H_n / 2\right\} \epsilon_n,
+$$
+
+where $\epsilon_n \sim N(0,\sigma_\nu)$ is a noisy measurement of $\exp \left\{H_n\right\}$ the conditional variance on day $n$. The unobserved log-volatility $H_n$ evolves via
+
+$$
+H_n=\mu_h(1-\phi)+\phi H_{n-1}+\beta_{n-1} R_n \exp \left\{-H_{n-1} / 2\right\}+\omega_n
+$$
+
+
+Here $\mu_h$ denotes the long-run mean of the log-volatility; $\phi \in(-1,1)$ measures its persistence from one day to the next; and the innovation
+
+$$
+\beta_{n-1}=Y_{n-1} \sigma_\eta \sqrt{1-\phi^2}, \quad \omega_n \sim N\left(0, \sigma_\eta^2\left(1-\phi^2\right)\left(1-R_n^2\right)\right)
+$$
+
+scales past return $Y_{n-1}$ by the shock volatility $\sigma_\eta$ and the leverage factor $R_n$, thereby allowing positive or negative returns to have asymmetric impact on current volatility. The leverage ratio
+
+$$
+R_n=\frac{\exp \left\{2 G_n\right\}-1}{\exp \left\{2 G_n\right\}+1} \in(-1,1)
+$$
+
+transforms the latent driver $G_n$ into a bounded quantity, so that large negative returns ( $R_n<0$ ) can generate higher volatility shocks. Finally, $G_n$ itself follows a Gaussian random walk
+
+$$
+G_n=G_{n-1}+\nu_n, \quad \nu_n \sim N\left(0, \sigma_\nu^2\right),
+$$
+
+with $\sigma_\nu$ governing the variability of the leverage process. The initial conditions $H_0$ and $G_0$ are treated as parameters to be estimated.
+
+## 6.2 Fitting and Inference Methods
+
+Inference for the static parameter vector $\theta=\left(\mu_h, \phi, \sigma_\eta, \sigma_\nu, G_0, H_0\right)$ proceeds by maximizing the joint data likelihood
+
+$$
+L(\theta)=\prod_{n=1}^N f\left(Y_n \mid Y_{1: n-1} ; \theta\right)
+$$
+which—because of the nonlinear, latent structure-is not available in closed form. We therefore approximate each one-step predictive density $f\left(Y_n \mid Y_{1: n-1} ; \theta\right)$ via the bootstrap particle filter with $N_p$ particles. At each time step the filter propagates particles $\left\{\left(G_n^{(j)}, H_n^{(j)}\right)\right\}$ according to the state equations and then weights and resamples them based on the measurement density $f\left(Y_n \mid H_n^{(j)} ; \theta\right)$. Summing the particle weights yields an unbiased estimate of the incremental likelihood, and summing log-increments gives an unbiased log-likelihood estimator. In practice, we estimate parameters of our volatility model using the iterated filtering (IF2) algorithm implementation. IF2 operates by repeatedly applying a particle filter with parameters perturbed via random walks, gradually reducing perturbation magnitude to approximate maximum likelihood estimates.
+
+Our implementation employs two complementary searches: \emph{local search} and \emph{global search}. In the local search, parameter estimation begins from a initial parameters from some preliminary analyses and educated guess. Specifically, we initialize the parameters with values: volatility drift ($\mu_h$) at $-0.3$, volatility persistence ($\phi$) at approximately $0.982$ ($\mathrm{plogis}(4)$), observation noise standard deviation ($\sigma_\nu$) at $\exp(-5)$, and volatility process noise ($\sigma_\eta$) at $\exp(-0.07)$. The initial latent states ($G_0$ and $H_0$) are set at zero. 
+
+The global search complements the local search by broadly exploring the parameter space. Here, initial parameter sets are randomly generated within predefined ranges: $\sigma_\nu$ from $\exp(-8)$ to $\exp(-2)$, $\mu_h$ from $-1$ to $0$, $\phi$ from $0.9$ to $0.999$, $\sigma_\eta$ from $0.2$ to $2$, and initial latent states $G_0$ and $H_0$ both from $-2$ to $2$. Each randomly initialized parameter vector initiates a separate IF2 trajectory, facilitating a comprehensive assessment of the parameter landscape and increasing robustness against local maxima traps.
+
+In both search schemes, we control computational effort via a \texttt{run\_level} setting, which adjusts key algorithmic parameters: the number of particles per filter (\texttt{Np}), the number of IF2 iterations per replicate (\texttt{Nmif}), the number of replicates for likelihood evaluation (\texttt{Nreps\_eval}), and total replicates for each search (\texttt{Nreps\_local}, \texttt{Nreps\_global}). At \texttt{run\_level = 2}, our default setting balancing accuracy and computational feasibility, we use $\texttt{Np} = 1000$ particles, $\texttt{Nmif} = 100$ IF2 iterations per replicate, $\texttt{Nreps\_eval} = 10$ replicates for evaluating likelihood, and $\texttt{Nreps\_local} = \texttt{Nreps\_global} = 20$ independent search replicates. All computational routines are parallelized using the \texttt{foreach} and \texttt{doParallel} packages, and reproducibility is maintained by setting a fixed random seed.
+
+We assess our model by examining maximum log-likelihood values, AIC, and associated Monte Carlo standard errors. Additionally, we visualize convergence through parameter trajectory plots and inspect the pairwise likelihood surfaces to evaluate parameter identifiability and potential multimodalities in the estimated likelihood landscape. 
+
+### Likelihood Estimation Codes
+
+```{r, eval=FALSE,echo=TRUE}
+# Set run level (1 = quick test, 2 = moderate, 3 = full run)
+run_level <- 2  
+
+# NFLX run parameters
+nflx_Np           <- switch(run_level, 100, 1000, 2000)
+nflx_Nmif         <- switch(run_level,  10,  100,  200)
+nflx_Nreps_eval   <- switch(run_level,   4,   10,   20)
+nflx_Nreps_local  <- switch(run_level,  10,   20,   20)
+nflx_Nreps_global <- switch(run_level,  10,   20,  100)
+
+# SPY uses the same settings
+spy_Np           <- nflx_Np
+spy_Nmif         <- nflx_Nmif
+spy_Nreps_eval   <- nflx_Nreps_eval
+spy_Nreps_local  <- nflx_Nreps_local
+spy_Nreps_global <- nflx_Nreps_global
+```
+
+```{r, eval=FALSE,echo=TRUE}
+params_nflx_guess <- c(
+  sigma_nu = exp(-6),
+  mu_h     = -0.25,
+  phi      = plogis(4),
+  sigma_eta= exp(-0.07),
+  G_0      = 0,
+  H_0      = 0
+)
+
+nflx_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+nflx_mif <- foreach(i = 1:nflx_Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(nflx_filter, params = params_nflx_guess, Np = nflx_Np, Nmif = nflx_Nmif,
+       cooling.fraction.50 = 0.5, rw.sd = nflx_rw_sd)
+}
+
+nflx_ll_mif <- foreach(i = 1:nflx_Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(nflx_Nreps_eval, logLik(pfilter(nflx_filter, params = coef(nflx_mif[[i]]), Np = nflx_Np))), se = TRUE)
+}
+
+print(nflx_ll_mif)
+colnames(nflx_ll_mif) <- c("logLik", "logLik_se")
+
+stopCluster(cl)
+```
+
+
+
+```{r, eval=FALSE,echo=TRUE}
+# Define parameter bounds for NFLX global search
+nflx_box <- rbind(
+  sigma_nu  = c(exp(-8), exp(-2)),
+  mu_h      = c(-1, 0),
+  phi       = c(0.9, 0.999),
+  sigma_eta = c(0.2, 2),
+  G_0       = c(-2, 2),
+  H_0       = c(-2, 2)
+)
+
+# Draw named starting parameter vectors
+nflx_start_params <- lapply(1:nflx_Nreps_global, function(i) {
+  apply(nflx_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+})
+
+# Run IF2 global search for NFLX
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+nflx_mif_global <- foreach(i = 1:nflx_Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(nflx_filter,
+       params = nflx_start_params[[i]],
+       Np     = nflx_Np,
+       Nmif   = nflx_Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd  = nflx_rw_sd)
+}
+
+nflx_ll_global <- foreach(i = 1:nflx_Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(nflx_Nreps_eval,
+                       logLik(pfilter(nflx_filter,
+                                      params = coef(nflx_mif_global[[i]]),
+                                      Np = nflx_Np))),
+             se = TRUE)
+}
+
+print(nflx_ll_global)
+colnames(nflx_ll_global) <- c("logLik", "logLik_se")
+```
+
+
+
+
+```{r, eval=FALSE,echo=TRUE}
+params_spy_guess <- c(
+  sigma_nu = exp(-6),
+  mu_h     = -0.25,
+  phi      = plogis(4),
+  sigma_eta= exp(-0.07),
+  G_0      = 0,
+  H_0      = 0
+)
+
+spy_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+spy_mif <- foreach(i = 1:spy_Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(spy_filter, params = params_spy_guess, Np = spy_Np, Nmif = spy_Nmif,
+       cooling.fraction.50 = 0.5, rw.sd = spy_rw_sd)
+}
+
+spy_ll_mif <- foreach(i = 1:spy_Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(spy_Nreps_eval, logLik(pfilter(spy_filter, params = coef(spy_mif[[i]]), Np = spy_Np))), se = TRUE)
+}
+
+print(spy_ll_mif)
+
+colnames(spy_ll_mif) <- c("logLik", "logLik_se")
+stopCluster(cl)
+```
+
+
+```{r, eval=FALSE,echo=TRUE}
+# Define parameter bounds for SPY global search
+spy_box <- rbind(
+  sigma_nu  = c(exp(-8), exp(-2)),
+  mu_h      = c(-1, 0),
+  phi       = c(0.9, 0.999),
+  sigma_eta = c(0.2, 2),
+  G_0       = c(-2, 2),
+  H_0       = c(-2, 2)
+)
+
+# Draw named starting parameter vectors
+spy_start_params <- lapply(1:spy_Nreps_global, function(i) {
+  apply(spy_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+})
+
+# Run IF2 global search for SPY
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+spy_mif_global <- foreach(i = 1:spy_Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(spy_filter,
+       params = spy_start_params[[i]],
+       Np     = spy_Np,
+       Nmif   = spy_Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd  = spy_rw_sd)
+}
+
+spy_ll_global <- foreach(i = 1:spy_Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(spy_Nreps_eval,
+                       logLik(pfilter(spy_filter,
+                                      params = coef(spy_mif_global[[i]]),
+                                      Np = spy_Np))),
+             se = TRUE)
+}
+
+print(spy_ll_global)
+colnames(spy_ll_global) <- c("logLik", "logLik_se")
+```
+
+```{r, eval=FALSE,echo=TRUE}
+save(nflx_mif, nflx_ll_mif, file = sprintf("nflx_local_mif%d.rda", run_level))
+
+nflx_param_mat_local <- t(sapply(nflx_mif, coef))
+nflx_results_df_local <- data.frame(
+  logLik    = nflx_ll_mif[, "logLik"],
+  logLik_se = nflx_ll_mif[, "logLik_se"],
+  nflx_param_mat_local
+)
+write.csv(nflx_results_df_local, file = "nflx_params_local.csv", row.names = FALSE)
+```
+
+```{r, eval=FALSE,echo=TRUE}
+# Save results
+save(nflx_mif_global, nflx_ll_global, file = sprintf("nflx_global_mif%d.rda", run_level))
+
+nflx_param_mat_global <- t(sapply(nflx_mif_global, coef))
+nflx_results_df_global <- data.frame(
+  logLik    = nflx_ll_global[, "logLik"],
+  logLik_se = nflx_ll_global[, "logLik_se"],
+  nflx_param_mat_global
+)
+write.csv(nflx_results_df_global, file = "nflx_params_global.csv", row.names = FALSE)
+```
+
+```{r, eval=FALSE,echo=TRUE}
+save(spy_mif, spy_ll_mif, file = sprintf("spy_local_mif%d.rda", run_level))
+
+spy_param_mat_local <- t(sapply(spy_mif, coef))
+spy_results_df_local <- data.frame(
+  logLik    = spy_ll_mif[, "logLik"],
+  logLik_se = spy_ll_mif[, "logLik_se"],
+  spy_param_mat_local
+)
+write.csv(spy_results_df_local, file = "spy_params_local.csv", row.names = FALSE)
+```
+
+```{r, eval=FALSE,echo=TRUE}
+save(spy_mif, spy_ll_mif, file = sprintf("spy_local_mif%d.rda", run_level))
+
+spy_param_mat_local <- t(sapply(spy_mif, coef))
+spy_results_df_local <- data.frame(
+  logLik    = spy_ll_mif[, "logLik"],
+  logLik_se = spy_ll_mif[, "logLik_se"],
+  spy_param_mat_local
+)
+write.csv(spy_results_df_local, file = "spy_params_local.csv", row.names = FALSE)
+```
+
+```{r, eval=FALSE,echo=TRUE}
+save(spy_mif_global, spy_ll_global, file = sprintf("spy_global_mif%d.rda", run_level))
+
+spy_param_mat_global <- t(sapply(spy_mif_global, coef))
+spy_results_df_global <- data.frame(
+  logLik    = spy_ll_global[, "logLik"],
+  logLik_se = spy_ll_global[, "logLik_se"],
+  spy_param_mat_global
+)
+write.csv(spy_results_df_global, file = "spy_params_global.csv", row.names = FALSE)
+```
+
+## 6.3 Netflix Volatility Analysis
+
+### Local Search
+
+```{r}
+# NFLX Local Search diagnostics
+nflx_local_df <- read.csv("nflx_params_local.csv")
+load(sprintf("nflx_local_mif%d.rda", 2)) 
+
+cat("NFLX Local Search:\n")
+max_row <- nflx_local_df[which.max(nflx_local_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = nflx_local_df,
+      main = "NFLX Local Search", pch = 20)
+
+plot(nflx_mif, main = "NFLX Local Convergence")
+```
+
+The maximized log-likelihood for NFLX local search is approximately 4622.8 (Monte Carlo SD $\approx$ 0.85). The NFLX local search indicates convergence towards two stable maximum likelihood regions. The scatterplot matrix shows the volatility persistence ($\phi$) cluster near its upper bound of 1, but the values between 0.7 to 0.9 has a higher likelihood, indicating a moderately persistent but mean-reverting volatility. Also, volatility drift ($\mu_h$) has a higher likelihood cluster around -7, indicating a low long run volatility. In contrast, observation noise ($\sigma_\nu$) and volatility process noise ($\sigma_\eta$) show substantial variability across replicates, highlighting parameter uncertainty. Effective Sample Size (ESS) and conditional log-likelihoods are stable at a moderate level for most data points, with few correlated dips at some isolated time points, indicating the possibility of market events. Overall, most of the particles contribute effectively to the posterior at each time step, indicating a relatively good fitting of the model, at least in quiet periods. According to the convergence plot, the log likelihood of filtering replicates converges into two groups, indicating the existence of traps for local maxima. The other parameter trajectories demonstrate unstable convergence, that they are likely to stay in a range rather than converge to a specific value, which implies that our likelihood surface might be flat or multimodal. These variability in parameters across replicates points to weaker identifiability.
+
+### Global Search
+
+```{r}
+# NFLX Global Search diagnostics
+nflx_global_df <- read.csv("nflx_params_global.csv")
+load(sprintf("nflx_global_mif%d.rda", 2))  
+
+cat("\nNFLX Global Search:\n")
+max_row <- nflx_global_df[which.max(nflx_global_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = nflx_global_df,
+      main = "NFLX Global Search", pch = 20)
+
+plot(nflx_mif_global, main = "NFLX Global Convergence")
+```
+
+The global search maximized log-likelihood for NFLX is approximately 4619.8 (Monte Carlo SD $\approx$ 0.82). The NFLX global search broadly explores the parameter surface and corroborates findings from the local search. However, we did not achieve a higher likelihood, indicating that there this specific higher likelihood region around a small range of persistence parameter ($\phi$) and volatility drift ($\mu_h$) is hard to attain. The global parameter surface exploration further illustrates a relatively flat likelihood surface for most parameters, indicating multiple parameter combinations yield similar likelihoods. The filter and convergence diagnostics are similar to local, except that here we have more extreme dips of EES and log-likelihoods and the horizontal trjactories of initial state values ($H_0$, $G_0$). Note that for any initial state value, it just stays near constant over iterations, indicating it does not have an effect on model fitting and volatility. This effect is not obvious at the local level as the scale was smaller. Overall, NFLX model fitting is moderately well but reveals weaker identifiability and uncertainty measures suggesting potential benefits from additional data or parameter profiling.
+
+## 6.4 SPY Volatility Analysis
+
+### Local Search
+
+```{r}
+# SPY Local Search diagnostics
+spy_local_df <- read.csv("spy_params_local.csv")
+load(sprintf("spy_local_mif%d.rda", 2)) 
+
+cat("SPY Local Search:\n")
+max_row <- spy_local_df[which.max(spy_local_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = spy_local_df,
+      main = "SPY Local Search", pch = 20)
+
+plot(spy_mif, main = "SPY Local Convergence")
+```
+
+The maximized log-likelihood for SPY local search is approximately 6704.1 (Monte Carlo SD $\approx$ 0.63). For SPY, the local search shows clearer and more precise parameter estimation than NFLX. Scatterplots indicate a well-defined optimal parameter cluster, particularly for volatility persistence ($\phi$) consistently estimated between 0.93 and 0.95 and volatility drift ($\mu_h$) consistently estimated around -10. This implies moderate mean-reverting volatility behavior and even lower long term volatility, which are typical for broader market indices. Observation noise ($\sigma_\nu$) and volatility process noise ($\sigma_\eta$) are still relatively small but variable, implying a flat likelihood surface and higher model uncertainty. The filter diagnostic is similar to the Netflix data, yet its negative dips are less severe, which is also expected as broader market indices. Parameter trajectories are similar to the netflix data, except that the initial state values ($H_0$, $G_0$) have a larger acceptable region for optimal likelihoods. Similar to netflix data, it also has a particular higher likelihood region that only a few filtering replicates are able to attain. 
+
+### Global Search
+
+```{r}
+# SPY Global Search diagnostics
+spy_global_df <- read.csv("spy_params_global.csv")
+load(sprintf("spy_global_mif%d.rda", 2)) 
+
+cat("SPY Global Search:\n")
+max_row <- spy_global_df[which.max(spy_global_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = spy_global_df,
+      main = "SPY Global Search", pch = 20)
+
+plot(spy_mif_global, main = "SPY Global Convergence")
+```
+
+
+The global search maximized log-likelihood for SPY is approximately 6705.1 (Monte Carlo SD $\approx$ 0.58). The SPY global search confirms the local search findings, demonstrating the same distinct peak in the likelihood surface. Global parameter scatter plots are similar to above, further strengthening the importance of tuning volatility persistence ($\phi$) and volatility drift ($\mu_h$). Deviations from optimal region of these two parameters often cause a lower likelihood, reflecting relatively good parameter identifiability. Filtering and convergence diagnostics are similar to the local search. Overall, SPY model inference exhibits better estimation quality and parameter stability compared to NFLX, likely due to the more stable volatility dynamics of the market index.
+
+
+---
+
+# 7. Market Comparison and Correlation Analysis
+
+In this section, we compare the behavior of Netflix (NFLX) and the broader market (SPY) through return-based metrics, correlation analysis, and a market sensitivity (beta) model. Our goal is to assess how closely Netflix follows market trends, particularly during periods of volatility, and to quantify its sensitivity to systemic movements.
+
+## 7.1 Daily Log Returns
+We calculate the daily log returns for both NFLX and SPY. Log returns are preferred in finance as they are time-additive and provide a more accurate representation of percentage changes. This property is particularly useful when analyzing returns over multiple periods, as it allows for straightforward aggregation. 
+
+Log returns are also symmetric for gains and losses, making them easier to interpret and compare. By focusing on log returns, we can better understand the relative performance and volatility of NFLX and SPY, which is critical for assessing risk, correlation, and market sensitivity.
+
+```{r return_comparison, message=FALSE, warning=FALSE}
+# Calculate daily log returns
+nflx_returns <- dailyReturn(Cl(NFLX), type = "log")
+spy_returns <- dailyReturn(Cl(SPY), type = "log")
+
+returns_df <- merge(nflx_returns, spy_returns, join = "inner")
+colnames(returns_df) <- c("NFLX", "SPY")
+returns_df <- data.frame(Date = index(returns_df), coredata(returns_df))
+
+ggplot(returns_df, aes(x = Date)) +
+  geom_line(aes(y = NFLX, color = "NFLX")) +
+  geom_line(aes(y = SPY, color = "SPY")) +
+  labs(title = "Daily Log Returns of NFLX vs SPY",
+       y = "Log Return", x = NULL) +
+  scale_color_manual(values = c("NFLX" = "red", "SPY" = "black")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+The time series plot of daily log returns for Netflix (NFLX) and the S&P 500 ETF (SPY) from 2015 to 2025 reveals notable differences in volatility between the two assets. NFLX consistently demonstrates higher return variability, characterized by frequent and extreme spikes, particularly during periods of market or firm-specific stress. In contrast, SPY returns remain relatively stable and concentrated around zero, reflecting the dampening effect of diversification at the index level. 
+
+Both return series exhibit heightened volatility during early 2020, coinciding with the onset of the COVID-19 pandemic, although the magnitude and recovery trajectories differ. A particularly sharp negative return for NFLX in early 2022 suggests a firm-specific shock, potentially linked to earnings announcements or subscriber losses. These dynamics underscore the higher systematic and idiosyncratic risk embedded in NFLX, supporting its classification as a high-beta asset relative to the broader market.
+
+We can extract the dates that the largely negative returns occurred. We define a 10% daily return threshold to isolate extreme events, which are typically associated with major firm-specific news or systemic market shocks. This threshold allows us to focus on extreme events that may have substantial implications for risk management and investment strategies.
+
+```{r id_large_returns, message=FALSE, warning=FALSE}
+threshold <- 0.1
+
+returns_df <- returns_df %>%
+  mutate(
+    SpikeType = case_when(
+      # NFLX >= threshold & SPY < threshold  ~ "Positive Spike (NFLX)",
+      # SPY >= threshold & NFLX < threshold  ~ "Positive Spike (SPY)",
+      NFLX <= -threshold & SPY > -threshold ~ "Negative Spike (NFLX)",
+      SPY <= -threshold & NFLX > -threshold ~ "Negative Spike (SPY)",
+      # NFLX >= threshold & SPY >= threshold ~ "Positive Spike (Both)",
+      NFLX <= -threshold & SPY <= -threshold ~ "Negative Spike (Both)",
+      TRUE                                   ~ NA_character_
+    )
+  )
+
+# Extract rows where spike occurred
+spike_dates <- returns_df %>%
+  filter(!is.na(SpikeType)) %>%
+  select(Date, NFLX, SPY, SpikeType)
+
+# kable(spike_dates)
+```
+
+### 7.2 Majorly Negative Return Events
+
+The table below provides a detailed summary of significant negative return events for NFLX, highlighting the underlying company-specific and macroeconomic factors contributing to these declines:
+
+| Date       | NFLX Return | SPY Return | Event Description |
+|------------|-------------|------------|-------------------|
+| **2016-04-19** | -13.89% | +0.31% | Netflix dropped over 12% following its Q1 2016 earnings. Despite strong Q1 performance, weak Q2 subscriber guidance raised concerns about growth. [4] |
+| **2016-07-19** | -14.07% | -0.10% | NFLX declined ~13.6% after Q2 2016 earnings revealed it missed global subscriber growth forecasts. [5]|
+| **2019-07-18** | -10.84% | +0.37% | Shares fell after Netflix added fewer subscribers than expected and reported a net loss of U.S. users, attributed to price hikes and weaker content. [6]|
+| **2020-03-12** | -10.43% | -10.06% | A broad market crash driven by COVID-19 panic; SPY and NFLX both suffered significant losses amid uncertainty. [7]|
+| **2020-03-16** | -11.81% | -11.59% | Continued pandemic-related selloff; one of the worst days in market history as shutdown fears intensified. [7]|
+| **2022-01-21** | -24.58% | -1.98% [8]| NFLX plunged after issuing weak Q1 2022 subscriber growth forecasts, well below analyst expectations. |
+| **2022-04-20** | -43.26% | -0.07% [8]| Netflix reported a Q1 2022 net loss of 200,000 subscribers and projected further declines—its largest single-day drop in over a decade. |
+
+These events highlight the asymmetric nature of stock responses to negative news, particularly around earnings and subscriber metrics. Netflix's stock has shown heightened sensitivity to deviations from growth expectations, while broader market selloffs (e.g., the COVID pandemic in March 2020) also contribute to steep declines.
+
+### 7.3 Correlation Analysis
+
+We calculate the correlation between NFLX and SPY returns over the entire period. This analysis helps us understand how closely Netflix's stock return movements align with the broader market.
+```{r pearson_correlation, message=FALSE, warning=FALSE}
+correlation <- cor(returns_df$NFLX, returns_df$SPY, use = "complete.obs")
+```
+The Pearson correlation between NFLX and SPY daily returns over the entire sample is approximately `r round(correlation, 3)`. A rolling 90-day correlation reveals how the relationship evolves over time. Rolling correlation increases sharply during periods of market stress, such as the COVID-19 crash, reflecting the tendency of systemic shocks to amplify co-movement between individual stocks and the market index.
+
+```{r rolling_correlation, message=FALSE, warning=FALSE}
+# rolling 90-day correlation
+roll_corr <- rollapply(returns_df[, c("NFLX", "SPY")],
+                       width = 90,
+                       FUN = function(x) cor(x[, 1], x[, 2]),
+                       by.column = FALSE,
+                       align = "right")
+
+roll_corr_df <- data.frame(Date = returns_df$Date[90:nrow(returns_df)],
+                           Correlation = coredata(roll_corr))
+
+ggplot(roll_corr_df, aes(x = Date, y = Correlation)) +
+  geom_line(color = "darkgreen") +
+  labs(title = "90-Day Rolling Correlation: NFLX vs SPY",
+       y = "Pearson Correlation", x = NULL) +
+  theme_minimal()
+```
+
+In summary, Netflix's returns show a moderate correlation with SPY, which tends to strengthen during periods of market stress (i.e. early 2020), indicating a heightened influence of systemic shocks. During more stable periods, this correlation declines, suggesting that Netflix's performance is driven more by firm-specific factors. This dynamic underscores the interplay between broader market trends and company-specific drivers in shaping Netflix's returns.
+
+### 7.4 Beta Analysis
+To quantify Netflix's sensitivity to market movements, we calculate its beta [9] using the following formula:
+$$
+\beta = \frac{\text{Cov}(R_{\text{NFLX}}, R_{\text{SPY}})}{\text{Var}(R_{\text{SPY}})}
+$$
+Where:
+
+- $\text{Cov}(R_{\text{NFLX}}, R_{\text{SPY}})$ is the covariance between NFLX and SPY returns.
+- $\text{Var}(R_{\text{SPY}})$ is the variance of SPY returns.
+
+This beta value indicates how much NFLX's returns move in relation to SPY's returns. A beta greater than 1 suggests that NFLX is more volatile than the market, while a beta less than 1 indicates lower volatility.
+
+```{r beta_analysis, message=FALSE, warning=FALSE}
+covariance <- cov(returns_df$NFLX, returns_df$SPY)
+variance_spy <- var(returns_df$SPY)
+beta_nflx <- covariance / variance_spy
+
+# Compute confidence interval for beta
+n <- nrow(returns_df)
+beta_se <- sqrt(var(returns_df$NFLX) / (n * variance_spy)) 
+beta_ci <- c(beta_nflx - 1.96 * beta_se, beta_nflx + 1.96 * beta_se) 
+```
+The calculated beta of NFLX relative to SPY is approximately `r round(beta_nflx, 3)`. This value indicates that NFLX is more volatile than the broader market, as expected for a high-growth tech stock. A beta greater than 1 confirms that NFLX amplifies market movements, consistent with its profile as a high-growth, high-volatility tech stock.
+
+The 95% confidence interval for the beta is `r round(beta_ci[1], 3)` to `r round(beta_ci[2], 3)`. This interval provides a range of plausible values for the beta, reflecting the uncertainty in the estimation. The fact that the entire interval lies above 1 further supports the conclusion that NFLX is more sensitive to market movements than the broader market.
+
+---
+
+# 8. Discussion
+
+### 8.1 Summary of Findings
+
+This project set out to understand the behavior of Netflix (NFLX) stock returns in comparison with the broader market, using SPY as a proxy for the S&P 500. Our analysis highlighted several key takeaways. First, NFLX consistently exhibits higher volatility than SPY, both empirically—through rolling standard deviations—and in model-based approaches like GARCH. This aligns with expectations for large-cap tech stocks that are heavily influenced by news, earnings reports, and forward-looking investor sentiment.
+
+We found that using log returns produced stationary series suitable for time series modeling. STL decomposition provided helpful insight into trend and seasonal components, with Netflix showing more irregular variation compared to the smoother patterns in SPY.
+
+Using ARIMA models, we were able to capture short-term autocorrelation structures in both assets. The model for SPY fit cleanly and produced relatively stable forecasts. For NFLX, however, the residuals showed evidence of volatility clustering and heavy tails, suggesting that ARIMA alone couldn't fully explain the dynamics of the series. This motivated the introduction of GARCH models, which were much more appropriate for capturing the heteroskedasticity in NFLX returns. We further extended this by implementing GJR-GARCH with skewed Student's t-distribution, which allowed us to model asymmetric responses to negative shocks and better account for fat-tailed behavior in returns.
+
+Building on this, we implemented a Partially Observed Markov Process (POMP) model as a state-space approach to further investigate hidden volatility regimes in NFLX stock behavior. The POMP framework allowed us to model latent market states driving observed price changes. Preliminary inference results suggested that the model successfully captured persistent volatility structures and allowed for flexible evolution of latent processes. Although parameter identifiability was mixed, the maximum log-likelihood values obtained were higher than those of both GARCH and GJR-GARCH models, and the corresponding AIC values (it only has 3 more parameters) imply a better in-sample fit. This suggests that the POMP model provides a more expressive yet tractable framework for modeling volatility dynamics in high-variance assets like Netflix.
+
+From a market behavior perspective, our correlation and beta analyses added useful context. The Pearson correlation between NFLX and SPY returns was about 0.48, and the estimated beta of 1.186 indicates that Netflix tends to amplify market movements. However, our spike analysis showed that many of the largest drops in NFLX returns were not associated with major movements in SPY. Instead, they tended to follow Netflix earnings announcements or subscriber guidance, confirming that firm-specific news, particularly earnings reports, plays a substantial role in driving return volatility.
+
+### 8.2 Relation to Past Works
+
+We looked closely at the projects from Winter 2024 and Winter 2022 that dealt with financial data. Some of these projects looked at comparing two stocks (namely Project 7; Winter 2022: Volatility Analysis on Ford and Tesla Stocks [10]), and some looked at volatility analysis of a single stock (Projects 7, 11; Winter 2024 [11] [12]) or an exchange-traded fund (ETF) (Project 6; Winter 2024 [13]). We wanted to merge these comparisons and see how one large company (Netflix) can compare to the broader market (SPY), and how Netflix's company-specific booms and busts can impact their returns more than the market forces as a whole. 
+
+> We extended the analysis beyond classical GARCH by incorporating asymmetric volatility modeling. Add direct discussions of how we expanded on the previous projects.
+
+### 8.3 Limitations and Future Work
+
+Our analysis had several limitations that point to directions for future work. First, we only used univariate models based on historical price data, without directly incorporating external factors like earnings announcements or macroeconomic indicators. Including such covariates could improve explanatory power, especially for a stock like Netflix where we have seen that firm-specific news plays a major role.
+
+Second, while ARIMA and GARCH addressed autocorrelation and volatility, both rely on assumptions of linearity and stationarity. These may not hold during periods of structural change. Exploring regime-switching or time-varying parameter models could help capture more complex dynamics.
+
+The POMP model’s Monte Carlo approximation can be computationally intensive and may struggle with sharply multimodal likelihood surfaces, limiting its real-time forecasting capability. Future improvements could include adaptive resampling, higher particle counts, or gradient-based iterated filtering to enhance stability. For volatility forecasting, POMP directly models latent state dynamics, whereas ARIMA variants forecast log returns and rely on separate GARCH‑style models for volatility. Emerging methods such as LSTM networks or automated frameworks like Prophet provide flexible nonlinear and seasonal patterns, often delivering strong predictive performance at the cost of latent interpretability. Hybrid approaches—using POMP‑estimated volatilities as inputs to LSTM or Prophet—offer a promising avenue for combining interpretability with forecasting accuracy.
+
+---
+
+# 9. Acknowledgements
+
+Much of the code and analysis in this project was inspired by the STATS 531 course materials [14] and previous projects from the Winter 2022 and Winter 2024 courses. We would like to acknowledge the contributions of our classmates and instructors for their insights and guidance throughout the course.
+
+We would also like to acknowledge the STATS 509 course [15] on financial time series data, which provided foundational knowledge and techniques that were helpful in shaping our analysis and technical discussion for this project.
+
+We acknowledge the use of OpenAI’s GPT model in generating codes and assisting with writing parts of this analysis.
+
+---
+
+# 10. References
+
+1. `quantmod` Package Documentation - [CRAN](https://cran.r-project.org/web/packages/quantmod/index.html)
+2. GARCH Model definition - [Portfolio Optimizer](https://portfoliooptimizer.io/blog/volatility-forecasting-garch11-model/)
+3. GJR-GARCH(1,1) Model - [Financial Research Data Services](https://frds.io/algorithms/gjr-garch/)
+4. Netflix Q1 2016 Earnings Report - [Business Insider](https://www.businessinsider.com/live-netflix-reports-q1-earnings-2016-4)
+5. Netflix Declining Subscriber Growth - [GeekWire](https://www.bloomberg.com/news/articles/2019-07-17/netflix-plunges-as-price-increase-leads-to-u-s-customer-losses)
+6. Netflix Pricing Increase - [Bloomberg](https://www.bloomberg.com/news/articles/2019-07-17/netflix-plunges-as-price-increase-leads-to-u-s-customer-losses)
+7. Global COVID Panic Market Decline - [The Guardian](https://www.theguardian.com/business/live/2020/mar/12/stock-markets-tumble-trump-europe-travel-ban-ecb-christine-lagarde-business-live)
+8. "Netflix just lost $50 billion in market cap" - [CNN](https://www.cnn.com/2022/04/19/media/netflix-earnings/index.html)
+9. Beta Analysis - [Investopedia](https://www.investopedia.com/terms/b/beta.asp)
+10. Project 7, Winter 2022: Volatility Analysis on Ford and Tesla Stocks - [STATS 531 Course Website](https://ionides.github.io/531w22/final_project/project07/blinded.html)
+11. Project 7, Winter 2024: Analysis of Apple Stock Price - [STATS 531 Course Website](https://ionides.github.io/531w24/final_project/project07/blinded.html)
+12. Project 11, Winter 2024: NVIDIA Stock Price Analysis - [STATS 531 Course Website](https://ionides.github.io/531w24/final_project/project07/blinded.html)
+13. Project 6, Winter 2024: Volatility Analysis of NASDAQ - [STATS 531 Course Website](https://ionides.github.io/531w24/final_project/project06/blinded.html)
+14. STATS 531 Class Notes - [STATS 531 Course Website](https://ionides.github.io/531w25/)
+15. STATS 509 - Statistical Models and Methods for Financial Data
+16. On idiosyncratic stochasticity of financial leverage effects, Breto (2014) - (https://arxiv.org/abs/1312.5496)

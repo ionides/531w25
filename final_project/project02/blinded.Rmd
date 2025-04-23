@@ -1,0 +1,415 @@
+---
+title: "Examining Explanatory Role of Momentum in Baseball"
+subtitle: "STATS 531/631 Final Report - Winter 2025"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    df_print: paged
+    mathjax: "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
+  html_notebook: default
+header-includes: \usepackage{hyperref, amsmath, amssymb, mathtools, amsthm, bbm, dsfont,
+  xcolor, gensymb}
+bibliography: references.bib
+---
+
+
+
+\newcommand\prob{\mathbb{P}}
+\newcommand\E{\mathbb{E}}
+\newcommand\var{\mathrm{Var}}
+\newcommand\cov{\mathrm{Cov}}
+\newcommand\Sum[2]{\displaystyle\sum_{#1}^{#2}}
+\newcommand\Ex[1]{\mathbb{E}\left[#1\right]}
+\newcommand\V[1]{\mathbb{V}\left[#1\right]}
+\newcommand\Cov[1]{\text{Cov}\left(#1\right)}
+\long\def\muHat{\hat{\mu}}
+\long\def\s{\text{ }}
+\long\def\ddd{,\ldots,}
+\newcommand\paren[1]{\left(#1\right)}
+\newcommand\AsRequired{\text{, as required\textsubscript{\qedsymbol}}}
+\newcommand\ttvec[2]{\begin{bmatrix} #1 \\ #2  \end{bmatrix}}
+\newcommand\txtmat[4]{\begin{bmatrix} #1 & #2 \\ #3 & #4  \end{bmatrix}}
+\newcommand\N[2]{\mathrm{N}\left(#1,\s #2\right)}
+\newcommand\set[1]{\left\{ #1 \right\}}
+\newcommand\den[2]{f_{#1}\paren{#2}}
+\newcommand\Pois[1]{\text{Poisson}\left(#1\right)}
+\newcommand\Prb[1]{\mathbb{P}\left[#1\right]}
+
+```{r forecast, echo=FALSE}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(pomp))
+suppressPackageStartupMessages(library(ggplot2))
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Athletes often describe experiencing "hot" or "cold" streaks; i.e., periods during which their performance is notably elevated or diminished. Traditionally, quantitative analysts studying sports have dismissed the notion of a "hot hand," attributing fluctuations in performance to random noise [@Gilovich1985]. However, recent work has begun to question this belief, examining the role of such streaks in sports analytics [@Miller2018]. This project studies the role of momentum in team batting in baseball. Specifically, we use the 2024 Detroit Tigers^[We made this choice as the 2024 Major League Baseball (MLB) season was the most recent complete season at the time of this report. Furthermore, the Detroit Tigers are the only MLB team based in Michigan.] We consider the question: *Does momentum significantly contribute to the game-to-game variation in a team’s batting performance across a season?* 
+
+One of the central challenges in sports analytics is that most performance metrics are inherently contextual, reflecting not just a team’s ability but also the quality and strategy of their opponent. This complexity is compounded by the fact that competitive dynamics often cannot be reduced to a single axis of performance. For example, evaluating an American football team’s defense requires accounting for multiple interdependent factors such as defensive line strength and secondary capability. Moreover, analyzing team-level metrics across games can be complicated by factors such as player injuries or lineup changes, which can be of first-order importance in sports where individual players exert outsized influence (e.g., basketball).
+
+Analyzing offensive performance in baseball alleviates (but does not eliminate) these difficulties. The game’s structure (discrete events, relatively clean separations between roles, etc.) makes it easier to place players/teams along interpretable, often one-dimensional axes and outcomes like runs scored be modeled with fewer confounding interactions than in other sports. Additionally, individual baseball (position) players tend to have lower influence on team performance than in other sports; subsequently, models that abstract away from player availability (while still imperfect) are less likely to break down in this setting.^[We note that this consideration was the motivation for analyzing team batting/offensive performance rather than pitching/defensive performance. Individual pitchers are highly influential in the number of runs a team allows in a given game. Moreover, pitcher skill varies widely and starting pitchers typically play one in five games.] Lastly, we note that the length of the Major League Baseball season (162 games) presents a distinctive advantage, yielding a time series of sufficient length to enable robust statistical analysis of performance dynamics.
+
+We plan on answering our research question by modelling the Tigers' batting performance as a POMP, with the team's runs in a given game acting as the observed representation of a latent (and unobserved) underlying offensive skill. We also wish to account for the defensive skill of the opposing team. We use publicly available records of every game in the 2024 MLB season as our data.^[https://shanemcd.org/2024/04/10/2024-mlb-schedule-and-results-in-excel-xlsx-format/] As discussed below, comparing such a POMP to a similar model with static underlying ability can provide insight on the explanatory power of momentum in sports modeling.
+
+*N.B. For any readers not familiar with baseball: "Runs" in baseball correspond to points. "Batting" performance corresponds to offensive performance (attempting to maximize runs scored), while defensive performance is reflected in pitching/fielding (attempting to minimize runs given up).*
+
+# Exploratory Data Analysis
+```{r, echo = FALSE}
+all_games <- readxl::read_xlsx("mlb-2024-asplayed.xlsx", sheet = "As-Played Schedule")
+all_games$Away_Starter <- all_games$`Away Starter`
+all_games$Home_Starter <- all_games$`Home Starter`
+all_games$Away_Score <- all_games$`Away Score`
+all_games$Home_Score <- all_games$`Home Score`
+det_games <- all_games[all_games$Away=="Detroit Tigers"|all_games$Home=="Detroit Tigers", ]
+det_games$opp_strength <- NA
+for (row in rownames(det_games)) {
+  game <- det_games[row,]
+  if (game$Away=="Detroit Tigers") {
+    opp <- game$Home
+    opp_p <- game$Home_Starter
+  } else {
+    opp <- game$Away
+    opp_p <- game$Away_Starter
+  }
+  opp_pitch_games <- rbind(
+    all_games %>% filter(Away==opp,
+                         Home!="Detroit Tigers",
+                         Away_Starter==opp_p) %>%
+      mutate(RA=Home_Score),
+    all_games %>% filter(Home==opp,
+                         Away!="Detroit Tigers",
+                         Home_Starter==opp_p) %>%
+      mutate(RA=Away_Score)
+  )
+  if (nrow(opp_pitch_games>0)) {
+    det_games[row, "opp_strength"] <- mean(opp_pitch_games$RA)
+  } else {
+    opp_games <- rbind(
+      all_games %>% filter(Away==opp,
+                           Home!="Detroit Tigers") %>%
+        mutate(RA=Home_Score),
+      all_games %>% filter(Home==opp,
+                           Away!="Detroit Tigers") %>%
+        mutate(RA=Away_Score)
+    )
+    det_games[row, "opp_strength"] <- mean(opp_games$RA)
+  }
+}
+
+det_games$R <- ifelse(det_games$Home=="Detroit Tigers",
+                      det_games$Home_Score, det_games$Away_Score)
+det_runs <- data.frame(game=(1:162), R=det_games$R)
+```
+
+
+
+We begin by visualizing the Tigers' runs-per-game over the course of the season.
+
+```{r plot_eda, echo=FALSE}
+plot(det_runs$game, det_runs$R, type = 'l', xlab = "Game", ylab = "Runs")
+title("Runs Scored Per Game by the 2024 Detroit Tigers")
+```
+
+The plot above shows that the Tigers typically scored around four runs per game, with occasional shutouts (i.e., games in which the Tigers did not score any runs) and a few isolated incidents where the Tigers scored over ten runs. The Tigers scoring peak came on Game 120 - a 8/13/2024 home game against Seattle Mariners in which the Tigers amassed 15 runs. This summary is formalized in the quartile summary below.
+
+```{r print_eda_summary, echo=FALSE}
+summary(det_runs$R)
+#det_games[which.max(det_runs$R),c("Away", "Home", "Away Score", "Home Score")]
+```
+
+
+The nearby periods around peaks and minima visually suggests short-term dependencies that could be interpreted as team momentum. However, further investigation is needed to rigorously assess and justify whether this underlying phenomenon truly exists or arises from chance. In the following section, we present our proposed POMP model to investigate this question.
+
+
+
+# Model
+
+### Latent State Transition Model
+Here, we give a transition model for the latent state (i.e., offensive skill). We consider the Markov process below.
+$$X_n = \phi X_{n-1} + \varepsilon_n,$$
+where $\varepsilon_1\ddd\varepsilon_N\overset{\text{IID}}{\sim}\N{0}{\sigma^2}$. That is, we assume our latent state evolves as an AR(1) process, where
+\begin{equation}
+    \den{X_n\mid X_{n-1}}{x_n \mid x_{n-1}} = \dfrac{1}{\sqrt{2\pi\sigma^2}}e^{-\frac{(\phi x_{n-1})^2}{2\sigma^2}}.
+\end{equation}
+
+
+### Observation Model
+We assume that $R_n$, the number of runs that the Detroit Tigers scored in Game $n$, is a Poisson-distributed random variable with rate $e^{X_n + \mu +\gamma \paren{Z_n-4.6}}$, where $Z_n$ represents opponent pitching quality. Here, we assume a Poisson distribution given its popularity in modeling count data [@Sellers2011]. We explore alternative observation models below.
+
+\begin{equation}
+    \Prb{R_n = r_n\mid X_n = x_n, Z_n} = \dfrac{\lambda_n^{r_n}e^{-\lambda_n}}{r_n!},
+\end{equation}
+where $\lambda_n = e^{X_n + \mu + \gamma \paren{Z_n-4.6}}$.
+
+
+In particular, we let $Z_n$ be the average number of runs given up by the opposing team in games that were: *(i)* started by the same starting pitcher; and *(ii)* not against the Tigers.^[If there were no such games, we used the average number of runs given up by the opposing team in all games that were not against the Tigers.]
+We subtract 4.6 because that was the average number of runs per team in a game in 2023,^[Given we are modeling 2024 data, we did not want to use this data in our covariate construction.] representing an attempt to center the metric around league-average pitching. Doing so enables $X_n+\mu$ to capture the log-expected runs against a league-average pitcher. Here, we can think of $\mu$ as the baseline skill of the team (where the Tigers would expect to score $e^{\mu}$ runs in a game against average pitching if they had completely neutral momentum).
+
+Note that, by construction, higher values of $Z_n$ indicate weaker opposing pitching, as high values correspond to a high average number of runs given up. Subsequently, negative values of $\gamma$ would indicate that the Tigers score less against stronger pitching (as one may expect).
+
+
+
+### Initialization
+We initialize $X_0=0$, assuming a "neutral momentum" to start the season.
+
+We use the model above as our primary research model. To answer our question regarding the role of momentum, we will use a likelihood ratio test to compare this model with one that assumes a constant latent offensive skill.
+
+
+
+### Implementation
+We present the implementation of our primary model (described above) for completeness. The Full_Code.Rmd attachment contains the implementation for all other models discussed.
+
+```{r present_model}
+
+# Define latent transition
+runs_step <- Csnippet("
+    double d_X = rnorm(0, sigma);
+    X = phi*X + d_X;
+    ")
+
+# Initialize X_0=0
+runs_rinit <- Csnippet("
+    X = 0;
+    ")
+
+# Likelihood evaluation
+runs_dmeas <- Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    lik = dpois(R, lambda, give_log);
+    ")
+
+# Simulation function
+runs_rmeas <- Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    R = rpois(lambda);
+  ")
+
+# Constrain mu and sigma > 0 (log(mu) represents expected runs with no momentum
+#  against league-average pitching, sigma is a variance component)
+partrans <- parameter_trans(
+  log = c("sigma", "mu")  
+)
+
+# Create covariate table for opponent pitching
+covar <- covariate_table(
+  time = c(0, det_runs$game),
+  opp_strength = c(0, det_games$opp_strength),
+  times = "time"
+)
+
+# Initialize model
+det_runs |>
+  pomp(times="game",t0=0,
+       rprocess = euler(runs_step, delta.t=1),
+       rinit = runs_rinit,
+       rmeasure = runs_rmeas,
+       dmeasure=runs_dmeas,
+       covar = covar,
+       statenames = "X",
+       paramnames = c("gamma","phi","sigma", "mu"),
+       obsnames = "R",
+       partrans = partrans
+  ) -> runsPOMP
+```
+
+
+
+
+
+
+
+# Model Fitting and Analysis
+
+In this section, we present our model fitting procedure and discuss fit diagnostics.^[Since the particle filtering algorithm is computationally intensive, we ran them in advance and load the results directly.] The full model and simulation code is provided in the attached Full_Code.Rmd file to ensure reproducibility.
+
+
+### Local Search
+
+We begin with a local search. We initially search around the following point.
+```{r initialization, include=FALSE}
+coef(runsPOMP) <- c(gamma=-.25, phi=1, sigma=0.005, mu=log(661.0/162.0))
+```
+
+This point corresponds to a model in which momentum evolves as a slowly evolving ($\sigma=0.005$) random walk ($\phi=1$), where the expected number of runs scored is negatively associated with opposing pitcher strength ($\gamma=-0.25$). Furthermore, $\frac{661}{162}$ was the Tigers' average runs scored in 2023, and setting $\mu=\log(661.0/162.0)$ corresponds to an expected value of runs scored of $\frac{661}{162}$ against league average pitching (and neutral momentum).
+
+The following plot shows simulations from this model.
+```{r sims, echo=FALSE}
+model = "AR1_pois"
+Output = readRDS(paste0("Output_", model, ".RDS"))
+
+
+sims_init <- Output[["sims_init"]]
+sims_init |>
+  ggplot(aes(x = game, y = R, group = .id, color = (.id == "data"))) +
+  geom_line() +
+  scale_color_manual(
+    values = c("TRUE" = "red", "FALSE" = "steelblue"),
+    labels = c("Observed", "Simulated"),
+    name = "Legend"
+  ) +
+  labs(
+    title = "Model Simulations vs. Observed Runs",
+    x = "Game",
+    y = "Runs"
+  ) + theme(plot.title = element_text(hjust = 0.5))
+
+L_pf <- Output[["L_pf"]]
+#L_pf
+
+
+```
+
+
+As shown above, the simulations seem approximately consistent with the patters shown by the data. We now examine the effective sample size under this setup.
+
+```{r ESS, echo=FALSE}
+pf <- Output[["pf"]]
+min_ESS_init <- Output[["min_ESS_init"]]
+plot(pf)
+print(paste0("min_ESS_init = ", format(round(min_ESS_init,2), nsmall=2)))
+```
+
+The ESS size is relatively high, reflecting that the most particles effectively contribute to prediction and that particle filtering algorithm is relatively stable. While there are a few dips, the minimum ESS is still quite large. We now examine convergence plots for our local search.
+
+```{r local_search, echo=FALSE}
+mifs_local <- Output[["mifs_local"]]
+mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y") +
+  labs(x = "Iteration", y = "Value", title="Local Search Diagnostic Plots") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the diagnostic plot above, we first observe that the log-likelihood trace increases rapidly in the first few iterations then slowly converges. Parameter $\gamma$ also converges to a stable range quickly, suggesting consistent estimation of parameter. While $\mu$ and $\phi$ exhibit some fluctuation during the process, it eventually converges towards the end of search. We note that $\phi$ converges to -1, suggesting a negative role of momentum (i.e., doing well one game is associated with poor performance the next). One potential reason for this could be a lack of stability of the random walk - we initialized this model with $\phi=1$ (although this pattern did persist when examining values of $\phi$ slightly less than 1, e.g., 0.95). We will further examine this phenomenon in the global search. Lastly, although $\sigma$ curve seems to be more diverging and sensitive to noise, the scale of this divergence is quite small.
+
+To thoroughly understand the relationships among parameters, we also plot the pairwise scatterplot of of parameters. Visually, there are strong patterns between the parameter estimates which suggest a complicated likelihood surface.
+
+```{r scattplot_loc, echo=FALSE}
+results <- Output[["results_glob"]]
+lik_form <- "~loglik + gamma + phi + sigma + mu"
+lik_form <- as.formula(lik_form)
+
+pairs(lik_form,data=results, pch=16)
+title("Pairwise Scatterplot of Log-Likelihood and Parameters", line = 2.5)
+```
+
+
+### Global Search
+
+To find the global maximum of the likelihood surface, we perform a more extensive, global search. We examined the resulting solutions given different initial parameter guesses. In the plot below, we observe that $\gamma$ estimates are fairly consistent for different $\phi, \mu, \sigma$ estimates. However, the variability in the $\phi, \mu, \sigma$ estimates suggest that the model presents identifiability issues. This is supported by the spread in maximum log-likelihood estimates, which show a range of over 40 log-likelihood units. One likely explanation for this phenomenon is a misspecified observation model. As we discussed above, the literature on conditional distributions of runs scored is sparse; thus, identifying an appropriate distribution for this purpose is highly nontrivial. We discuss alternate approaches below.
+
+```{r}
+all <- Output[["all"]]
+pairs(lik_form, data=all, pch=16, cex=0.3,
+      col=ifelse(all$type=="guess",grey(0.5),"red"))
+```
+
+Lastly, we plot the poor man's profile likelihood of $\phi$ and identify a flat likelihood surface in the middle region, where the likelihood maintains its maximum value. This suggests that the $\phi$ variation in this region does not substantially impact the likelihood, and that the data is not informative in estimating precise $\phi$ values. Outside that flat region, the likelihood drop steeply, which reflects that large magnitudes of $\phi$ do not accurately capture run dynamics. 
+
+
+```{r poorprof, echo=FALSE}
+all |>
+  filter(type=="result") |>
+  filter(loglik>max(loglik)-10) |>
+  ggplot(aes(x=phi,y=loglik))+
+  geom_point() +
+  labs(
+  x=expression(phi),
+  y="Log Likelihood",
+  title="Poor Man’s Profile Likelihood - Phi") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+# Conclusion
+
+```{r read_in_output_nbin, echo=FALSE}
+Output_AR1_pois <- readRDS("Output_AR1_pois.RDS")
+Output_AR1_nbin <- readRDS("Output_AR1_nbin.RDS")
+Output_static_pois <- readRDS("Output_static_pois.RDS")
+Output_static_nbin <- readRDS("Output_static_nbin.RDS")
+
+MLL <- 
+  list(pois=list(AR1=max(c(Output_AR1_pois[["results_glob"]]$loglik,
+                           Output_AR1_pois[["results_glob"]]$loglik)),
+                 static=max(c(Output_static_pois[["results_glob"]]$loglik,
+                              Output_static_pois[["results_glob"]]$loglik))),
+       nbin=list(AR1=max(c(Output_AR1_nbin[["results_glob"]]$loglik,
+                           Output_AR1_nbin[["results_glob"]]$loglik)),
+                 static=max(c(Output_static_nbin[["results_glob"]]$loglik,
+                              Output_static_nbin[["results_glob"]]$loglik))))
+p_1 <- pchisq(q=2*(MLL$pois$AR1-MLL$pois$static), df=2, lower.tail=FALSE)
+p_2 <- pchisq(q=2*(MLL$nbin$AR1-MLL$nbin$static), df=2, lower.tail=FALSE)
+```
+
+As discussed above, we wish to compare our chosen model (for which latent momentum $X$ evolves as a Gaussian AR1 process) with one that assumes a constant offensive skill. We note that a model which contains a static latent momentum $X$ and a "baseline skill" $\mu$ would not be identifiable, as there would be no way of distinguishing the constant momentum from the constant baseline skill. Taking $\phi=0$ and $\sigma=0$ in our chosen model thus corresponds to an (identifiable) submodel in which there is no contribution of latent momentum. Therefore, we can conduct a likelihood ratio test for the following:
+$$H_0: \begin{bmatrix} \phi \\ \sigma \end{bmatrix} = \begin{bmatrix} 0 \\ 0 \end{bmatrix},\text{ } H_1: \begin{bmatrix} \phi \\ \sigma \end{bmatrix} \neq \begin{bmatrix} 0 \\ 0 \end{bmatrix}.$$
+
+The maximum log-likelihood under the null hypothesis (i.e., under the static model) is $\approx -437.50$, with the maximum log-likelihood under the alternative model (i.e., the chosen model which considers the role of momentum) is $\approx -397.81$. This difference generates a p-value of $<0.001$, suggesting the observed log-likelihood difference of $\approx 40$ is significant.^[Note that we use Wilks' approximation that $2(l_1-l_0)\sim\chi^2_d$, where $l_0,l_1$ are the likelihoods under the null/alternative hypotheses, and $d$ is the number of parameters constrained in the null model.] We would thus reject the null hypothesis and conclude that momentum does provide explanatory power of a team's offensive performance.
+
+
+
+# Alternate Models
+As discussed above, we chose a Poisson measurement model given its popularity in modeling count data. However, baseball analysts have noted that runs-per-game are not well-described by a Poisson distribution.^[https://walksaber.blogspot.com/2012/06/on-run-distributions-pt1.html] Baseball analysts have observed that the negative binomial distribution provides a better fit for modeling runs scored per game than the Poisson distribution, and have even developed specialized distributions tailored to the nuances of run-scoring in baseball.^[https://walksaber.blogspot.com/2012/06/on-run-distributions-pt-2.html] 
+
+It’s worth noting that these claims pertain to the marginal distribution of runs scored (averaged over all opponents) whereas our measurement model focuses on the conditional distribution given opposing pitching quality. We were unable to find any prior work modeling this conditional structure directly. Give the identifiability issues observed above, a prudent follow-up analysis would be to explore alternate observation models. 
+
+As a sensitivity analysis, we consider the above approach with negative binomial measurement models. I.e., we consider $\Prb{R_n = r\mid X_n = x_n, Z_n} = \binom{r + k - 1}{r} \left( \frac{k}{k + \lambda_n} \right)^k \left( \frac{\lambda_n}{k + \lambda_n} \right)^r$ (note that this corresponds to the negative binomial distribution with dispersion $k$ and mean $\lambda_n$, with $\lambda_n$ defined as in the primary model with Poisson observation density).
+
+
+Under negative binomial observation models, the model which incorporated a latent momentum $X_n$ and the one that did not generated nearly identical maximum log-likelihoods of $\approx -396.46$. Subsequently, under a negative binomial observation model, we would not reject the null - we would fail to conclude that momentum played a material role in explaining offensive performance fluctuation.^[Note that the negative binomial model fitting diagnostics showed similar identifiability issues as the Poisson model.]
+
+
+
+
+
+
+# Discussion and Limitations
+
+The analysis of our primary model led us to conclude that momentum is a material factor in explaining team-level offensive performance fluctuation in Major League Baseball. However, model fit concerns and the sensitivity of our conclusions to choice of observation model suggest that this top-level conclusion is not robust to alternate modeling specifications. We explore additional limitations of our approach, and subsequent directions forward, below.
+
+As discussed above, the discrete and isolated nature of pitcher/batter matchups in baseball makes simple models, like those considered here, reasonable first-order approximations of the underlying competitive process. In contrast, modeling sports like football or basketball often requires accounting for a broader set of strategic dynamics (e.g., the interplay between offensive and defensive schemes or the composition and synergy of lineups). These complexities are less central in baseball, but that does not mean they absent entirely. In particular, models that consider player availability may provide more explanatory power with respect to offensive fluctuations. Having a star player return may catalyze a team's batting performance. While such modeling concerns may be less salient in baseball compared with other sports, incorporating player availability can provide further insight on sources of team-level performance fluctuation. One such method to incorporate this effect could be to modify the observation model to the following: $R_n\sim\Pois{e^{X_n + \mu +\gamma \paren{Z_n-4.6} + \beta W_n}}$, with $W_n$ representing player availability at Game $n$. A practical approach for defining $W_n$ could be to use the 2023 “wins above replacement” (WAR) statistic, which estimates the number of wins a player contributes above a replacement-level alternative. Specifically, $W_n$ could be set to the percentage of total WAR (aggregated over all Tigers position players) that is available for Game $n$, potentially weighted by expected playing time. This could serve as a useful proxy for the offensive potential available to the team on a given day.
+
+Additionally, we considered team performance, rather than individual performance, in this report. Doing so simplified model construction, as each team is guaranteed to play exactly 162 games in a regular season. That said, the case for individual momentum is arguably more compelling; most people with any sporting experience can recall moments when they felt they had the "hot hand."
+
+Modeling momentum at the individual level, however, raises a number of challenges that go beyond the scope of this report. For instance:
+
+* Data acquisition and processing for plate appearance-level results.
+
+* Modeling the number of plate appearances a player has in a given game.
+
+* Accounting for situational context. For example, a batter's approach may differ if they are leading off an inning versus trying to drive in a runner with a sacrifice fly. 
+
+These concerns are largely averaged out when analyzing game-level team performance, making team-based models more tractable and less sensitive to within-game variation (hence their omission in our analysis). However, a future direction for this approach could involve an attempt to address the issues discussed above and model player-level momentum.
+
+Additionally, we considered two different measurement models (Poisson and negative binomial). These models have been explored in the context of marginal runs scored; however, literature regarding modeling conditional run distributions (as discussed above) remains sparse. A next step in strengthening our POMP would involve a thorough search for an appropriate observation model. 
+
+A final direction to consider could be to re-examine the construction of $Z_n$. Possible considerations for alternate opponent-strength metrics could involve considering opponent-level momentum as well. Moreover, in our current approach, $Z_n$ is constructed using a season-level metric that includes games occurring after Game $n$ (though none involving the Tigers). While it is unlikely that the Tigers' Game $n$ performance meaningfully influences their opponent's future games, a more rigorous formulation might restrict $Z_n$ to use only information available prior to Game $n$.
+
+# Scholarship
+
+Our work distinguishes from previous projects by investigating team momentum in sports, a domain that had not been explored in past projects. However, we follow several earlier projects in considering POMP modeling in domains other than epidemiology and stock/crypto prices. For example, 
+
+* Project 07, WI21 [@project07_ionides_2021] investigates the impact of search trends from information transmission with compartment models. 
+
+* Project 01, WI22 [@project01_ionides_2022] investigates online player dynamics due to COVID-19 pandemic with POMP and GARCH models. 
+
+* Project 02, WI24 [@project02_ionides_2024] investigates the alternative prey hypothesis with a POMP framework. 
+
+Like previous projects, our work also follows diagnosis and simulations on POMP in lecture (further, we borrow code from the lecture notes) ([@ch13_pomp, @ch14_pomp, @ch15_pomp]). Like Project 12, WI24 [@project12_ionides_2024], our primary model showed identifiability concerns when examining the geometry of the likelihood surface in the scatterplot matrix describing the global parameter search.^[Although their model shows stronger identifiability than the one described in this report.] Lastly, in addition to subject matter differences, our analysis differs from the above projects in that our primary research question concerns the explanatory value of an evolving latent state. Subsequently, we turn to likelihood ratio tests to answer our primary questions whereas the projects above examine other aspects of their models.
+
+
+# References
+
+*ChatGPT was used to help polish individual sentences/paragraphs.*

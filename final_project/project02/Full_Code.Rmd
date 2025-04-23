@@ -1,0 +1,1025 @@
+---
+title: "Model_Definitions"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is code to define all the different POMP models to consider.
+
+```{r forecast, echo=FALSE}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(pomp))
+suppressPackageStartupMessages(library(ggplot2))
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Read In Data - Process Opponent Strength
+
+```{r}
+all_games <- readxl::read_xlsx("mlb-2024-asplayed.xlsx", sheet = "As-Played Schedule")
+all_games$Away_Starter <- all_games$`Away Starter`
+all_games$Home_Starter <- all_games$`Home Starter`
+all_games$Away_Score <- all_games$`Away Score`
+all_games$Home_Score <- all_games$`Home Score`
+det_games <- all_games[all_games$Away=="Detroit Tigers"|all_games$Home=="Detroit Tigers", ]
+det_games$opp_strength <- NA
+for (row in rownames(det_games)) {
+  game <- det_games[row,]
+  if (game$Away=="Detroit Tigers") {
+    opp <- game$Home
+    opp_p <- game$Home_Starter
+  } else {
+    opp <- game$Away
+    opp_p <- game$Away_Starter
+  }
+  opp_pitch_games <- rbind(
+    all_games %>% filter(Away==opp,
+                         Home!="Detroit Tigers",
+                         Away_Starter==opp_p) %>%
+      mutate(RA=Home_Score),
+    all_games %>% filter(Home==opp,
+                         Away!="Detroit Tigers",
+                         Home_Starter==opp_p) %>%
+      mutate(RA=Away_Score)
+  )
+  if (nrow(opp_pitch_games>0)) {
+    det_games[row, "opp_strength"] <- mean(opp_pitch_games$RA)
+  } else {
+    opp_games <- rbind(
+      all_games %>% filter(Away==opp,
+                           Home!="Detroit Tigers") %>%
+        mutate(RA=Home_Score),
+      all_games %>% filter(Home==opp,
+                           Away!="Detroit Tigers") %>%
+        mutate(RA=Away_Score)
+    )
+    det_games[row, "opp_strength"] <- mean(opp_games$RA)
+  }
+}
+
+det_games$R <- ifelse(det_games$Home=="Detroit Tigers",
+                      det_games$Home_Score, det_games$Away_Score)
+det_runs <- data.frame(game=(1:162), R=det_games$R)
+
+```
+
+
+
+
+
+
+
+
+
+
+# Get Initial Dispersion Parameter - Neg Binom
+
+```{r}
+mean_2023 <- 661.0/162.0
+var_2023 <- 7.20470056
+
+disp_2023 <- (mean_2023^2)/(var_2023-mean_2023)
+round(disp_2023,2)
+```
+
+
+
+
+```{r}
+run_level <- "explore"
+if (run_level=="explore") {
+  nseq <- 5
+  length <- 10
+  nprof <- 10
+} else if (run_level=="final") {
+  nseq <- 500
+  length <- 40
+  nprof <- 15
+}
+```
+
+
+
+# Initialize POMP Object Components
+```{r}
+
+runs_step <- list(
+  AR1 = Csnippet("
+    double d_X = rnorm(0, sigma);
+    X = phi*X + d_X;
+  "),
+  static = Csnippet("
+    // X stays constant
+  ")
+)
+
+runs_rinit <- list(
+  AR1 = Csnippet("
+    X = 0;
+  "),
+  static = function(...) {
+    setNames(numeric(0), character(0))
+  }
+)
+
+
+
+runs_dmeas <- list(
+  AR1_pois = Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    lik = dpois(R, lambda, give_log);
+  "),
+  static_pois = Csnippet("
+    double lambda;
+    lambda = exp(mu + gamma*(opp_strength-4.6));
+    lik = dpois(R, lambda, give_log);
+  "),
+  AR1_nbin = Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    lik = dnbinom_mu(R, k, lambda, give_log);
+  "),
+  static_nbin = Csnippet("
+    double lambda;
+    lambda = exp(mu + gamma*(opp_strength-4.6));
+    lik = dnbinom_mu(R, k, lambda, give_log);
+  ")
+)
+
+
+
+runs_rmeas <- list(
+  AR1_pois = Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    R = rpois(lambda);
+  "),
+  static_pois = Csnippet("
+    double lambda;
+    lambda = exp(mu + gamma*(opp_strength-4.6));
+    R = rpois(lambda);
+  "),
+  AR1_nbin = Csnippet("
+    double lambda;
+    lambda = exp(X + mu + gamma*(opp_strength-4.6));
+    R = rnbinom_mu(k, lambda);
+  "),
+  static_nbin = Csnippet("
+    double lambda;
+    lambda = exp(mu + gamma*(opp_strength-4.6));
+    R = rnbinom_mu(k, lambda);
+  ")
+)
+
+partrans <- parameter_trans(
+  log = "sigma"  # Constrain sigma to be > 0
+)
+
+# Create Covariate Table
+covar <- covariate_table(
+  time = c(0, det_runs$game),
+  opp_strength = c(0, det_games$opp_strength),
+  times = "time"
+)
+```
+#HERE
+Then we fold the data and model components into a `pomp` object.
+```{r fold_it}
+set.seed(657)
+runsPOMP <- NULL
+
+det_runs |>
+  pomp(times="game",t0=0,
+       rprocess=euler(runs_step[["AR1"]],delta.t=1),
+       rinit=runs_rinit[["AR1"]],
+       rmeasure=runs_rmeas[["AR1_pois"]],
+       dmeasure=runs_dmeas[["AR1_pois"]],
+       covar = covar,
+       statenames="X",
+       paramnames=c("gamma","phi","sigma", "mu"),
+       obsnames = "R",
+       partrans = partrans
+  ) -> runsPOMP[["AR1_pois"]]
+coef(runsPOMP[["AR1_pois"]]) <- c(gamma=-.25, phi=1, sigma=0.005, mu=log(661.0/162.0))
+
+det_runs |>
+  pomp(times="game",t0=0,
+       rprocess=euler(runs_step[["static"]],delta.t=1),
+       rinit=runs_rinit[["static"]],
+       rmeasure=runs_rmeas[["static_pois"]],
+       dmeasure=runs_dmeas[["static_pois"]],
+       covar = covar,
+       paramnames=c("gamma","mu"),
+       obsnames = "R"
+  ) -> runsPOMP[["static_pois"]]
+coef(runsPOMP[["static_pois"]]) <- c(gamma=-1, mu=log(661.0/162.0))
+
+
+
+det_runs |>
+  pomp(times="game",t0=0,
+       rprocess=euler(runs_step[["AR1"]],delta.t=1),
+       rinit=runs_rinit[["AR1"]],
+       rmeasure=runs_rmeas[["AR1_nbin"]],
+       dmeasure=runs_dmeas[["AR1_nbin"]],
+       covar = covar,
+       statenames="X",
+       paramnames=c("gamma","phi", "sigma", "k", "mu"),
+       obsnames = "R",
+       partrans = partrans
+  ) -> runsPOMP[["AR1_nbin"]]
+coef(runsPOMP[["AR1_nbin"]]) <- 
+  c(gamma=-1, phi=1, sigma=0.1, k=disp_2023, mu=log(661.0/162.0))
+
+
+det_runs |>
+  pomp(times="game",t0=0,
+       rprocess=euler(runs_step[["static"]],delta.t=1),
+       rinit=runs_rinit[["static"]],
+       rmeasure=runs_rmeas[["static_nbin"]],
+       dmeasure=runs_dmeas[["static_nbin"]],
+       covar = covar,
+       paramnames=c("gamma", "k", "mu"),
+       obsnames = "R"
+  ) -> runsPOMP[["static_nbin"]]
+coef(runsPOMP[["static_nbin"]]) <- c(gamma=-1, k=disp_2023, mu=log(661.0/162.0))
+#coef(runsPOMP[["static_nbin"]]) <- c(gamma=-1, k=disp_2023)
+
+
+```
+
+
+
+
+```{r library_invoke, echo=FALSE}
+suppressPackageStartupMessages(library(foreach))
+suppressPackageStartupMessages(library(doFuture))
+plan(multisession)
+Output <- NULL
+```
+
+```{r}
+
+global_guesses <- function(model) {
+  if (model=="AR1_pois") {
+    runif_design(
+      lower=c(gamma=-1, phi=-0.25, sigma=0.0001, mu=0.001),
+      upper=c(gamma=1, phi=1.5, sigma=0.6, mu=log(7)),
+      nseq=nseq
+    ) -> guesses
+  } else if (model=="AR1_nbin") {
+    runif_design(
+      lower=c(gamma=-1,phi=-0.25,sigma=0.0001, k=1, mu=0.001),
+      upper=c(gamma=1,phi=1.5,sigma=0.6, k=10, mu=log(7)),
+      nseq=nseq
+    ) -> guesses
+  } else if (model=="static_pois") {
+    runif_design(
+      lower=c(gamma=-1, mu=0.001),
+      upper=c(gamma=1, mu=log(7)),
+      nseq=nseq
+    ) -> guesses
+  } else if (model=="static_nbin") {
+    runif_design(
+      lower=c(gamma=-1, k=1, mu=0.001),
+      upper=c(gamma=1, k=10, mu=log(7)),
+      nseq=nseq
+    ) -> guesses
+  }
+  return(guesses)
+}
+
+rw_trans_models <- function(model) {
+  if (model=="AR1_pois") {
+    rw_sd_model <- 
+      rw_sd(gamma = 0.02, phi = 0.02, sigma = ivp(0.02), mu=ivp(0.02))
+    trans_model <- parameter_trans(log = c("sigma", "mu"))
+  } else if (model=="AR1_nbin") {
+    rw_sd_model <- 
+      rw_sd(gamma = 0.02, phi = 0.02, sigma = ivp(0.02), k = ivp(0.02), mu=ivp(0.02))
+    trans_model <- parameter_trans(log = c("sigma", "k", "mu"))
+  } else if (model=="static_pois") {
+    rw_sd_model <- 
+      rw_sd(gamma = 0.02, mu = ivp(0.02))
+    trans_model <- parameter_trans(log = "mu")
+  } else if (model=="static_nbin") {
+    rw_sd_model <- 
+      rw_sd(gamma = 0.02, k = ivp(0.02), mu=ivp(0.02))
+    trans_model <- parameter_trans(log = c("k", "mu"))
+  }
+  return(list(rw_sd_model=rw_sd_model,
+              trans_model=trans_model))
+}
+
+
+```
+
+
+# AR1:Poisson Model
+```{r AR1_Pois}
+model <- "AR1_pois"
+csv_name <- paste0("run_parms_", model, ".csv")
+Output[[model]] <- NULL
+```
+
+
+```{r}
+runsPOMP[[model]] |>
+  simulate(
+    params=coef(runsPOMP[[model]]),
+    nsim=20,format="data.frame", include.data=TRUE
+  ) -> sims_init
+
+Output[[model]][["sims_init"]] <- sims_init
+
+set.seed(657)
+sims_init |>
+  ggplot(aes(x=game,y=R,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+
+
+# Plot ESS
+```{r}
+runsPOMP[[model]] |> 
+  pfilter(Np=2000) -> pf
+plot(pf)
+min_ESS_init <- min(pf@eff.sample.size)
+min_ESS_init
+
+Output[[model]][["pf"]] <- pf
+Output[[model]][["min_ESS_init"]] <- min_ESS_init
+```
+
+```{r}
+set.seed(10403)
+foreach(i=1:10,.combine=c, 
+        .options.future=list(seed=TRUE) 
+        ) %dofuture% {
+          runsPOMP[[model]] |> pfilter(Np=5000) 
+          } -> pf  
+pf |> logLik() |> logmeanexp(se=TRUE) -> L_pf 
+L_pf
+
+Output[[model]][["L_pf"]] <- L_pf
+```
+
+
+```{r}
+pf[[1]] |> coef() |> bind_rows() |> 
+  bind_cols(loglik=L_pf[1],loglik.se=L_pf[2]) |> 
+  write_csv(csv_name)
+```
+
+We'll now carry out a local search using `mif2` around this point in our parameter space.
+
+```{r}
+mif_sets <- rw_trans_models(model)
+
+foreach(i=1:20,.combine=c, 
+        .options.future=list(seed=3318) 
+        ) %dofuture% { runsPOMP[[model]] |> 
+            mif2( Np=2000, Nmif=150, 
+                  cooling.fraction.50 = 0.5,
+                  rw.sd = mif_sets$rw_sd_model,
+                  partrans = mif_sets$trans_model,
+                  paramnames = names(coef(runsPOMP[[model]]))
+                  )  
+          } -> mifs_local
+Output[[model]][["mifs_local"]] <- mifs_local
+```
+
+```{r}
+mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y") +
+  labs(x = "Iteration", y = "Value", title="Local Search Diagnostic Plots") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+foreach(mf=mifs_local,.combine=rbind,
+    .options.future=list(seed=101)
+  ) %dofuture% {
+evals <- replicate(10, logLik(pfilter(mf,Np=5000)))
+  ll <- logmeanexp(evals,se=TRUE)
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+#store in our dataframe
+read_csv(csv_name, show_col_types = FALSE) |>
+  bind_rows(results) |>
+  arrange(-loglik) |>
+  write_csv(csv_name)
+
+
+Output[[model]][["results_loc"]] <- results
+print(max(results$loglik))
+```
+
+
+
+```{r}
+lik_form <- "~loglik"
+for (p in names(coef(runsPOMP[[model]]))) {
+  lik_form <- paste0(lik_form, "+", p)
+}
+lik_form <- as.formula(lik_form)
+
+pairs(lik_form,data=results, pch=16)
+```
+
+
+```{r}
+set.seed(657)
+guesses <- global_guesses(model)
+mf1 <- mifs_local[[1]]
+```
+
+```{r}
+foreach(guess=iterators::iter(guesses,"row"), .combine=rbind,
+    .options.future=list(seed=1312)
+) %dofuture% {
+    mf1 |>
+      mif2(params=c(guess)) |>
+      mif2(Nmif=100) -> mf
+    replicate(
+      10,
+      mf |> pfilter(Np=5000) |> logLik()
+  ) |>
+    logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+Output[[model]][["results_glob"]] <- results
+```
+
+
+
+```{r}
+print(max(results$loglik))
+```
+
+
+
+```{r}
+results |>
+  filter(loglik>max(loglik)-50) |>
+  bind_rows(guesses) |>
+  mutate(type=if_else(is.na(loglik),"guess","result")) |>
+  arrange(type) -> all
+
+Output[[model]][["all"]] <- all
+
+pairs(lik_form, data=all, pch=16, cex=0.3,
+      col=ifelse(all$type=="guess",grey(0.5),"red"))
+```
+
+
+
+
+## Profile Likelihood
+
+```{r AR1_Pois_Prof}
+results |>
+  filter(loglik>max(loglik)-50) |>
+  bind_rows(guesses) |>
+  mutate(type=if_else(is.na(loglik),"guess","result")) |>
+  arrange(type) -> all
+
+all |>
+  filter(type=="result") |>
+  filter(loglik>max(loglik)-10) |>
+  ggplot(aes(x=phi,y=loglik))+
+  geom_point() +
+  labs(
+  x=expression(phi),
+  y="Log Likelihood",
+  title="Poor Man’s Profile Likelihood - Phi") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+```{r}
+read_csv(csv_name, show_col_types = FALSE) |>
+  filter(loglik>max(loglik)-20,loglik.se<2) |>
+  sapply(range) -> box
+freeze(seed=97,
+  profile_design(
+    phi=seq(-0.25,0.99, length=length),
+    lower=box[1,c("gamma", "sigma", "mu")],
+    upper=box[2,c("gamma", "sigma", "mu")],
+    nprof=nprof, type="runif"
+  )) -> guesses
+plot(guesses)
+```
+
+
+```{r}
+foreach(guess=iterators::iter(guesses,"row"), .combine=rbind,
+  .options.future=list(seed=1524)
+) %dofuture% {
+  mf1 |>
+    mif2(params=c(guess),
+         rw.sd=rw_sd(gamma=0.02, sigma=ivp(0.02), mu=ivp(0.02))) |>
+    mif2(Nmif=100) -> mf
+  replicate(
+    10,
+    mf |> pfilter(Np=5000) |> logLik()) |>
+    logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+Output[[model]][["results_phi_prof"]] <- results
+
+read_csv(csv_name, show_col_types = FALSE) |>
+  bind_rows(results) |>
+  filter(is.finite(loglik)) |>
+  arrange(-loglik) |>
+  write_csv(csv_name)
+
+```
+
+
+```{r}
+maxloglik <- max(results$loglik,na.rm=TRUE)
+ci.cutoff <- maxloglik-0.5*qchisq(df=1,p=0.95)
+
+results |>
+  filter(is.finite(loglik)) |>
+  group_by(round(phi,5)) |>
+  filter(rank(-loglik)<3) |>
+  ungroup() |>
+  ggplot(aes(x=phi,y=loglik))+
+    geom_point()+
+    #geom_smooth(method="loess",span=0.25)+
+    geom_hline(color="red",yintercept=ci.cutoff) + 
+    labs(x=expression(phi),
+         y="Profile Log Likelihood",
+         title="Profile Likelihood - Phi") + 
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+saveRDS(Output[[model]], paste0("Output_", model, ".RDS"))
+```
+
+
+
+
+# Static:Poisson Model
+```{r Static_Pois}
+model <- "static_pois"
+csv_name <- paste0("run_parms_", model, ".csv")
+Output[[model]] <- NULL
+```
+
+
+```{r}
+set.seed(10403)
+foreach(i=1:10,.combine=c, 
+        .options.future=list(seed=TRUE) 
+        ) %dofuture% {
+          runsPOMP[[model]] |> pfilter(Np=5000) 
+          } -> pf  
+pf |> logLik() |> logmeanexp(se=TRUE) -> L_pf 
+L_pf
+
+Output[[model]][["L_pf"]] <- L_pf
+```
+
+
+```{r}
+pf[[1]] |> coef() |> bind_rows() |> 
+  bind_cols(loglik=L_pf[1],loglik.se=L_pf[2]) |> 
+  write_csv(csv_name)
+```
+
+We'll now carry out a local search using `mif2` around this point in our parameter space.
+
+```{r}
+mif_sets <- rw_trans_models(model)
+
+foreach(i=1:20,.combine=c, 
+        .options.future=list(seed=3318) 
+        ) %dofuture% { runsPOMP[[model]] |> 
+            mif2( Np=2000, Nmif=50, 
+                  cooling.fraction.50 = 0.5,
+                  rw.sd = mif_sets$rw_sd_model,
+                  partrans = mif_sets$trans_model,
+                  paramnames = names(coef(runsPOMP[[model]]))
+                  )  
+          } -> mifs_local
+Output[[model]][["mifs_local"]] <- mifs_local
+```
+
+```{r}
+mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y") +
+  labs(x = "Iteration", y = "Value", title="Local Search Diagnostic Plots") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+foreach(mf=mifs_local,.combine=rbind,
+    .options.future=list(seed=101)
+  ) %dofuture% {
+evals <- replicate(10, logLik(pfilter(mf,Np=5000)))
+  ll <- logmeanexp(evals,se=TRUE)
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+#store in our dataframe
+read_csv(csv_name, show_col_types = FALSE) |>
+  bind_rows(results) |>
+  arrange(-loglik) |>
+  write_csv(csv_name)
+
+
+Output[[model]][["results_loc"]] <- results
+print(max(results$loglik))
+```
+
+
+
+```{r}
+lik_form <- "~loglik"
+for (p in names(coef(runsPOMP[[model]]))) {
+  lik_form <- paste0(lik_form, "+", p)
+}
+lik_form <- as.formula(lik_form)
+
+pairs(lik_form,data=results, pch=16)
+```
+
+
+```{r}
+set.seed(657)
+guesses <- global_guesses(model)
+mf1 <- mifs_local[[1]]
+```
+
+```{r}
+foreach(guess=iterators::iter(guesses,"row"), .combine=rbind,
+    .options.future=list(seed=1312)
+) %dofuture% {
+    mf1 |>
+      mif2(params=c(guess)) |>
+      mif2(Nmif=100) -> mf
+    replicate(
+      10,
+      mf |> pfilter(Np=5000) |> logLik()
+  ) |>
+    logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+Output[[model]][["results_glob"]] <- results
+```
+
+
+
+```{r}
+print(max(results$loglik))
+```
+
+
+
+```{r}
+results |>
+  filter(loglik>max(loglik)-50) |>
+  bind_rows(guesses) |>
+  mutate(type=if_else(is.na(loglik),"guess","result")) |>
+  arrange(type) -> all
+
+Output[[model]][["all"]] <- all
+
+pairs(lik_form, data=all, pch=16, cex=0.3,
+      col=ifelse(all$type=="guess",grey(0.5),"red"))
+```
+
+
+```{r}
+saveRDS(Output[[model]], paste0("Output_", model, ".RDS"))
+```
+
+
+
+#HERE
+# AR1:NegBinom Model
+```{r AR1:NBin}
+model <- "AR1_nbin"
+csv_name <- paste0("run_parms_", model, ".csv")
+Output[[model]] <- NULL
+```
+
+
+
+```{r}
+set.seed(10403)
+foreach(i=1:10,.combine=c, 
+        .options.future=list(seed=TRUE) 
+        ) %dofuture% {
+          runsPOMP[[model]] |> pfilter(Np=5000) 
+          } -> pf  
+pf |> logLik() |> logmeanexp(se=TRUE) -> L_pf 
+L_pf
+
+Output[[model]][["L_pf"]] <- L_pf
+```
+
+
+```{r}
+pf[[1]] |> coef() |> bind_rows() |> 
+  bind_cols(loglik=L_pf[1],loglik.se=L_pf[2]) |> 
+  write_csv(csv_name)
+```
+
+We'll now carry out a local search using `mif2` around this point in our parameter space.
+
+```{r}
+mif_sets <- rw_trans_models(model)
+
+foreach(i=1:20,.combine=c, 
+        .options.future=list(seed=3318) 
+        ) %dofuture% { runsPOMP[[model]] |> 
+            mif2( Np=2000, Nmif=150, 
+                  cooling.fraction.50 = 0.5,
+                  rw.sd = mif_sets$rw_sd_model,
+                  partrans = mif_sets$trans_model,
+                  paramnames = names(coef(runsPOMP[[model]]))
+                  )  
+          } -> mifs_local
+Output[[model]][["mifs_local"]] <- mifs_local
+```
+
+```{r}
+mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y") +
+  labs(x = "Iteration", y = "Value", title="Local Search Diagnostic Plots") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+foreach(mf=mifs_local,.combine=rbind,
+    .options.future=list(seed=101)
+  ) %dofuture% {
+evals <- replicate(10, logLik(pfilter(mf,Np=5000)))
+  ll <- logmeanexp(evals,se=TRUE)
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+#store in our dataframe
+read_csv(csv_name, show_col_types = FALSE) |>
+  bind_rows(results) |>
+  arrange(-loglik) |>
+  write_csv(csv_name)
+
+
+Output[[model]][["results_loc"]] <- results
+print(max(results$loglik))
+```
+
+
+
+```{r}
+lik_form <- "~loglik"
+for (p in names(coef(runsPOMP[[model]]))) {
+  lik_form <- paste0(lik_form, "+", p)
+}
+lik_form <- as.formula(lik_form)
+
+pairs(lik_form,data=results, pch=16)
+```
+
+
+```{r}
+set.seed(657)
+guesses <- global_guesses(model)
+mf1 <- mifs_local[[1]]
+```
+
+```{r}
+foreach(guess=iterators::iter(guesses,"row"), .combine=rbind,
+    .options.future=list(seed=1312)
+) %dofuture% {
+    mf1 |>
+      mif2(params=c(guess)) |>
+      mif2(Nmif=100) -> mf
+    replicate(
+      10,
+      mf |> pfilter(Np=5000) |> logLik()
+  ) |>
+    logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+Output[[model]][["results_glob"]] <- results
+```
+
+
+
+```{r}
+print(max(results$loglik))
+```
+
+
+
+```{r}
+results |>
+  filter(loglik>max(loglik)-50) |>
+  bind_rows(guesses) |>
+  mutate(type=if_else(is.na(loglik),"guess","result")) |>
+  arrange(type) -> all
+
+Output[[model]][["all"]] <- all
+
+pairs(lik_form, data=all, pch=16, cex=0.3,
+      col=ifelse(all$type=="guess",grey(0.5),"red"))
+```
+
+
+```{r}
+saveRDS(Output[[model]], paste0("Output_", model, ".RDS"))
+```
+
+
+
+
+
+# Static:NegBinom Model
+```{r Static_NBin}
+model <- "static_nbin"
+csv_name <- paste0("run_parms_", model, ".csv")
+Output[[model]] <- NULL
+```
+
+
+
+```{r}
+set.seed(10403)
+foreach(i=1:10,.combine=c, 
+        .options.future=list(seed=TRUE) 
+        ) %dofuture% {
+          runsPOMP[[model]] |> pfilter(Np=5000) 
+          } -> pf  
+pf |> logLik() |> logmeanexp(se=TRUE) -> L_pf 
+L_pf
+
+Output[[model]][["L_pf"]] <- L_pf
+```
+
+
+```{r}
+pf[[1]] |> coef() |> bind_rows() |> 
+  bind_cols(loglik=L_pf[1],loglik.se=L_pf[2]) |> 
+  write_csv(csv_name)
+```
+
+We'll now carry out a local search using `mif2` around this point in our parameter space.
+
+```{r}
+mif_sets <- rw_trans_models(model)
+
+foreach(i=1:20,.combine=c, 
+        .options.future=list(seed=3318) 
+        ) %dofuture% { runsPOMP[[model]] |> 
+            mif2( Np=2000, Nmif=50, 
+                  cooling.fraction.50 = 0.5,
+                  rw.sd = mif_sets$rw_sd_model,
+                  partrans = mif_sets$trans_model,
+                  paramnames = names(coef(runsPOMP[[model]]))
+                  )  
+          } -> mifs_local
+Output[[model]][["mifs_local"]] <- mifs_local
+```
+
+```{r}
+mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y") +
+  labs(x = "Iteration", y = "Value", title="Local Search Diagnostic Plots") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+foreach(mf=mifs_local,.combine=rbind,
+    .options.future=list(seed=101)
+  ) %dofuture% {
+evals <- replicate(10, logLik(pfilter(mf,Np=5000)))
+  ll <- logmeanexp(evals,se=TRUE)
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+#store in our dataframe
+read_csv(csv_name, show_col_types = FALSE) |>
+  bind_rows(results) |>
+  arrange(-loglik) |>
+  write_csv(csv_name)
+
+
+Output[[model]][["results_loc"]] <- results
+print(max(results$loglik))
+```
+
+
+
+```{r}
+lik_form <- "~loglik"
+for (p in names(coef(runsPOMP[[model]]))) {
+  lik_form <- paste0(lik_form, "+", p)
+}
+lik_form <- as.formula(lik_form)
+
+pairs(lik_form,data=results, pch=16)
+```
+
+
+```{r}
+set.seed(657)
+guesses <- global_guesses(model)
+mf1 <- mifs_local[[1]]
+```
+
+```{r}
+foreach(guess=iterators::iter(guesses,"row"), .combine=rbind,
+    .options.future=list(seed=1312)
+) %dofuture% {
+    mf1 |>
+      mif2(params=c(guess)) |>
+      mif2(Nmif=100) -> mf
+    replicate(
+      10,
+      mf |> pfilter(Np=5000) |> logLik()
+  ) |>
+    logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1],loglik.se=ll[2])
+} -> results
+
+Output[[model]][["results_glob"]] <- results
+```
+
+
+
+```{r}
+print(max(results$loglik))
+```
+
+
+
+```{r}
+results |>
+  filter(loglik>max(loglik)-50) |>
+  bind_rows(guesses) |>
+  mutate(type=if_else(is.na(loglik),"guess","result")) |>
+  arrange(type) -> all
+
+Output[[model]][["all"]] <- all
+
+pairs(lik_form, data=all, pch=16, cex=0.3,
+      col=ifelse(all$type=="guess",grey(0.5),"red"))
+```
+
+
+```{r}
+saveRDS(Output[[model]], paste0("Output_", model, ".RDS"))
+```
+

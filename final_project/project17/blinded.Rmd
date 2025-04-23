@@ -1,0 +1,1158 @@
+---
+title: Time Series Analysis of New York Harbor Conventional Gasoline Regular Spot Price
+subtitle: STATS 531 FINAL PROJECT
+author: Blinded
+date: April 21, 2025
+header-includes:
+   - \usepackage{amsmath}
+output: 
+    html_document:
+        toc: no
+        number_sections: false
+        code_folding: hide
+        theme: flatly
+        highlight: tango
+---
+
+<h2><b>1. Introduction</b></h2>
+
+Gasoline prices play a critical role in both global and local economies, influencing consumer spending, transportation costs, 
+and broader macroeconomic trends. Because gasoline is a key input for many industries, 
+its price fluctuations can serve as an economic indicator, with sharp increases often contributing to inflation. 
+Given its economic significance, governments tightly regulate gasoline prices to mitigate volatility. 
+For example, during recent economic downturns, the U.S. released one million barrels from its gasoline reserve to curb price surges
+<a id="footnote-1-ref" href="#footnote-1"><sup>[1]</sup></a>, 
+while OPEC+ cut oil production to raise prices. Due to such heavy government intervention<a id="footnote-2-ref" href="#footnote-2"><sup>[2]</sup></a>, 
+we hypothesize that the leverage effect — the inverse relationship between asset returns and their volatility — is more 
+limited in gasoline prices compared to freely traded commodities or financial assets.
+
+This report analyzes historical monthly spot prices for conventional regular gasoline at New York Harbor<a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a><a id="footnote-4-ref" href="#footnote-4"><sup>[4]</sup></a>, 
+covering the period from June 1986 to March 2025. To evaluate our hypothesis, we estimate and compare three distinct models:
+
+* A modified stochastic volatility (SV) model with leverage effects
+
+* A modified basic stochastic volatility model without leverage effects
+
+* A GARCH model, which serves as the benchmark for comparison.
+
+By assessing these models, we aim to determine whether the leverage effect—typically observed in freely traded assets—is diminished in 
+gasoline prices due to regulatory influences.
+
+<h2><b>2. Results</b></h2>
+
+<h3><b>2.1 Data Preprocessing</b></h3>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.align = "center", 
+  error = FALSE, 
+  fig.width = 10
+)
+
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(pomp)
+library(tidyverse)
+library(doParallel)
+library(foreach)
+library(doFuture)
+library(doRNG)
+
+set.seed(2050320976)
+
+# Set up for parallel processing
+cores <- as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
+if(is.na(cores)) cores <- detectCores()  
+registerDoParallel(cores)
+plan(multisession)
+
+# Set up seed for parallel
+registerDoRNG(34118892)
+
+# Define run level
+run_level <- 3 # <- Change here
+Np <-           switch(run_level,  50, 1e3, 2e3)
+Nmif <-         switch(run_level,   5, 100, 200)
+Nreps_eval <-   switch(run_level,   4,  10,  20)
+Nreps_local <-  switch(run_level,   5,  20,  20)
+Nreps_global <- switch(run_level,   5,  20, 100)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Read data
+new_york_gasoline <- read.csv("New_York_Harbor_Conventional_Gasoline_Regular_Spot_Price_FOB.csv", stringsAsFactors = FALSE)
+colnames(new_york_gasoline) <- c("Date", "New_York_Conventional_Gasoline_Spot_Price")
+
+# Process NASDAQ Data
+new_york_gasoline$date <- as.Date(paste("1 ", new_york_gasoline$Date), format = "%d %b %Y")
+new_york_gasoline <- new_york_gasoline[order(new_york_gasoline$date), ]
+# Compute log returns
+new_york_gasoline$returns <- (log(new_york_gasoline$New_York_Conventional_Gasoline_Spot_Price) - log(lag(new_york_gasoline$New_York_Conventional_Gasoline_Spot_Price)))
+
+# Demean returns
+new_york_gasoline$ret.demeaned = new_york_gasoline$returns - mean(new_york_gasoline$returns, na.rm = TRUE)
+new_york_gasoline.ret.demeaned <- new_york_gasoline$ret.demeaned[2:length(new_york_gasoline$ret.demeaned)]
+
+# Plot the raw data
+plot(new_york_gasoline$date, new_york_gasoline$New_York_Conventional_Gasoline_Spot_Price, type = "l", 
+     col = "black", lwd = 2,
+     xlab = "Date", ylab = "Price (USD/gallon)",
+     main = "Monthly New York Harbor Conventional Gasoline Regular Spot Price",
+     sub = "Figure 1. Monthly New York Harbor Conventional Gasoline Regular Spot Price",
+     xaxt = "n", cex.lab = 1.2, cex.axis = 1)
+axis.Date(1,
+    at = seq(min(new_york_gasoline$date), max(new_york_gasoline$date), by = "2 years"),
+    format = "%Y", las = 2, cex.axis = 1)
+grid(nx = NULL, ny = NULL, col = "gray80", lty = "dotted")
+```
+
+The spot prices for conventional regular gasoline at New York Harbor remained relatively stable from 1986 to 1999 before entering a period of 
+exponential growth. This upward trend was interrupted by the 2008 financial crisis, after which prices recovered and surged again. Between 2012 and 2013, 
+multiple factors—including strong economic growth in the U.S. and China, as well as accommodative monetary policies in Europe—drove global crude oil demand 
+upward, sustaining high petroleum prices. However, beginning in mid-2014, prices plummeted due to a global supply glut, with the decline accelerating through 
+2015<a id="footnote-5-ref" href="#footnote-5"><sup>[5]</sup></a>. In 2020, gasoline prices experienced another sharp drop as the COVID-19 pandemic crushed demand. 
+Yet the market rebounded quickly, and by early 2023, 
+prices had risen sharply, contributing significantly to the inflationary pressures of 2022-2023 (Figure 1).
+
+Let $\{z_n, n = 1,...,N\}$ denote the gasoline price index series. We compute the demeaned log returns as:
+
+$$
+y^*_n = \log(z_n) - \log(z_{n-1})
+$$
+
+```{r echo=FALSE, warning=FALSE}
+# Read data
+daily_new_york_gasoline <- read.csv("Daily_New_York_Harbor_Conventional_Gasoline_Regular_Spot_Price_FOB.csv", stringsAsFactors = FALSE)
+colnames(daily_new_york_gasoline) <- c("Date", "daily_new_york_Conventional_Gasoline_Spot_Price")
+
+# Process NASDAQ Data
+daily_new_york_gasoline$date <- as.Date(daily_new_york_gasoline$Date, format = "%m/%d/%Y")
+daily_new_york_gasoline <- daily_new_york_gasoline[order(daily_new_york_gasoline$date), ]
+# Compute log returns
+daily_new_york_gasoline$returns <- (log(daily_new_york_gasoline$daily_new_york_Conventional_Gasoline_Spot_Price) - log(lag(daily_new_york_gasoline$daily_new_york_Conventional_Gasoline_Spot_Price)))
+
+# Demean returns
+daily_new_york_gasoline$ret.demeaned = daily_new_york_gasoline$returns - mean(daily_new_york_gasoline$returns, na.rm = TRUE)
+daily_new_york_gasoline.ret.demeaned <- daily_new_york_gasoline$ret.demeaned[2:length(daily_new_york_gasoline$ret.demeaned)]
+
+
+par(mfrow=c(1, 2))
+plot(daily_new_york_gasoline$date, daily_new_york_gasoline$ret.demeaned, type = "l", 
+     col = "black", lwd = 2,
+     xlab = "Date", ylab = "Log Returns",
+     main = "Daily Demeaned Gasoline Log Returns",
+     xaxt = "n", cex.lab = 1.2, cex.axis = 1)
+axis.Date(1,
+    at = seq(min(daily_new_york_gasoline$date), max(daily_new_york_gasoline$date), by = "2 years"),
+    format = "%Y", las = 2, cex.axis = 1)
+grid(nx = NULL, ny = NULL, col = "gray80", lty = "dotted")
+
+plot(new_york_gasoline$date, new_york_gasoline$ret.demeaned, type = "l", 
+     col = "black", lwd = 2,
+     xlab = "Date", ylab = "Log Returns",
+     main = "Monthly Demeaned Gasoline Log Returns",
+     xaxt = "n", cex.lab = 1.2, cex.axis = 1)
+axis.Date(1,
+    at = seq(min(new_york_gasoline$date), max(new_york_gasoline$date), by = "2 years"),
+    format = "%Y", las = 2, cex.axis = 1)
+grid(nx = NULL, ny = NULL, col = "gray80", lty = "dotted")
+title(sub = "Figure 2. Daily vs. Monthly New York Harbor Conventional Gasoline Log Returns", line = -0.9, outer = TRUE)
+```
+
+Figure 2 presents the log returns for both daily and monthly gasoline prices at New York Harbor from June 1986 to March 2025. 
+While the daily returns appear smoother due to higher sampling frequency, our analysis focuses on monthly prices, where black swan events during 
+the 2008 recession (time index 275) and 2020 pandemic (time index 405) periods become more pronounced. 
+These features will prove particularly relevant when we adapt Breto's stochastic 
+volatility model to account for such regime changes in gasoline price dynamics.
+
+<i>Note: All POMP framework instances described below were executed at run level 3.</i>
+
+<h3><b>2.2 Breto's (2014) SV - Leverage Model (POMP Framework)</h3></b>
+
+<h4><b>2.2.1 Formulas</b></h4>
+
+Here, volatility is modeled as a latent stochastic process, partially observed via the returns. We present a pomp implementation of Breto (2014)<a id="footnote-6-ref" href="#footnote-6"><sup>[6]</sup></a><a id="footnote-7-ref" href="#footnote-7"><sup>[7]</sup></a> as
+
+\begin{align}
+R_n &= \frac{\exp\{G_n\}-1}{\exp\{G_n\}+1} & (1)\\
+G_n &= G_{n-1}+\nu_n & (2)\\
+H_n &= \mu_h(1-\phi)+\phi H_{n-1}+\beta_{n-1}R_n\exp(-H_{n-1}/2)+\omega_n & (3)\\
+Y_n &= \exp\left\{\frac{H_n}{2}\right\}\sigma_n & (4)
+\end{align}
+
+where $Y_n$ is the observed return, $\beta_n=Y_n\sigma_\eta \sqrt{1-\phi^2}$, $\{\epsilon_n\}$ is an i.i.d. $N(0,1)$ sequence, 
+$\{\nu_n\}$ is an i.i.d. $N(0,\sigma_{\nu}^2)$ sequence and \(\{\omega_n\}\) is $N(0,\sigma_{\omega,n}^2)$ sequence 
+where $\sigma_{\omega,n}^2=\sigma_\eta^2(1-\phi^2)(1-R_n^2)$. $H_n$ is the log volatility, $G_n$ is Gaussian random walk. $R_n$ is the leverage, 
+defined on day $n$ as the correlation between index return on day $n-1$ and the increase in the log volatility from day $n-1$ to day $n$.
+
+<h4><b>2.2.2 Simulation</b></h4>
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE}
+# Set up pomp model using Breton et al. (2014) model
+N_breto_statenames <- c("H","G","Y_state")
+N_breto_rp_names <- c("sigma_nu","mu_h","phi","sigma_eta")
+N_breto_ivp_names <- c("G_0","H_0")
+N_breto_paramnames <- c(N_breto_rp_names, N_breto_ivp_names)
+
+N_breto_rproc1 <- "
+  double beta,omega,nu_noise;
+  omega = rnorm(0,sigma_eta * sqrt( 1- phi*phi ) * 
+    sqrt(1-tanh(G)*tanh(G)));
+  nu_noise = rnorm(0, sigma_nu); // Change this
+  G += nu_noise; // Change This
+  beta = Y_state * sigma_eta * sqrt( 1- phi*phi );
+  H = mu_h*(1 - phi) + phi*H + beta * tanh( G ) 
+    * exp(-H/2) + omega;
+"
+N_breto_rproc2.sim <- "
+  Y_state = rnorm( 0,exp(H/2) );
+ "
+
+N_breto_rproc2.filt <- "
+  Y_state = covaryt;
+ "
+
+N_breto_rproc.sim <- paste(N_breto_rproc1, N_breto_rproc2.sim)
+N_breto_rproc.filt <- paste(N_breto_rproc1, N_breto_rproc2.filt)
+
+N_breto_rinit <- "
+  G = G_0;
+  H = H_0;
+  Y_state = rnorm( 0,exp(H/2) );
+"
+
+N_breto_rmeasure <- "
+   y=Y_state;
+"
+
+N_breto_dmeasure <- "
+   lik=dnorm(y,0,exp(H/2),give_log);
+"
+
+N_breto_partrans <- parameter_trans(
+  log=c("sigma_eta","sigma_nu"),
+  logit="phi"
+)
+
+N_breto_filt <- pomp(data=data.frame(
+    y=new_york_gasoline.ret.demeaned,time=1:length(new_york_gasoline.ret.demeaned)),
+  statenames=N_breto_statenames,
+  paramnames=N_breto_paramnames,
+  times="time",
+  t0=0,
+  covar=covariate_table(
+    time=0:length(new_york_gasoline.ret.demeaned),
+    covaryt=c(0,new_york_gasoline.ret.demeaned),
+    times="time"),
+  rmeasure=Csnippet(N_breto_rmeasure),
+  dmeasure=Csnippet(N_breto_dmeasure),
+  rprocess=discrete_time(step.fun=Csnippet(N_breto_rproc.filt),
+    delta.t=1),
+  rinit=Csnippet(N_breto_rinit),
+  partrans=N_breto_partrans
+)
+
+N_breto_params_test <- c(
+  sigma_nu = exp(-4.5),  
+  mu_h = -5.5,
+  phi = expit(-0.5),	 
+  sigma_eta = exp(-10),
+  G_0 = 0,
+  H_0 = 0
+)
+  
+N_breto_sim1.sim <- pomp(N_breto_filt, 
+  statenames=N_breto_statenames,
+  paramnames=N_breto_paramnames,
+  rprocess=discrete_time(
+    step.fun=Csnippet(N_breto_rproc.sim),delta.t=1)
+)
+
+N_breto_sim1.sim <- simulate(N_breto_sim1.sim,seed=1,params=N_breto_params_test)
+
+N_breto_sim1.filt <- pomp(N_breto_sim1.sim, 
+  covar=covariate_table(
+    time=c(timezero(N_breto_sim1.sim),time(N_breto_sim1.sim)),
+    covaryt=c(obs(N_breto_sim1.sim),NA),
+    times="time"),
+  statenames=N_breto_statenames,
+  paramnames=N_breto_paramnames,
+  rprocess=discrete_time(
+    step.fun=Csnippet(N_breto_rproc.filt),delta.t=1)
+)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Simulation
+plot(Y_state~time, data=N_breto_sim1.sim, type='l', col='red', 
+  main="Simulation - Breto SV Leverage Model", ylab="Demeaned Log Returns", ylim=c(-0.8,0.8))
+lines(new_york_gasoline.ret.demeaned,col='black')
+legend('topright' , c("Observed","Simulated"), col=c("black","red"), cex=0.8,lty=1,bty="n")
+title(sub = "Figure 3. Simulation - Breto SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+We conducted parameter simulation studies to initialize our model fitting procedure. The initial parameter configuration
+$$
+\theta_0 = (\sigma_\nu,\mu_h,\phi,\sigma_\eta,G_0,H_0) = (\exp(4.5), -5.5, \textrm{expit}(-0.5), \exp(-10),0,0)
+$$
+produced simulated trajectories that closely matched the observed data, except at structural break points corresponding to the 2008 recession (t=275) 
+and 2020 pandemic (t=405) (Figure 3). 
+
+Using this initialization, we computed the filtered log-likelihood as 410.657 (SE = 0.079) for the simulated data. 
+We subsequently performed local optimization around these parameter values to refine our estimates.
+
+<h4><b>2.2.3 Local Search</b></h4>
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if(file.exists(paste0("N_pf1_",run_level,".rda"))){
+  load(paste0("N_pf1_",run_level,".rda"))
+} else {
+  stew(file=paste0("N_pf1_",run_level,".rda"),{
+  t.pf1 <- system.time(
+    pf1 <- foreach(i=1:Nreps_eval,
+      .packages='pomp') %dopar% pfilter(N_breto_sim1.filt,Np=Np))
+})
+}
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Fitting the stochastic leverage model
+rw.sd_rp <- 0.02
+rw.sd_ivp <- 0.1
+cooling.fraction.50 <- 0.5
+rw.sd <- rw_sd(
+  sigma_nu  = rw.sd_rp,
+  mu_h      = rw.sd_rp,
+  phi       = rw.sd_rp,
+  sigma_eta = rw.sd_rp,
+  G_0       = ivp(rw.sd_ivp),
+  H_0       = ivp(rw.sd_ivp)
+)	 
+
+if(file.exists(paste0("N_mif1_",run_level,".rda"))){
+  load(paste0("N_mif1_",run_level,".rda"))
+} else {
+  stew(file=paste0("N_mif1_",run_level,".rda"),{
+  t.if1 <- system.time({
+  if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=c) %dopar% mif2(N_breto_filt,
+      params=N_breto_params_test,
+      Np=Np,
+      Nmif=Nmif,
+      cooling.fraction.50=cooling.fraction.50,
+      rw.sd = rw.sd)
+  L.if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=rbind) %dopar% logmeanexp(
+      replicate(Nreps_eval, logLik(pfilter(N_breto_filt,
+        params=coef(if1[[i]]),Np=Np))), se=TRUE)
+  })
+})
+}
+
+r.if1 <- data.frame(logLik=L.if1[,1],logLik_se=L.if1[,2],
+  t(sapply(if1,coef)))
+
+pairs(~logLik+log(sigma_nu)+mu_h+phi+sigma_eta,
+  data=subset(r.if1,logLik>max(logLik)-20))
+title(sub = "Figure 4. Local Search Parameter Pairs - Breto SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if (run_level>1) write.table(r.if1,file=paste0("N_breto_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if1)
+title(sub = "Figure 5. Local Search Last Iteration Diagnostics Plot - Breto SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+Figure 4 and 5 show that our local search achieves reasonable convergence in log-likelihood, with differences between searches typically within a few log units. 
+While parameters $\sigma_\eta, \mu_h$, and $\phi$ converge well, the pair plot suggests no linear relationship exists between any parameter 
+and the log-likelihood. Notably, all searches yield an effective sample size (ESS) below 10 at the final iteration 
+(time index 405, corresponding to the COVID-19 pandemic), indicating potential model misspecification.
+
+This breakdown likely stems from the model's inability to capture extreme "black swan" events like the pandemic-induced price shock — a limitation also 
+observed in our simulations. The issue is exacerbated by our use of monthly (rather than daily) returns, which amplify black swan events due to lower data 
+granularity. While daily returns would provide smoother demeaned data and reduce outlier effects, our monthly sampling makes sudden price shifts more pronounced, 
+complicating model fitting.
+
+Given these findings, model adjustments are warranted. However, before modifying the specification, 
+we first test whether a more extensive global search—with additional search rounds—might improve performance under these extreme conditions.
+
+<h4><b>2.2.4 Global Search</b></h4>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+N_breto_box <- rbind(
+ sigma_nu=c(0.01,0.2),
+ mu_h    =c(-6,-4),
+ phi = c(0.5,0.9),
+ sigma_eta = c(0.6,1),
+ G_0 = c(-2,2),
+ H_0 = c(-1,1)
+)
+
+if(file.exists(paste0("N_breto_box_eval_if_box_",run_level,".rds"))){
+  if.box <- readRDS(paste0("N_breto_box_eval_if_box_",run_level,".rds"))
+} else {
+  if.box <- foreach(i=1:Nreps_global,
+    .packages='pomp',.combine=c) %dopar% {mif2(if1[[1]],
+      params=apply(N_breto_box,1,function(x)runif(1,x)))}
+  saveRDS(if.box, file=paste0("N_breto_box_eval_if_box_",run_level,".rds"))
+}
+
+if(file.exists(paste0("N_breto_box_eval_L_box_",run_level,".rds"))){
+  L.box <- readRDS(paste0("N_breto_box_eval_L_box_",run_level,".rds"))
+} else {
+    L.box <- foreach(i=1:Nreps_global,
+      .packages='pomp',.combine=rbind) %dopar% {
+        logmeanexp(replicate(Nreps_eval, logLik(pfilter(
+          N_breto_filt,params=coef(if.box[[i]]),Np=Np))), 
+          se=TRUE)}
+  saveRDS(L.box, file=paste0("N_breto_box_eval_L_box_",run_level,".rds"))
+}
+
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+  t(sapply(if.box,coef)))
+  
+pairs(~logLik+log(sigma_nu)+mu_h+phi+sigma_eta+H_0,
+  data=subset(r.box,logLik>max(logLik)-10))
+title(sub = "Figure 6. Global Search Parameter Pairs - Breto SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+timing.box <- .system.time["elapsed"]
+if(run_level>1) write.table(r.box,file=paste0("N_breto_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+summary(r.box$logLik,digits=5)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if.box)
+title(sub = "Figure 7. Global Search Last Iteration Diagnostics Plot - Breto SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+Despite employing a global search (Figure 6 and 7), we observe the same limitations present in our local search results. 
+The estimation procedure achieved consistent convergence, with the log-likelihood progressively improving across iterations to reach a maximum value of 429.8. 
+However, we observe concerningly low effective sample sizes (ESS < 10) during the pandemic period in the final iteration, 
+indicating potential difficulties in properly characterizing this extreme event.
+This empirical evidence motivates necessary model adjustments to better account for tail-risk scenarios like the COVID-19 market shock.
+
+<h3><b>2.3 Modified SV - Leverage Model (POMP Framework)</h3></b>
+
+<h4><b>2.3.1 Formulas</b></h4>
+
+We retain the core structure from equations (1)-(3) but propose two key modifications to better capture extreme events and regime shifts:
+
+<b>Heavy-Tailed Observation Process</b><a id="footnote-8-ref" href="#footnote-8"><sup>[8]</sup></a>
+
+The observed return is modeled as:
+\begin{align}
+Y_n &= \exp\left\{\frac{H_n}{2}\right\}\sigma_n;\quad \sigma_n \sim t_\tau(0,1) & (5)
+\end{align}
+where $t_\tau(0,1)$ is a standardized Student's t-distribution with $\tau$ degrees of freedom ($0 < \tau < 60$).
+This choice accommodates fat-tailed returns, which are critical for modeling extreme events. The upper bound $\tau < 60$ ensures the distribution remains 
+sufficiently non-Gaussian while avoiding numerical instability (the t-distribution approaches the normal distribution as $\tau \to \infty$).
+
+<b>Regime-Dependent Volatility Shocks</b>
+
+To account for black swan events (e.g., the 2008 recession and 2020 pandemic), we introduce a state-dependent "amplitude" parameter modulating $\mu_h$:
+\begin{align}
+    \mu_h(t) = \begin{cases}
+    \mu_h(t) + 0.8 \cdot \text{amplitude} & \text{if } t \in [262, 275] \quad \text{(2008 recession)}, \\
+    \mu_h(t) + 1.2 \cdot \text{amplitude} & \text{if } t \in [400, 410] \quad \text{(2020 pandemic)}, \\
+    \mu_h(t) & \text{otherwise.}
+    \end{cases}
+\end{align}
+The multipliers (0.8 and 1.2) reflect the empirically observed difference in volatility magnitudes between these events (see Figure 2).
+
+<h4><b>2.3.2 Simulation</b></h4>
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE}
+T_breto_statenames <- c("H","G","Y_state")
+T_breto_rp_names <- c("sigma_nu","mu_h","phi","sigma_eta", "tau", "amplitude")
+T_breto_ivp_names <- c("G_0","H_0")
+T_breto_paramnames <- c(T_breto_rp_names, T_breto_ivp_names)
+
+T_breto_rproc1 <- "
+  double beta,omega,nu,mu;
+  mu = mu_h;
+  if (t>=262 && t<=275){
+      mu += 0.8 * amplitude;
+    }
+  else if (t>=400 && t<=410) {
+      mu += 1.2 * amplitude;
+  }
+  omega = rnorm(0,sigma_eta * sqrt( 1- phi*phi ) * 
+    sqrt(1-tanh(G)*tanh(G)));
+  nu = rnorm(0, sigma_nu); // Change this
+  G += nu; // Change This
+  beta = Y_state * sigma_eta * sqrt( 1- phi*phi );
+  H = mu*(1 - phi) + phi*H + beta * tanh( G ) 
+    * exp(-H/2) + omega;
+"
+
+T_breto_rproc2.sim <- "
+  double df = (nearbyint(tau) < 1) ? 1 : (nearbyint(tau) > 60) ? 60 : nearbyint(tau);
+  Y_state = rt(df) * exp(H/2);  // t-distributed observation
+ "
+
+T_breto_rproc2.filt <- "
+  Y_state = covaryt;
+ "
+T_breto_rproc.sim <- paste(T_breto_rproc1, T_breto_rproc2.sim)
+T_breto_rproc.filt <- paste(T_breto_rproc1, T_breto_rproc2.filt)
+
+T_breto_rinit <- "
+  G = G_0;
+  H = H_0;
+  double df = (nearbyint(tau) < 1) ? 1 : (nearbyint(tau) > 60) ? 60 : nearbyint(tau);
+  Y_state = rt(df) * exp(H/2);  // t-distributed observation
+"
+
+T_breto_rmeasure <- "
+   y=Y_state;
+"
+
+T_breto_dmeasure <- "
+  double df = (nearbyint(tau) < 1) ? 1 : (nearbyint(tau) > 60) ? 60 : nearbyint(tau);
+  lik = dt(y/exp(H/2), df, give_log) - (H/2);  // Log-likelihood for t-distribution
+"
+
+T_breto_partrans <- parameter_trans(
+  log=c("sigma_eta","sigma_nu"),
+  logit="phi"
+)
+
+T_breto_filt <- pomp(data=data.frame(
+    y=new_york_gasoline.ret.demeaned,time=1:length(new_york_gasoline.ret.demeaned)),
+  statenames=T_breto_statenames,
+  paramnames=T_breto_paramnames,
+  times="time",
+  t0=0,
+  covar=covariate_table(
+    time=0:length(new_york_gasoline.ret.demeaned),
+    covaryt=c(0,new_york_gasoline.ret.demeaned),
+    times="time"),
+  rmeasure=Csnippet(T_breto_rmeasure),
+  dmeasure=Csnippet(T_breto_dmeasure),
+  rprocess=discrete_time(step.fun=Csnippet(T_breto_rproc.filt),
+    delta.t=1),
+  rinit=Csnippet(T_breto_rinit),
+  partrans=T_breto_partrans
+)
+
+T_breto_params_test <- c(
+  tau=5,
+  sigma_nu = exp(-4.5),  
+  mu_h = -5.5,
+  amplitude = 2, 
+  phi = expit(-0.5),	 
+  sigma_eta = exp(-10),
+  G_0 = 0,
+  H_0 = 0
+)
+  
+T_breto_sim1.sim <- pomp(T_breto_filt, 
+  statenames=T_breto_statenames,
+  paramnames=T_breto_paramnames,
+  rprocess=discrete_time(
+    step.fun=Csnippet(T_breto_rproc.sim),delta.t=1)
+)
+
+T_breto_sim1.sim <- simulate(T_breto_sim1.sim,seed=1,params=T_breto_params_test)
+
+T_breto_sim1.filt <- pomp(T_breto_sim1.sim, 
+  covar=covariate_table(
+    time=c(timezero(T_breto_sim1.sim),time(T_breto_sim1.sim)),
+    covaryt=c(obs(T_breto_sim1.sim),NA),
+    times="time"),
+  statenames=T_breto_statenames,
+  paramnames=T_breto_paramnames,
+  rprocess=discrete_time(
+    step.fun=Csnippet(T_breto_rproc.filt),delta.t=1)
+)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(Y_state~time, data=T_breto_sim1.sim, type='l', col='red', 
+  main="Simulation - Modified SV Leverage Model", ylab="Demeaned Log Returns", ylim=c(-0.8,0.8))
+lines(new_york_gasoline.ret.demeaned,col='black')
+legend('topright' , c("Observed","Simulated"), col=c("black","red"), cex=0.8,lty=1,bty="n")
+title(sub = "Figure 8. Simulation - Modified SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if(file.exists(paste0("T_breto_pf1_",run_level,".rda"))){
+  load(paste0("T_breto_pf1_",run_level,".rda"))
+} else {
+  stew(file=paste0("T_breto_pf1_",run_level,".rda"),{
+  t.pf1 <- system.time(
+    pf1 <- foreach(i=1:Nreps_eval,
+      .packages='pomp') %dopar% pfilter(T_breto_sim1.filt,Np=Np))
+})
+}
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+```
+
+We began our analysis with parameter simulation studies to initialize the model fitting process. The initial configuration:
+$$
+\theta_0 = (\sigma_\nu,\mu_h,\phi,\sigma_\eta,G_0,H_0,\tau,\text{amplitude}) = (\exp(4.5), -5.5, \textrm{expit}(-0.5), \exp(-10),0,0,5,2)
+$$
+generated simulated trajectories that closely reproduced both the observed price dynamics and the amplified volatility during 
+structural break periods (2008 recession at t=275 and 2020 pandemic at t=405; see Figure 8).
+
+Using these initial values, we obtained a filtered log-likelihood of 457.797 (SE = 3.38e-6) for the simulated data. 
+This initialization served as the basis for subsequent local optimization to refine parameter estimates.
+
+<h4><b>2.3.3 Local Search</b></h4>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Fitting the stochastic leverage model
+rw.sd_rp <- 0.02
+rw.sd_ivp <- 0.1
+cooling.fraction.50 <- 0.5
+rw.sd <- rw_sd(
+  tau = 1,
+  sigma_nu  = rw.sd_rp,
+  mu_h      = rw.sd_rp,
+  amplitude  = rw.sd_rp,
+  phi       = rw.sd_rp,
+  sigma_eta = rw.sd_rp,
+  G_0       = ivp(rw.sd_ivp),
+  H_0       = ivp(rw.sd_ivp)
+)	 
+
+if(file.exists(paste0("T_breto_mif1_",run_level,".rda"))){
+  load(paste0("T_breto_mif1_",run_level,".rda"))
+} else {
+  stew(file=paste0("T_breto_mif1_",run_level,".rda"),{
+  t.if1 <- system.time({
+  if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=c) %dopar% mif2(T_breto_filt,
+      params=T_breto_params_test,
+      Np=Np,
+      Nmif=Nmif,
+      cooling.fraction.50=cooling.fraction.50,
+      rw.sd = rw.sd)
+  L.if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=rbind) %dopar% logmeanexp(
+      replicate(Nreps_eval, logLik(pfilter(T_breto_filt,
+        params=coef(if1[[i]]),Np=Np))), se=TRUE)
+  })
+})
+}
+
+r.if1 <- data.frame(logLik=L.if1[,1],logLik_se=L.if1[,2],
+  t(sapply(if1,coef)))
+
+pairs(~logLik+log(sigma_nu)+mu_h+phi+sigma_eta+amplitude,
+  data=subset(r.if1,logLik>max(logLik)-20))
+title(sub = "Figure 9. Local Search Parameter Pairs - Modified SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if (run_level>1) write.table(r.if1,file=paste0("T_breto_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if1)
+title(sub = "Figure 10. Local Search Last Iteration Diagnostics Plot - Modified SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+Figures 9 and 10 demonstrate satisfactory convergence in our local search, with log-likelihood values consistently increasing across all runs and remaining within 
+a narrow range of a few log units. The key parametersrs ($\mu_h, \phi, \tau$, and "amplitude") exhibit stable convergence in most runs, though we observe a subset of 
+runs with higher $\sigma_\eta$ values that achieved marginally better likelihoods. The pair plot analysis reveals that our local search explored only a limited region of the 
+parameter space, suggesting potential for further optimization. Notably, all runs now maintain ESS values above 345 in the final iteration, representing a substantial 
+improvement over our previous model specification. To ensure robustness and more thoroughly investigate the parameter space, we conducted an additional global search 
+with expanded parameter bounds.
+
+<h4><b>2.3.4 Global Search</b></h4>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+T_breto_box <- rbind(
+ tau=c(5,30),
+ sigma_nu=c(0.005,0.2),
+ mu_h    =c(-5,-4),
+ amplitude=c(2,4),
+ phi = c(0.3,0.6),
+ sigma_eta = c(0.001,0.3), # 1e-5, 1e-3 for strict
+ G_0 = c(-2,2),
+ H_0 = c(-1,1)
+)
+
+if(file.exists(paste0("T_breto_box_eval_if_box_",run_level,".rds"))){
+  if.box <- readRDS(paste0("T_breto_box_eval_if_box_",run_level,".rds"))
+} else {
+  if.box <- foreach(i=1:Nreps_global,
+    .packages='pomp',.combine=c) %dopar% {mif2(if1[[1]],
+      params=mapply(
+          function(min, max) runif(1, min, max),
+          T_breto_box[, 1],  # Mins
+          T_breto_box[, 2]   # Maxs
+        ))}
+  saveRDS(if.box, file=paste0("T_breto_box_eval_if_box_",run_level,".rds"))
+}
+
+if(file.exists(paste0("T_breto_box_eval_L_box_",run_level,".rds"))){
+  L.box <- readRDS(paste0("T_breto_box_eval_L_box_",run_level,".rds"))
+} else {
+    L.box <- foreach(i=1:Nreps_global,
+      .packages='pomp',.combine=rbind) %dopar% {
+        logmeanexp(replicate(Nreps_eval, logLik(pfilter(
+          T_breto_filt,params=coef(if.box[[i]]),Np=Np))), 
+          se=TRUE)}
+  saveRDS(L.box, file=paste0("T_breto_box_eval_L_box_",run_level,".rds"))
+}
+
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+  t(sapply(if.box,coef)))
+
+pairs(~logLik+log(sigma_nu)+mu_h+phi+sigma_eta+amplitude,
+  data=subset(r.box,logLik>max(logLik)-10))
+title(sub = "Figure 11. Global Search Parameter Pairs - Modified SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+timing.box <- .system.time["elapsed"]
+if(run_level>1) write.table(r.box,file=paste0("T_breto_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+summary(r.box$logLik,digits=5)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if.box)
+title(sub = "Figure 12. Global Search Last Iteration Diagnostics Plot - Modified SV Leverage Model", line = -0.9, outer = TRUE)
+```
+
+Our global search (Figures 11-12) achieved a maximum log-likelihood of 437.1, with values remaining relatively stable while showing consistent improvement across runs. 
+The analysis reveals several key findings: First, all runs maintained effective sample size (ESS) values above 300 in the final iteration, demonstrating substantial 
+improvement over previous model specifications. Second, while core parameters 
+($\mu_h, \phi, \sigma_\eta$, and "amplitude") converged stably in most runs, the pair plot indicates linear correlations between the log-likelihood and 
+$(\log(\sigma_\nu), \mu_h, \phi, \sigma_\eta)$ This suggests the global search may not have fully explored the parameter space, as expanding the ranges for 
+$\phi$ and $\sigma_\eta$ could potentially yield higher likelihood values. Although time constraints limited our ability to conduct more extensive searches, 
+the current implementation nevertheless represents a significant advancement over our previous model configuration, both in terms of likelihood performance and sampling 
+efficiency.
+
+<h3><b>2.4 Modified Basic SV - No Leverage Model (POMP Framework)</b></h3>
+
+<h4><b>2.4.1 Formulas</b></h4>
+
+Our original hypothesis is that the leverage effect is more limited in gasoline prices compared to freely traded commodities or financial assets. To 
+test this hypothesis, we fit a basic SV model without leverage. The basic SV model without leverage<a id="footnote-6-ref" href="#footnote-6"><sup>[6]</sup></a><a id="footnote-8-ref" href="#footnote-8"><sup>[8]</sup></a><a id="footnote-9-ref" href="#footnote-9"><sup>[9]</sup></a> is defined as:
+\begin{align}
+Y_n        &=    \epsilon_n \exp(H_n / 2) \\
+H_n        &\sim N(\mu_h + \phi(H_{n-1} - \mu_h), \sigma) \\
+H_1        &\sim N\left( \mu_h, \frac{\sigma}{\sqrt{1 - \phi^2}} \right)
+\end{align}
+where $\epsilon_n \sim N(0,1)$. $H_n$ is the latent parameter for the log volatility, $\mu_h$ is the mean log volatility, 
+and $\phi$ is the persistence of the volatility term.
+
+However, for the reasons specified above, we will model $\epsilon_n \sim t_\tau(0,1)$ ($0 < \tau < 60$), and $\mu_h$ as defined in (2.3.1).
+
+<h4><b>2.4.2 Simulation</b></h4>
+
+```{r eval=TRUE, echo=TRUE, warning=FALSE}
+# Implement Basic Stochastic Model
+T_basicSV_statenames <- "H"
+T_basicSV_paramnames <- c("sigma","mu_h","phi", "tau", "amplitude")
+
+T_basicSV_rproc <- "
+  double mu;
+  mu = mu_h;
+  if (t>=262 && t<=275){
+      mu += 0.8 * amplitude;
+    }
+  else if (t>=400 && t<=410) {
+      mu += 1.2 * amplitude;
+  }
+  H = rnorm(mu + phi*(H - mu), sigma);
+"
+
+T_basicSV_rmeasure <- "
+  double df = (nearbyint(tau) < 1) ? 1 : (nearbyint(tau) > 60) ? 60 : nearbyint(tau);
+  y = rt(df) * exp(H/2);
+"
+
+T_basicSV_dmeasure <- "
+  double df = (nearbyint(tau) < 1) ? 1 : (nearbyint(tau) > 60) ? 60 : nearbyint(tau);
+  lik = dt(y/exp(H/2), df, give_log) - (H/2);
+"
+
+T_basicSV_rinit <- "
+  H = rnorm(mu_h, sigma/(sqrt(1-phi*phi)));
+"
+
+T_basicSV_partrans <- parameter_trans(
+  log=c("sigma"),
+  logit="phi"
+)
+
+T_basicSV_filt <- pomp(data=data.frame(
+    y=new_york_gasoline.ret.demeaned,time=1:length(new_york_gasoline.ret.demeaned)),
+  statenames=T_basicSV_statenames,
+  paramnames=T_basicSV_paramnames,
+  times="time",
+  t0=0,
+  rmeasure=Csnippet(T_basicSV_rmeasure),
+  dmeasure=Csnippet(T_basicSV_dmeasure),
+  rprocess=discrete_time(step.fun=Csnippet(T_basicSV_rproc),
+    delta.t=1),
+  rinit=Csnippet(T_basicSV_rinit),
+  partrans=T_basicSV_partrans
+)
+
+T_basicSV_params_test <- c(
+  tau=5,
+  sigma = exp(-4.5),  
+  mu_h = -5.5,
+  amplitude = 2,
+  phi = expit(-0.1)
+)
+
+T_basicSV_sim <- simulate(T_basicSV_filt,seed=1,params=T_basicSV_params_test)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(y~time, data=T_basicSV_sim, type='l', col='red', 
+  main="Simulation - Modified Basic SV No Leverage Model", ylab="Demeaned Log Returns", ylim=c(-0.8,0.8))
+lines(new_york_gasoline.ret.demeaned,col='black')
+legend('topright' , c("Observed","Simulated"), col=c("black","red"), cex=0.8,lty=1,bty="n")
+title(sub = "Figure 13. Simulation - Modified Basic SV No Leverage Model", line = -0.9, outer = TRUE)
+```
+
+We initialized the estimation procedure with the following parameter configuration:
+$$
+\theta_0 = (\sigma,\mu_h,\phi,\tau,\text{amplitude}) = (\exp(4.5), -5.5, \textrm{expit}(-0.1), 5,2)
+$$
+generated simulated trajectories that closely reproduced both the observed price dynamics and the amplified volatility during 
+structural break periods.
+
+Using these initial values, we obtained a filtered log-likelihood of 472.035 (SE = 6.99e-4) for the simulated data. 
+We performed local search to refine parameter estimates.
+
+<h4><b>2.4.3 Local Search</b></h4>
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if(file.exists(paste0("T_basicSV_pf1_",run_level,".rda"))){
+  load(paste0("T_basicSV_pf1_",run_level,".rda"))
+} else {
+  stew(file=paste0("T_basicSV_pf1_",run_level,".rda"),{
+  t.pf1 <- system.time(
+    pf1 <- foreach(i=1:Nreps_eval,
+      .packages='pomp') %dopar% pfilter(T_basicSV_sim,Np=Np))
+})
+}
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# Fitting the stochastic leverage model
+rw.sd_rp <- 0.02
+rw.sd_ivp <- 0.1
+cooling.fraction.50 <- 0.5
+rw.sd <- rw_sd(
+  tau = 1,
+  sigma  = rw.sd_rp,
+  mu_h      = rw.sd_rp,
+  amplitude  = rw.sd_rp,
+  phi       = rw.sd_rp
+)	 
+
+if(file.exists(paste0("T_basicSV_mif1_",run_level,".rda"))){
+  load(paste0("T_basicSV_mif1_",run_level,".rda"))
+} else {
+  stew(file=paste0("T_basicSV_mif1_",run_level,".rda"),{
+  t.if1 <- system.time({
+  if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=c) %dopar% mif2(T_basicSV_filt,
+      params=T_basicSV_params_test,
+      Np=Np,
+      Nmif=Nmif,
+      cooling.fraction.50=cooling.fraction.50,
+      rw.sd = rw.sd)
+  L.if1 <- foreach(i=1:Nreps_local,
+    .packages='pomp', .combine=rbind) %dopar% logmeanexp(
+      replicate(Nreps_eval, logLik(pfilter(T_basicSV_filt,
+        params=coef(if1[[i]]),Np=Np))), se=TRUE)
+  })
+})
+}
+
+r.if1 <- data.frame(logLik=L.if1[,1],logLik_se=L.if1[,2],
+  t(sapply(if1,coef)))
+
+pairs(~logLik+sigma+mu_h+phi+amplitude,
+  data=subset(r.if1,logLik>max(logLik)-20))
+title(sub = "Figure 14. Local Search Parameter Pairs - Modified Basic SV No Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+if (run_level>1) write.table(r.if1,file=paste0("T_basicSV_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if1)
+title(sub = "Figure 15. Local Search Last Iteration Diagnostics Plot - Modified Basic SV No Leverage Model", line = -0.9, outer = TRUE)
+```
+
+Figure 14 and 15 demonstrate satisfactory convergence in our local search, with log-likelihood values consistently 
+increasing across all runs and remaining within a few log units of one another. However, one run achieved a notably lower likelihood, 
+primarily due to suboptimal estimation of the persistence parameter $\phi$.
+
+The effective sample size (ESS) exhibits a significant drop around index 50, corresponding to the 1990 period. Despite this, the minimum ESS (280) 
+represents an an acceptable value. 
+
+While key parameters ($\mu_h, \phi, \sigma$) show stable convergence, the pair plot reveals limitations in our local search, 
+suggesting the explored parameter space may be too restricted. 
+To address this, we conducted a subsequent global search to more thoroughly investigate the parameter space and ensure robustness in our estimates.
+
+<h4><b>2.4.4 Global Search</b></h4>
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+T_basicSV_box <- rbind(
+ tau=c(5,60),
+ sigma=c(0.1,0.8),
+ mu_h    =c(-7,-2),
+ amplitude=c(0,5),
+ phi = c(0.3,0.98)
+)
+
+if(file.exists(paste0("T_basicSV_box_eval_if_box_",run_level,".rds"))){
+  if.box <- readRDS(paste0("T_basicSV_box_eval_if_box_",run_level,".rds"))
+} else {
+  if.box <- foreach(i=1:Nreps_global,
+    .packages='pomp',.combine=c) %dopar% {mif2(if1[[1]],
+      params=mapply(
+          function(min, max) runif(1, min, max),
+          T_basicSV_box[, 1],  # Mins
+          T_basicSV_box[, 2]   # Maxs
+        ))}
+  saveRDS(if.box, file=paste0("T_basicSV_box_eval_if_box_",run_level,".rds"))
+}
+
+if(file.exists(paste0("T_basicSV_box_eval_L_box_",run_level,".rds"))){
+  L.box <- readRDS(paste0("T_basicSV_box_eval_L_box_",run_level,".rds"))
+} else {
+    L.box <- foreach(i=1:Nreps_global,
+      .packages='pomp',.combine=rbind) %dopar% {
+        logmeanexp(replicate(Nreps_eval, logLik(pfilter(
+          T_basicSV_filt,params=coef(if.box[[i]]),Np=Np))), 
+          se=TRUE)}
+  saveRDS(L.box, file=paste0("T_basicSV_box_eval_L_box_",run_level,".rds"))
+}
+
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+  t(sapply(if.box,coef)))
+
+pairs(~logLik+sigma+mu_h+phi+amplitude,
+  data=subset(r.box,logLik>max(logLik)-10))
+title(sub = "Figure 16. Global Search Parameter Pairs - Modified Basic SV No Leverage Model", line = -0.9, outer = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE, warning=FALSE}
+timing.box <- .system.time["elapsed"]
+if(run_level>1) write.table(r.box,file=paste0("basicSV_params_",run_level,".csv"),
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+summary(r.box$logLik,digits=5)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+plot(if.box)
+title(sub = "Figure 17. Global Search Last Iteration Diagnostics Plot - Modified Basic SV No Leverage Model", line = -0.9, outer = TRUE)
+```
+
+All key parameters demonstrated stable convergence, with the log-likelihood showing consistent improvement across iterations. 
+This robust convergence behavior provides strong support for the model's effectiveness in capturing the underlying price dynamics. The max log-likelihood value obtained 
+was 434.8, with all runs maintaining effective sample size (ESS) values above 280 in the final iteration.
+
+<h3><b>2.5 Model Comparison</b></h3>
+
+To evaluate our hypothesis, we compared the performance of two competing models: the modified stochastic volatility (SV) model with 
+leverage effects and its counterpart without leverage effects. Using the Akaike Information Criterion (AIC), defined as 
+$\text{AIC} = -2 \cdot l(\widehat{\theta}) + 2D$<a id="footnote-10-ref" href="#footnote-10"><sup>[10]</sup></a>, where $D$ represents the number of model parameters, 
+we found the modified SV model without leverage effects to be statistically favored.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+aic_table <- data.frame(
+  Model = c("Modified SV with Leverage", "Modified SV without Leverage"),
+  LogLik = c(437.1, 434.8),
+  Parameters = c(length(T_breto_paramnames), length(T_basicSV_paramnames))
+)
+aic_table$AIC <- -2 * aic_table$LogLik + 2 * aic_table$Parameters
+knitr::kable(aic_table, digits=2)
+```
+
+This result aligns with our empirical observations from the global search of the leverage model (Section 2.3.4), 
+where higher log-likelihood values consistently corresponded to smaller $\log(\sigma_\nu)$ estimates (Figure 11). This relationship implies that the optimal 
+value of $\sigma_\nu$ approaches 0, causing $G_n \approx G_{n-1}$ in equation (2), and consequently diminishing the leverage effect $R_n$ in equation (1).
+
+While these findings provide preliminary evidence supporting our hypothesis that gasoline prices exhibit more limited leverage effects than freely 
+traded financial assets, we emphasize that more rigorous statistical testing would be required for definitive confirmation. 
+The current analysis nevertheless offers valuable insights into the distinctive volatility dynamics of regulated commodity markets.
+
+<h3><b>2.6 Model Comparison To The Benchmark T-GARCH</b></h3>
+
+Lastly, we compared the modified SV model without leverage effects to a benchmark T-GARCH model. By incorporating the volatility as the latent state, we expect 
+the SV model to outperform the T-GARCH model in terms of log-likelihood. Since we have been assuming a t-distribution, we fitted the T-GARCH model as a 
+benchmark. The T-GARCH model<a id="footnote-6-ref" href="#footnote-6"><sup>[6]</sup></a><a id="footnote-8-ref" href="#footnote-8"><sup>[8]</sup></a> with mean 0 is defined as:
+
+\begin{align}
+Y_n &= \sigma_n \epsilon_n \quad \epsilon_n \sim t_\tau(0,1) \\
+\sigma_n^2 &= \alpha_0 + \sum_{j=1}^p \alpha_j Y_{n-j}^2 + \sum_{k=1}^q \beta_k \sigma_{n-j}^2
+\end{align}
+
+The AIC table is shown below.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+library(fGarch)
+
+demeaned_data = new_york_gasoline.ret.demeaned
+
+P = 6
+Q = 6
+
+aic_table = matrix(nrow = P, ncol = Q)
+
+for(p in 1:P){
+  for(q in 1:Q){
+    form <- formula(paste("~garch(",p,",",q,")",collapse=" "))
+    fit.garch <- garchFit(form, data=demeaned_data, include.delta=F,
+                        cond.dist=c("std"), include.mean=F, trace=F,
+                        algorithm=c("nlminb"), hessian=c("ropt"))
+    loglik <- -fit.garch@fit$llh
+    aic_table[p,q] = -2 * loglik + length(coef(fit.garch))
+  }
+}
+
+colnames(aic_table) = paste0("q", 1:Q)
+rownames(aic_table) = paste0("p", 1:P)
+aic_table = as.data.frame(aic_table)
+knitr::kable(aic_table, digits=3)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+index = which(aic_table == min(aic_table), arr.ind = T)
+p = index[1]
+q = index[2]
+
+form <- formula(paste("~garch(",p,",",q,")",collapse=" "))
+fit.garch <- garchFit(form, data=demeaned_data, include.delta=F,
+                    cond.dist=c("std"), include.mean=T, trace=F,
+                    algorithm=c("nlminb"), hessian=c("ropt"))
+loglik <- -fit.garch@fit$llh
+
+cat(paste0("Fitting T-GARCH model with p = ", p, ", q = ", q, "\n"))
+cat(paste0("Max log-likelihood: ", round(loglik,3), "\n"))
+```
+
+The T-GARCH(3,1) model , selected via Akaike Information Criterion (AIC), achieved a higher log-likelihood (435.509) than our SV model (434.8), suggesting 
+it may be better suited for capturing gasoline price volatility in this particular context. However, the relatively 
+small margin of difference indicates that our SV framework still provides a reasonable approximation of the underlying dynamics, though with clear room for improvement.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+# This function is adopted from lmenssp::qqplot.t() [11]
+qqplot.t <- function(x, dof){
+  length.x <- length(x)
+  range.x  <- range(x)
+  seq.line <- seq(range.x[1], range.x[2], by = 0.01)
+  theoretical.quantiles <- qt(((1:length.x) - 0.5)/length.x, df = dof)
+  sample.quantiles      <- sort(x)
+  plot(theoretical.quantiles, sample.quantiles, xlab = "Theoretical quantiles", ylab = "Sample quantiles", main="QQ-Plot vs. t-Distribution")
+  lines(seq.line, seq.line, col = "black", lwd = 2)
+}
+
+residuals = residuals(fit.garch, standardize=TRUE)
+
+# QQ-plot vs. t-distribution
+par(mfrow=c(1,2))
+qqplot.t(residuals, coef(fit.garch)["shape"])
+acf(na.omit(residuals(fit.garch)), main="ACF of t-dist GARCH Residuals", lag.max=20)
+title(sub = "Figure 18. QQ-Plot and ACF of Residuals", line = -0.9, outer = TRUE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+decomposed_log_ret <- stl(ts(na.omit(demeaned_data), frequency=12), s.window="periodic")
+plot(decomposed_log_ret, main="STL Decomposition of Log Returns")
+title(sub = "Figure 19. STL Decomposition of Log Returns", line = -0.9, outer = TRUE)
+```
+
+Diagnostic checks (Figure 18) revealed important limitations in both approaches. 
+Residual analysis showed the T-GARCH model's residuals deviated significantly from the assumed t-distribution, while autocorrelation functions revealed 
+dependencies at lags 1 and 2. These patterns, combined with clear seasonal fluctuations identified through STL decomposition of the log 
+returns (Figure 19), suggest that neither model adequately accounts for the full complexity of gasoline price dynamics. 
+This represents a key limitation of our current analysis, as time 
+constraints prevented us from incorporating seasonal components into our POMP framework.
+
+<h2><b>3. Conclusion</b></h2>
+
+Our investigation employed modified stochastic volatility (SV) models, both with and without leverage effects, to analyze gasoline price volatility dynamics. 
+The model comparison, evaluated using the Akaike Information Criterion (AIC), revealed superior performance of the SV specification without leverage effects. 
+This finding provides evidence that leverage effects in gasoline prices may be less pronounced than those observed in freely traded financial assets, 
+potentially reflecting the unique characteristics of regulated energy markets. While these results support our initial hypothesis, we emphasize that additional 
+robustness checks and formal hypothesis testing would be valuable to strengthen these conclusions. The current analysis nevertheless offers important insights into 
+the distinct volatility patterns of gasoline prices compared to more conventional financial instruments.
+
+<h2><b>4. Discussion</b></h2>
+
+We made a serious mistake in specifying $\mu_h$ the way we did in (2.3.1). Our original intension was to introduce a parameter to capture unexpected events. However, we ended up hard coding the 
+period where the unexpected events happened. This is not a good practice since we basically introduce our biases into the model, which makes it incapable of adapting to new datasets. Given the time 
+contraints, we propose the following approach to try out in the future.  
+We suggest modeling event timing probabilistically rather than deterministically. Given the infrequent nature of such events, 
+one could track elapsed time since the last simulated event using an accumulator variable, with event likelihood increasing over time. Perhaps this 
+could be formalized through the use of a Weibull distribution.
+
+Two additional limitations that are worth mentioning. First, we did not account for seasonal patterns in gasoline prices, 
+which may have systematically influenced our volatility estimates. Incorporating seasonal components could improve model accuracy in future work. 
+Second, our upper bound constraint of $\tau < 60$ for the Student's t-distribution degrees of freedom was unnecessarily permissive. 
+Since t-distributions with $\tau > 30$  are practically indistinguishable from normal distributions, future implementations should enforce 
+$\tau < 30$ to preserve the intended fat-tailed properties while maintaining numerical stability. These refinements would strengthen the model's 
+ability to capture extreme events without over-parameterization.
+
+Prior work<a id="footnote-12-ref" href="#footnote-12"><sup>[12]</sup></a> has applied Breto's stochastic volatility (SV) model with leverage effects to crude oil prices within the POMP framework, 
+using a limited annual dataset spanning only 40 years. A key critique of that study was that the dataset might be insufficient for reliably estimating 
+such a complex model, suggesting that a simpler specification could be more appropriate. This concern directly motivates our comparison between complex 
+and simple models, as our own dataset — while larger — remains relatively short (\~500 monthly observations).
+
+The superior performance of a simpler model in our analysis might therefore reflect dataset limitations rather than invalidating our hypothesis about 
+leverage effects. Indeed, a longer or higher-frequency (e.g., daily) series might reveal stronger evidence for leverage effects, as the additional data 
+could better constrain the more complex model's parameters.
+
+<h2><b>5. Contributions</b></h2>
+
+<i>Blinded.</i>
+
+<h2><b>6. Reference</b></h2>
+
+[1] <span id="footnote-1">Natter, A. (2024, May 21). US puts its 1 million-barrel gasoline reserve up for sale. Bloomberg. https://www.bloomberg.com/news/articles/2024-05-21/us-puts-its-1-million-barrel-gasoline-reserve-up-for-sale</span>
+
+[2] <span id="footnote-2">Ghaddar, A., Lawler, A., & El Dahan, M. (2024, June 3). OPEC+ extends deep oil production cuts into 2025 | reuters. OPEC+ extends deep oil production cuts into 2025. https://www.reuters.com/business/energy/opec-seen-prolonging-cuts-2024-into-2025-two-sources-say-2024-06-02/</span>
+
+[3] <span id="footnote-3">https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=pet&s=eer_epmru_pf4_y35ny_dpg&f=m</span>
+
+[4] <span id="footnote-4">https://www.eia.gov/dnav/pet/TblDefs/pet_pri_spt_tbldef2.asp</span>
+
+[5] <span id="footnote-5">Mead, D., & Stiger, P. (2015, May). The 2014 plunge in import petroleum prices: What happened? U.S. BUREAU OF LABOR STATISTICS.</span>
+
+[6] <span id="footnote-6">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 17.</span>
+
+[7] <span id="footnote-7">Bret'o C (2014). "On idiosyncratic stochasticity of financial leverage effects." Statistics & Probability Letters, 91, 20-26. doi: 10.1016/j.spl.2014.04.003.</span>
+
+[8] <span id="footnote-8">Chan, J., & Grant, A. (2015). Modeling energy price dynamics: Garch Versus Stochastic volatility. SSRN Electronic Journal. https://doi.org/10.2139/ssrn.2616522</span>
+
+[9] <span id="footnote-9">https://mc-stan.org/docs/stan-users-guide/time-series.html#stochastic-volatility-models</span>
+
+[10] <span id="footnote-10">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 5.</span>
+
+[11] <span id="footnote-11">https://www.rdocumentation.org/packages/lmenssp/versions/1.2/topics/qqplot.t</span>
+
+[12] <span id="footnote-12">https://ionides.github.io/531w22/final_project/project18/blinded.html</span>
+
+[13] <span id="footnote-13">UM ChatGPT was used to polish the sentences and correct grammars.</span>

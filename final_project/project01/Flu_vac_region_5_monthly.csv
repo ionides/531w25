@@ -1,0 +1,100 @@
+Vaccine,Geography Type,Geography,FIPS,Year,Month,Dimension Type,Dimension,Estimate,95CI,Sample Size
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,1,Age,>=6 Months,40.7,40.0 to 41.4,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,2,Age,>=6 Months,42.1,41.4 to 42.8,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,3,Age,>=6 Months,42.9,42.2 to 43.6,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,4,Age,>=6 Months,43.4,42.6 to 44.2,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,5,Age,>=6 Months,43.8,43.0 to 44.6,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,7,Age,>=6 Months,0.4,0.3 to 0.5,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,8,Age,>=6 Months,2,1.8 to 2.2,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,9,Age,>=6 Months,8.4,8.0 to 8.8,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,10,Age,>=6 Months,26.1,25.6 to 26.6,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,11,Age,>=6 Months,35.5,34.8 to 36.2,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2015-16,12,Age,>=6 Months,38.8,38.1 to 39.5,53880
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,1,Age,>=6 Months,41.8,41.0 to 42.6,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,2,Age,>=6 Months,43,42.2 to 43.8,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,3,Age,>=6 Months,43.8,43.0 to 44.6,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,4,Age,>=6 Months,44.3,43.5 to 45.1,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,5,Age,>=6 Months,44.6,43.8 to 45.4,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,7,Age,>=6 Months,0.4,0.4 to 0.4,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,8,Age,>=6 Months,2.1,1.9 to 2.3,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,9,Age,>=6 Months,9.4,8.9 to 9.9,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,10,Age,>=6 Months,27,26.3 to 27.7,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,11,Age,>=6 Months,36.1,35.4 to 36.8,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2016-17,12,Age,>=6 Months,39.4,38.6 to 40.2,56613
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,1,Age,>=6 Months,38.2,37.5 to 38.9,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,2,Age,>=6 Months,39.6,38.9 to 40.3,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,3,Age,>=6 Months,40.2,39.5 to 40.9,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,4,Age,>=6 Months,40.9,40.2 to 41.6,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,5,Age,>=6 Months,41.1,40.4 to 41.8,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,7,Age,>=6 Months,0.4,0.4 to 0.4,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,8,Age,>=6 Months,2,1.8 to 2.2,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,9,Age,>=6 Months,8.7,8.4 to 9.0,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,10,Age,>=6 Months,24.8,24.3 to 25.3,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,11,Age,>=6 Months,32.9,32.4 to 33.4,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2017-18,12,Age,>=6 Months,35.8,35.3 to 36.3,62025
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,1,Age,>=6 Months,44.8,44.1 to 45.5,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,2,Age,>=6 Months,46.4,45.7 to 47.1,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,3,Age,>=6 Months,47.5,46.8 to 48.2,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,4,Age,>=6 Months,48.1,47.3 to 48.9,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,5,Age,>=6 Months,48.3,47.5 to 49.1,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,7,Age,>=6 Months,0.4,0.4 to 0.4,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,8,Age,>=6 Months,2.2,2.0 to 2.4,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,9,Age,>=6 Months,9.6,9.3 to 9.9,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,10,Age,>=6 Months,28.6,28.1 to 29.1,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,11,Age,>=6 Months,38.3,37.6 to 39.0,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2018-19,12,Age,>=6 Months,42,41.3 to 42.7,55393
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,1,Age,>=6 Months,49.6,48.8 to 50.4,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,2,Age,>=6 Months,51,50.0 to 52.0,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,3,Age,>=6 Months,51.8,50.8 to 52.8,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,4,Age,>=6 Months,52.3,51.3 to 53.3,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,5,Age,>=6 Months,52.4,51.4 to 53.4,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,7,Age,>=6 Months,0.5,0.3 to 0.7,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,8,Age,>=6 Months,2.2,2.0 to 2.4,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,9,Age,>=6 Months,10.8,10.3 to 11.3,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,10,Age,>=6 Months,32.3,31.6 to 33.0,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,11,Age,>=6 Months,42.4,41.6 to 43.2,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2019-20,12,Age,>=6 Months,46.5,45.7 to 47.3,56841
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,1,Age,>=6 Months,48.7,47.9 to 49.5,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,2,Age,>=6 Months,50.2,49.4 to 51.0,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,3,Age,>=6 Months,51.6,50.8 to 52.4,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,4,Age,>=6 Months,52.9,52.1 to 53.7,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,5,Age,>=6 Months,54.1,53.1 to 55.1,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,7,Age,>=6 Months,0.5,0.5 to 0.5,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,8,Age,>=6 Months,2.6,2.4 to 2.8,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,9,Age,>=6 Months,13.3,12.8 to 13.8,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,10,Age,>=6 Months,34.8,34.1 to 35.5,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,11,Age,>=6 Months,43.7,43.0 to 44.4,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2020-21,12,Age,>=6 Months,46.6,45.8 to 47.4,59106
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,1,Age,>=6 Months,47.3,46.5 to 48.1,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,2,Age,>=6 Months,49.6,48.8 to 50.4,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,3,Age,>=6 Months,51,50.2 to 51.8,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,4,Age,>=6 Months,51.9,51.1 to 52.7,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,5,Age,>=6 Months,52.7,51.9 to 53.5,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,7,Age,>=6 Months,0.4,0.2 to 0.6,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,8,Age,>=6 Months,2,1.8 to 2.2,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,9,Age,>=6 Months,10.4,10.1 to 10.7,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,10,Age,>=6 Months,29.6,28.9 to 30.3,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,11,Age,>=6 Months,40,39.3 to 40.7,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2021-22,12,Age,>=6 Months,44.3,43.6 to 45.0,55918
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,1,Age,>=6 Months,46,45.3 to 46.7,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,2,Age,>=6 Months,47.5,46.8 to 48.2,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,3,Age,>=6 Months,48.5,47.8 to 49.2,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,4,Age,>=6 Months,49.2,48.4 to 50.0,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,5,Age,>=6 Months,49.7,48.9 to 50.5,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,7,Age,>=6 Months,0.6,0.5 to 0.7,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,8,Age,>=6 Months,2.4,2.2 to 2.6,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,9,Age,>=6 Months,10.9,10.6 to 11.2,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,10,Age,>=6 Months,29.9,29.4 to 30.4,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,11,Age,>=6 Months,39.7,39.0 to 40.4,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2022-23,12,Age,>=6 Months,43.3,42.6 to 44.0,61091
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,1,Age,Greater than 6 Months flu,43.2,42.5 to 43.9,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,2,Age,Greater than 6 Months flu,44.9,44.2 to 45.6,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,3,Age,Greater than 6 Months flu,45.8,45.1 to 46.5,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,4,Age,Greater than 6 Months flu,46.7,46.0 to 47.4,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,5,Age,Greater than 6 Months flu,47.2,46.5 to 47.9,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,7,Age,Greater than 6 Months flu,0.5,0.4 to 0.6,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,8,Age,Greater than 6 Months flu,2.2,2.0 to 2.4,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,9,Age,Greater than 6 Months flu,9.9,9.6 to 10.2,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,10,Age,Greater than 6 Months flu,28,27.5 to 28.5,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,11,Age,Greater than 6 Months flu,37.4,36.7 to 38.1,67357
+Seasonal Influenza,HHS Regions/National,Region 5,105,2023-24,12,Age,Greater than 6 Months flu,40.6,39.9 to 41.3,67357

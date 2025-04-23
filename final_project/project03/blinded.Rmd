@@ -1,0 +1,947 @@
+---
+title: "Flu Cases in Michigan"
+output:
+  html_document:
+    toc: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(knitr)
+library(ggplot2)
+library(pomp)
+library(magrittr)
+library(reshape2)
+library(foreach)
+library(doParallel)
+library(doRNG)
+library(stats)
+library(forecast)
+```
+
+## 1 Introduction
+
+Influenza has had a major outbreak across several states in the U.S. since the winter of 2024. The flu season has been serious in Michigan, with the Centers for Disease Control and Prevention (CDC) reporting "very high" levels of influenza cases [1]. Given this significant surge in cases, we are interested in whether time series models can effectively capture the dynamics of flu cases. This leads us to our research question: **Can a partially-observed-Markov-process (pomp) time series model effectively represent the flu cases in Michigan?**
+
+In this project, we aim to apply both traditional time series approaches (ARMA and SARMA models) and partially observed Markov process (POMP) models to analyze influenza cases in Michigan. We begin by exploring and decomposing the time series data to identify underlying trends and seasonal patterns, followed by a frequency domain analysis to detect the dominant periodicity in the data. Next, we fit ARMA and SARMA models to evaluate how well they capture the structure of the flu case time series. The Akaike Information Criterion (AIC) is used for model comparison, and residual diagnostics are conducted for model evaluation.
+
+For the POMP framework, we implement an SEIRS (Susceptible-Exposed-Infected-Recovered-Susceptible) compartmental model and perform parameter estimation using both local and global search methods. We then conduct a profile likelihood analysis to assess parameter identifiability and estimate confidence intervals. Finally, we compare the performance of the different modeling approaches and discuss their implications for understanding flu dynamics in Michigan.
+
+## 2 Data Exploratory
+
+The Michigan Flu data is collected from the Centers for Disease Control and Prevention (CDC) [2], which provides weekly updates on flu activity across the United States, allowing for time series modeling and analysis at the state level. To focus on recent flu trends, our analysis investigates the influenza cases in Michigan from 2023 to the 12th week in 2025.
+
+```{r load_data, include=FALSE}
+data <- read.csv("../Data/flu_michigan.csv")
+flu_data <- data[, c("week", "cases")]
+flu_data$time <- flu_data$week  # for seasonal beta
+```
+
+```{r, echo=TRUE}
+# plot the data
+flu_data %>%
+  ggplot(aes(x = week, y = cases)) + 
+  geom_line() + 
+  labs(
+    x = "Week",
+    y = "Cases",
+    title = "Michigan Weekly Flu Cases (2023-2025)"
+  ) + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_minimal()
+```
+
+The plot shows the number of weekly flu cases in Michigan. We convert the year-week format into consecutive week numbers to simplify the analysis. We observe two peaks—one around week 60 and another around week 110, suggesting a potential seasonal trend in the data. The spike in flu cases occurs around week 110, indicating a significant outbreak during the 2024-2025 flu season. This observation supports the CDC reports of "very high" flu activity during that period.
+
+### 2.1 Decomposition
+
+From the decomposition plot below, we observe a seasonal pattern that likely follows a yearly cycle. Additionally, the plot shows an upward trend from 2023 to 2025, possibly due to the outbreak.
+
+```{r, echo=TRUE}
+flu_ts <- ts(flu_data$cases, start = c(2023, 1), frequency = 52)
+flu_stl <- stl(flu_ts, s.window = "periodic")
+
+plot(flu_stl, main="STL Decomposition of Michigan Flu Cases")
+```
+
+### 2.2 Frequency Analysis
+
+In this part, we analyze the data in the frequency domain to investigate the seasonality in the data [5]. From the plots below, we can see that the dominant frequency is around $0.0167$. The frequency corresponds to a time period of:
+
+$$T = \frac{1}{\omega} = \frac{1}{0.0167} \approx 60 \text{ weeks}$$
+
+This suggests that the seasonal patterns of the data occur approximately every 60 weeks, which is around 1.15 years.
+
+```{r}
+# Unsmoothed Periodogram
+periodogram_unsmoothed = spectrum(flu_data$cases, 
+                                  main="Unsmoothed Periodogram of Flu Cases in Michigan", 
+                                  xlab="frequency", sub="")
+
+abline(v=periodogram_unsmoothed$freq[which.max(periodogram_unsmoothed$spec)], col="red", lty=2)
+
+# Smoothed Periodogram
+periodogram_smoothed = spectrum(flu_data$cases, spans=c(3,5,3), 
+                               main="Smoothed Periodogram of Flu Cases in Michigan", 
+                               plot=TRUE, xlab="frequency", sub="")
+abline(v=periodogram_smoothed$freq[which.max(periodogram_smoothed$spec)], col="red", lty=2)
+```
+
+## 3 ARMA Models
+
+After exploring the structure of the flu cases in Michigan, including identifying trends, seasonality, and autocorrelation patterns, we proceed to fit an ARMA model to the data. First, we use the ARMA model as a baseline for our analysis, while modeling to capture seasonality will be conducted in a later section since we already observed strong seasonal patterns in the data through the decomposition plot.
+
+Since the original data shows an upward trend, we first applied a log transformation to help detrend the data and reduce its variance:
+
+```{r}
+log_flu_ts <- log(1 + flu_ts)
+```
+
+However, the ACF plot of the log-transformed data still exhibits a slow decay, indicating that the series remains non-stationary. To handle this, we apply a first-order differencing to the transformed data in an attempt to remove the underlying trend and achieve stationarity.
+
+```{r}
+acf(log_flu_ts, lag.max = 20, xaxt = "n", main = "ACF plot after Log-transformation")
+axis(1, at = seq(0, 1, by = 1/52), labels = 0:52)
+
+diff_flu_ts <- diff(flu_ts)
+acf(diff_flu_ts, lag.max = 20, xaxt = "n", main = "ACF plot after 1st order differencing")
+axis(1, at = seq(0, 1, by = 1/52), labels = 0:52)
+```
+
+Despite the spike around the first lag, the other autocorrelation values lie in the confidence band. Therefore, we will use the data after differentiation to fit the ARMA model.
+
+### 3.1 ARMA
+
+A stationary ARMA$(p, q)$ process with a mean $\mu$ can be written as:
+
+$$\phi(B)(Y_n - \mu) = \psi(B)\varepsilon_n$$
+
+where\
+$$\phi(x) = 1 - \sum_{i=1}^{p} \phi_i x^i, \quad \psi(x) = 1 + \sum_{j=1}^{q} \psi_j x^j$$
+
+$B$ is the backshift operator, and $\{\varepsilon_n\}$ is a white noise process with zero mean and variance $\sigma^2$.
+
+As for model selection, we evaluate the model using Akaike's Information Criterion (AIC), defined as:
+
+$$AIC = -2 \times \ell(\theta^*) + 2D$$
+
+where $D$ is the number of parameters, and $\ell(\theta^*)$ is the maximum log likelihood. The model with the lowest AIC value will be selected for each parameter set, and further model selection will be conducted.
+
+```{r}
+arma_aic_table <- function(data, P, D, Q) {
+  best_aic <- Inf
+  best_p <- NULL
+  best_q <- NULL
+  table <- matrix(NA, (P+1), (Q+1))
+  for (p in 0:P) {
+    for (q in 0:Q) {
+       aic_pq <- arima(data, order=c(p,D,q))$aic
+       table[p+1, q+1] <- aic_pq
+       if (aic_pq < best_aic) {
+         best_aic <- aic_pq
+         best_p <- p
+         best_q <- q
+       }
+    }
+  }
+  dimnames(table) <- list(paste("AR", 0:P, sep=""), paste("MA", 0:Q, sep=""))
+  list(table, best_p, best_q)
+}
+
+max_ar <- 2
+max_ma <- 2
+table <- arma_aic_table(diff_flu_ts, max_ar, 0, max_ma)
+
+kable(table[[1]], caption = "AIC Values for ARMA(p,q) Models")
+```
+
+The AIC table suggests that ARMA(0,1) is the best model. The plots below show the residual diagnostics for the model. Through the residual plot, we can discover certain events or seasonality that have not been captured by the model; however, this is expected due to the seasonal pattern of the original data. Also, the ACF plot shows that there is no autocorrelation between residuals, which matches the model assumption. Lastly, the histogram shows that the residuals are normally distributed but contain some extreme values.
+
+```{r, warning=FALSE}
+arma_01_model <- arima(diff_flu_ts, order = c(0, 0, 1))
+arma_01_model
+```
+
+```{r}
+checkresiduals(arma_01_model)
+```
+
+### 3.2 SARMA
+
+After investigating the ARMA model, next we will take the seasonality into account and apply the SARMA models. We will again use AIC as the criterion for model selection. The general $SARMA(p,q) \times (P,Q)_{52}$ model for weekly data is:
+
+$$\phi(B) \Phi(B^{52}) \left(Y_n - \mu \right) = \psi(B) \Psi(B^{52}) \epsilon_n$$
+
+where $\{ \epsilon_n \}$ is a white noise process, the intercept $\mu$ is the mean of the process, and $\phi(x)$, $\Phi(x)$, $\psi(x)$, $\Psi(x)$ are the ARMA polynomials.
+
+Next, we will find the best-fitting model using $SARMA(p,q) \times (P,Q)_{52}$ through different parameter sets by fixing the regular terms $p$ and $q$ from the above ARMA finding, and focus on finding the optimal seasonal parameters $P$ and $Q$ that provide the best fit for our time series data, where the seasonal period is 52 weeks.
+
+```{r}
+sarma_aic_table <- function(data, p, q, P_max, Q_max, seasonal_period) {
+  table <- matrix(NA, (P_max+1), (Q_max+1))  
+  
+  for (P in 0:P_max) {
+    for (Q in 0:Q_max) {
+      model <- tryCatch(
+        arima(data, order = c(p,0,q), 
+              seasonal = list(order = c(P, 0, Q), period = seasonal_period)),
+        error = function(e) return(NULL)  
+      )
+      table[P+1, Q+1] <- ifelse(is.null(model), NA, model$aic)  
+    }
+  }
+  
+  dimnames(table) <- list(paste("SAR", 0:P_max, sep=""), paste("SMA", 0:Q_max, sep=""))
+  return(table)
+}
+
+
+# ARMA(0,1) with seasonal effects
+sarma_aic_results <- sarma_aic_table(diff_flu_ts, p=0, q=1, P_max=2, Q_max=3, seasonal_period=52)
+
+kable(sarma_aic_results, caption = "AIC Values for SARMA(0,1)×(P,Q)₅₂ Models")
+```
+
+```{r}
+model_sarma <- arima(diff_flu_ts,
+                     order = c(0, 0, 1),
+                     seasonal = list(order = c(1, 0, 0), period = 52))
+model_sarma
+```
+
+```{r}
+checkresiduals(model_sarma)
+```
+
+The AIC table suggests that $SARMA(0,1) \times (1,0)_{52}$ is the best model. Through the residual plot, we can see some volatility, suggesting that the SARMA model might not have captured the pattern perfectly. However, the ACF plot and the histogram show that the residuals are not correlated with others, and they are normally distributed.
+
+By comparing the log-likelihood, SARMA has a slightly larger value than ARMA (improvement from -497.31 to -495.4). This indicates that adding the seasonal component improves the model fit, though the improvement is smaller than expected. This suggests that even though seasonal patterns exist, the SARMA model still has limitations in fully capturing the dynamics of the flu data.
+
+## 4 SEIRS Model
+
+For the POMP model, we used a POMP SEIRS model, which was adapted from a model from a past project, to simulate flu outbreaks [3]. The model extends the SEIR model by adding a transition from the Recovered class back to the Susceptible class, meaning that everyone who recovers from the flu will eventually return to the susceptible class.
+
+### 4.1 Model Definition
+
+The number of people in each compartment at time $t$ is:
+
+```{=tex}
+\begin{align*}
+S(t) &= S_0 + N_{RS}(t) - N_{SE}(t) \\
+E(t) &= E_0 + N_{SE}(t) - N_{EI}(t) \\
+I(t) &= I_0 + N_{EI}(t) - N_{IR}(t) \\
+R(t) &= R_0 + N_{IR}(t) - N_{RS}(t)
+\end{align*}
+```
+Then, we define the rates of transition as:
+
+```{=tex}
+\begin{align*}
+\frac{dN_{SE}}{dt} &= \beta(t) \cdot \frac{S(t) \cdot I(t)}{N} \\
+\frac{dN_{EI}}{dt} &= \mu_{EI} \cdot E(t) \\
+\frac{dN_{IR}}{dt} &= \mu_{IR} \cdot I(t) \\
+\frac{dN_{RS}}{dt} &= \mu_{RS} \cdot R(t)
+\end{align*}
+```
+We approximate the rates using binomial distributions with exponential transition probability [4]:
+
+```{=tex}
+\begin{align*}
+\Delta N_{SE} &\sim \text{Binomial}\left(S(t), 1 - \exp\left(-\beta(t) \cdot \frac{I(t)}{N} \cdot \Delta t\right)\right) \\
+\Delta N_{EI} &\sim \text{Binomial}\left(E(t), 1 - \exp(-\mu_{EI} \cdot \Delta t)\right) \\
+\Delta N_{IR} &\sim \text{Binomial}\left(I(t), 1 - \exp(-\mu_{IR} \cdot \Delta t)\right) \\
+\Delta N_{RS} &\sim \text{Binomial}\left(R(t), 1 - \exp(-\mu_{RS} \cdot \Delta t)\right)
+\end{align*}
+```
+Initially, we assigned fixed values to each compartment, but the model performed poorly due to Michigan's large population and the relatively small proportion of individuals infected with the flu. Therefore, to handle this problem, we used the approach from previous reports and initialized the model using population proportions for each compartment, which were then rescaled to match the total population size $N$ [3]:
+
+```{=tex}
+\begin{align*}
+pop &= \frac{N}{S_0 + E_0 + I_0 + R_0} \\
+S(0) &= S_0 \cdot pop \\
+E(0) &= E_0 \cdot pop \\
+I(0) &= I_0 \cdot pop \\
+R(0) &= R_0 \cdot pop \\
+H(0) &= 0
+\end{align*}
+```
+where $H(t)$ tracks cumulative new infections for use in the measurement model.
+
+To represent seasonality, we define a time-varying transmission rate function $\beta(t)$. This function was adapted from a previous report and modified to better match the seasonal patterns observed in the Michigan flu data [3]. We use a cosine function rather than a sine function to more accurately capture the fluctuations in seasonal peaks. The function is:
+
+$$\beta(t) = \beta_0 \cdot \left(1 + amp \cdot \cos\left(2 \pi \cdot \frac{t + phase}{52}\right)\right)$$
+
+where - $\beta_0$ is the baseline transmission rate - $amp$ is the amplitude (degree of seasonal variation) - $phase$ controls the timing of the seasonal peaks (in weeks)
+
+```{r}
+seirs_step <- Csnippet("
+  double pi = 3.141593;
+  double Beta = Beta0 * (1 + amp * cos(2 * pi * (t + phase) / 52));
+  double dN_SE = rbinom(S, 1 - exp(-Beta * I / N * dt));
+  double dN_EI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dN_IR = rbinom(I, 1 - exp(-mu_IR * dt));
+  double dN_RS = rbinom(R, 1 - exp(-mu_RS * dt));
+  S += dN_RS - dN_SE;
+  E += dN_SE - dN_EI;
+  I += dN_EI - dN_IR;
+  R += dN_IR - dN_RS;
+  H += dN_IR;
+  ")
+
+seirs_rinit <- Csnippet("
+  double pop = N / (S0 + E0 + I0 + R0);
+  S = nearbyint(S0 * pop);
+  E = nearbyint(E0 * pop);
+  I = nearbyint(I0 * pop);
+  R = nearbyint(R0 * pop);
+  H = 0;
+  ")
+
+seirs_dmeas <- Csnippet("
+  lik = dnbinom_mu(cases, k, rho * H, give_log);
+  ")
+
+seirs_rmeas <- Csnippet("
+  cases = rnbinom_mu(k, rho * H);
+  ")
+
+flu_seirs <- flu_data %>%
+  pomp(
+    times = "time",
+    t0 = 0,
+    rprocess = euler(seirs_step, delta.t = 1 / 7),
+    rinit = seirs_rinit, 
+    rmeasure = seirs_rmeas,
+    dmeasure = seirs_dmeas,
+    accumvars = "H",
+    statenames = c("S", "E", "I", "R", "H"),
+    paramnames = c("Beta0", "amp", "phase", "mu_EI", "mu_IR", "mu_RS", "N", "S0", "E0", "I0", "R0", "rho", "k"),
+    partrans = parameter_trans(
+      log = c("Beta0", "mu_EI", "mu_IR", "mu_RS", "k"),
+      logit = c("amp", "rho"),
+      barycentric = c("S0", "E0", "I0", "R0")
+    )
+  )
+```
+
+```{r}
+params <- c(
+  Beta0 = 1.8, amp = 0.47, phase = 6,
+  mu_EI = 0.9, mu_IR = 1.8, mu_RS = 1,
+  N = 10e6, S0 = 0.07, E0 = 0.01, I0 = 0.035, R0 = 0.3,
+  rho = 0.00015, k = 15
+)
+```
+
+```{r}
+simulate(flu_seirs, params = params, nsim = 20, format = "data.frame", include.data = TRUE) %>%
+  ggplot(aes(x = time, y = cases, group = .id, color = .id == "data")) +
+  geom_line(alpha = 0.8) +
+  scale_color_manual(values = c("gray", "red"), labels = c("Simulated", "Observed")) +
+  labs(
+    title = "SEIRS Simulation with Seasonal Transmission",
+    x = "Time (weeks)",
+    y = "Cases",
+    color = "Type"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Through simulations of the SEIRS model, we are able to capture the seasonal dynamics present in the flu data. While the simulation does not perfectly fit the observed cases, it provides a strong foundation for initial investigation and serves as a starting point for further analysis through parameter estimation and model improvement.
+
+### 4.2 Local Search
+
+We began parameter estimation by conducting a local search following the iterated filtering methodology illustrated in slides 32-35 of Chapter 14. Using a manually defined parameter set as the starting point, we ran the mif2() algorithm to optimize parameter values. The trace plot below shows the evolution of the log-likelihood and parameter values across iterations, demonstrating the convergence behavior during local search.
+
+```{r, warning=FALSE}
+# Set up parallel processing FIRST
+cores <- parallel::detectCores()
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+registerDoRNG(seed = 123456)  # For reproducibility
+
+# Define random walk standard deviations
+rw_sd <- pomp::rw_sd(
+  Beta0 = 0.02,
+  amp = 0.01,
+  phase = 0.1,
+  mu_EI = 0.02,
+  mu_IR = 0.02,
+  mu_RS = 0.02,
+  rho = 0.00001,
+  k = 0.2
+)
+
+# Starting parameters
+params_local <- c(
+  Beta0 = 1.8,
+  amp = 0.47,
+  phase = 6,
+  mu_EI = 0.9,
+  mu_IR = 1.8,
+  mu_RS = 1,
+  rho = 0.00015,
+  k = 15,
+  N = 10e6,
+  S0 = 0.07,
+  E0 = 0.01,
+  I0 = 0.035,
+  R0 = 0.3
+)
+
+# Run iterated filtering
+mif_local <- foreach(i = 1:10, .packages = "pomp", .combine = c) %dopar% {
+  pomp::mif2(
+    flu_seirs,
+    params = params_local,
+    Np = 1000,
+    Nmif = 100,
+    cooling.fraction.50 = 0.5,
+    rw.sd = rw_sd
+  )
+}
+
+# Stop cluster when done
+stopCluster(cl)
+
+# Evaluate likelihoods
+lik_local <- lapply(mif_local, function(mf) {
+  pf <- pfilter(mf, Np = 2000)
+  c(coef(mf), loglik = logLik(pf))
+})
+lik_local <- do.call(rbind, lik_local)
+
+# Find best result
+best_local <- lik_local[which.max(lik_local[,"loglik"]),]
+cat("\nBest local estimates:\n")
+print(best_local)
+```
+
+```{r}
+trace_list <- lapply(seq_along(mif_local), function(i) {
+  as.data.frame(mif_local[[i]]@traces) %>% 
+    mutate(iteration = 1:nrow(.), replicate = i)
+})
+
+trace_all <- bind_rows(trace_list)
+
+trace_long <- trace_all %>%
+  pivot_longer(
+    cols = -c(iteration, replicate),
+    names_to = "parameter",
+    values_to = "value"
+  )
+
+ggplot(trace_long, aes(x = iteration, y = value, group = replicate, color = factor(replicate))) +
+  geom_line(alpha = 0.7) +
+  facet_wrap(~parameter, scales = "free_y", ncol = 4) +
+  labs(
+    title = "SEIRS Local Search Results",
+    x = "Iteration",
+    y = "Value"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+To evaluate the performance of the model following local search, we applied the particle filtering algorithm to obtain a reliable estimate of the log-likelihood. This step is necessary because the log-likelihood computed during iterated filtering is not a consistent estimator.
+
+Using particle filtering on the best model identified by iterated filtering, we obtained a final log-likelihood estimate:
+
+```{r}
+results_local <- as.data.frame(lik_local)
+
+params_local <- results_local %>%
+  filter(loglik == max(loglik)) %>%
+  select(-loglik)  
+
+coef(flu_seirs) <- unlist(params_local)
+
+# Setup parallel processing
+try(stopCluster(cl), silent = TRUE)
+rm(list = ls(pattern = "cl"))
+gc()
+
+cores <- parallel::detectCores(logical = FALSE)  
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+# Apply particle filter to estimate log-likelihood
+Np <- 5000
+loglik_values <- foreach(i = 1:10, .packages = "pomp", .combine = c) %dopar% {
+  logLik(pfilter(flu_seirs, Np = Np))
+}
+
+stopCluster(cl)
+
+loglik_summary <- logmeanexp(loglik_values, se = TRUE)
+cat("Final log-likelihood estimate from best model:\n")
+print(loglik_summary) 
+```
+
+To investigate the parameter relationships and identifiability, we generated a pair plot of the local search results, excluding rapidly converging initial state variables such as $S_0$, $E_0$, $I_0$, $R_0$, and $k$. The plot reveals several insights:
+
+1.  Some parameters, such as $\rho$ and $\mu_{RS}$, show low variability across iterations, indicating convergence and identifiability.
+
+2.  There is visible correlation between certain parameters, such as $amp$ and $phase$, and $\beta_0$ and $\mu_{EI}$, suggesting potential parameter interactions.
+
+3.  The relationship between log-likelihood and some parameters, including $\mu_{EI}$ and $amp$, suggests these parameters are particularly influential in determining model fit.
+
+Overall, the pair plot confirms that the parameter space was adequately explored and that the fitted model resides in a high-likelihood region.
+
+```{r}
+pairs(
+  ~loglik + Beta0 + amp + phase + mu_EI + mu_IR + mu_RS + rho, 
+  data = results_local, 
+  pch = 16, cex = 0.5,
+  main = "Pairs Plot of Local Search Results"
+)
+```
+
+### 4.3 Global Search
+
+We conducted a global search to ensure that our local search did not get trapped in a local optimum. For this global search, we used the "multiple iterated filtering" approach with different starting points sampled across the parameter space. This helps explore more widely and potentially find better parameter sets than those identified through local optimization alone.
+
+```{r}
+try(stopCluster(cl), silent = TRUE)
+gc()
+cores <- parallel::detectCores()
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+registerDoRNG(seed = 123456)
+
+# Create diverse starting points
+start_designs <- replicate(10, {
+  c(
+    Beta0 = runif(1, 0.5, 3),
+    amp   = runif(1, 0.01, 0.9),      
+    phase = runif(1, 0, 52),
+    mu_EI = runif(1, 0.2, 1.5),
+    mu_IR = runif(1, 0.5, 3),
+    mu_RS = runif(1, 0.05, 1),
+    rho   = runif(1, 0.00005, 0.001),
+    k     = runif(1, 5, 30),
+    N     = 1e7,
+    S0    = runif(1, 0.01, 0.8),
+    E0    = runif(1, 0.001, 0.1),
+    I0    = runif(1, 0.001, 0.1),
+    R0    = runif(1, 0.001, 0.5)
+  )
+}, simplify = FALSE)
+
+# Multi-stage iterated filtering
+mifs_global <- foreach(start = start_designs, .combine = c,
+                       .packages = c("pomp", "magrittr")) %dopar% {
+  mif2(flu_seirs, params = start, Np = 1000, Nmif = 50,
+       cooling.fraction.50 = 0.5, rw.sd = rw_sd) %>%
+    continue(Nmif = 50)
+}
+
+# Evaluate log-likelihoods
+logliks_global <- foreach(mf = mifs_global, .combine = rbind,
+                          .packages = c("pomp")) %dopar% {
+  ll <- logmeanexp(replicate(10, logLik(pfilter(mf, Np = 2000))), se = TRUE)
+  data.frame(loglik = ll[1], se = ll[2])
+}
+
+results_global <- do.call(rbind, lapply(seq_along(mifs_global), function(i) {
+  cbind(as.data.frame(t(coef(mifs_global[[i]]))), logliks_global[i, ])
+}))
+
+best_idx <- which.max(results_global$loglik)
+best_params <- results_global[best_idx, ]
+
+cat("Best global search result:\n")
+print(best_params)
+
+stopCluster(cl)
+```
+
+Comparing the global search results with our local search, we observe that the global search produced a slightly better log-likelihood (-375.77 versus -375.83). The key parameter differences include higher Beta0 (3.77 vs 2.89), different phase value (52.64 vs 1.27), and higher k value (5.40 vs 3.98), suggesting a different seasonality pattern and measurement process. These improvements, though small in terms of log-likelihood, indicate that the global search successfully explored regions of the parameter space that the local search did not reach.
+
+```{r}
+# Visualization of parameter vs. log-likelihood
+results_long <- results_global %>%
+  pivot_longer(
+    cols = -c(loglik, se),
+    names_to = "parameter",
+    values_to = "value"
+  )
+
+ggplot(results_long, aes(x = value, y = loglik)) +
+  geom_point(alpha = 0.7, color = "steelblue") +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(
+    title = "Parameter vs. Log-Likelihood (Global Search)",
+    x = "Parameter Value",
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+The parameter versus log-likelihood plots from the global search provide insight into the parameter identifiability and sensitivity. We observe that certain parameters show clear patterns with respect to log-likelihood values, particularly `amp` and `phase`, indicating that these parameters strongly influence the model fit. Other parameters like `mu_RS` show relatively flat relationships with log-likelihood, suggesting less sensitivity. These plots help us understand which parameters are well-determined by the data and which have greater uncertainty.
+
+```{r}
+# Set model to best global parameters
+coef(flu_seirs) <- unlist(best_params %>% select(-loglik, -se))
+
+# Evaluate final log-likelihood
+cores <- parallel::detectCores()
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+registerDoRNG(seed = 999)
+
+Np <- 5000
+loglik_values_global <- foreach(i = 1:10, .packages = "pomp", .combine = c) %dopar% {
+  logLik(pfilter(flu_seirs, Np = Np))
+}
+stopCluster(cl)
+
+loglik_summary_global <- logmeanexp(loglik_values_global, se = TRUE)
+cat("Final log-likelihood estimate from best GLOBAL model:\n")
+print(loglik_summary_global)
+```
+
+The simulation plot using our best global parameters demonstrates the model's ability to capture the key dynamics of flu transmission in Michigan:
+
+```{r}
+sim_global <- simulate(flu_seirs, nsim = 20, format = "data.frame", include.data = TRUE)
+
+ggplot(sim_global, aes(x = time, y = cases, group = .id, color = .id == "data")) +
+  geom_line(alpha = 0.7) +
+  scale_color_manual(values = c("gray", "red"), labels = c("Simulated", "Observed")) +
+  labs(
+    title = "SEIRS Simulation with Best Global Parameters",
+    x = "Time (weeks)",
+    y = "Cases",
+    color = "Type"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+pairs(
+  ~loglik + Beta0 + amp + phase + mu_EI + mu_IR + mu_RS + rho, 
+  data = results_global, 
+  pch = 16, cex = 0.5,
+  main = "Pairs Plot of Global Search Results"
+)
+```
+
+## 5 Model Comparison
+
+After analyzing the flu data using both traditional time series approaches (ARMA and SARMA) and the POMP framework (SEIRS model), we can now compare these methods in terms of their ability to capture the underlying dynamics of influenza cases in Michigan.
+
+### 5.1 ARMA/SARMA vs. POMP Comparison
+
+| Model              | Strengths                                                                                                    | Limitations                                                  | Log-Likelihood |
+|-----------------|-----------------|-----------------|---------------------|
+| ARMA(0,1)          | Simple, computationally efficient, good for short-term forecasting                                           | Cannot capture non-linear dynamics, limited interpretability | -497.31        |
+| SARMA(0,1)×(1,0)₅₂ | Captures seasonal patterns, improved fit over ARMA                                                           | Still limited in representing epidemic mechanisms            | -495.40        |
+| SEIRS (POMP)       | Mechanistic interpretation, captures non-linear dynamics and seasonality, biologically meaningful parameters | Computationally intensive, more complex to implement         | -375.79        |
+
+The POMP-based SEIRS model shows a significant improvement in log-likelihood compared to both ARMA and SARMA models, suggesting that the mechanistic approach better captures the underlying epidemic process. This improvement can be attributed to several factors:
+
+1.  **Mechanistic foundation**: The SEIRS model explicitly incorporates the epidemic transmission process, accounting for transitions between susceptible, exposed, infected, and recovered states.
+
+2.  **Seasonal transmission**: The time-varying transmission rate in the SEIRS model allows for more flexible representation of seasonality compared to the fixed seasonal components in SARMA.
+
+3.  **Non-linear dynamics**: Epidemic processes are inherently non-linear, which is captured by the SEIRS model but not by ARMA/SARMA models.
+
+4.  **Population heterogeneity**: The SEIRS model accounts for population structure and heterogeneity in disease states, which is not possible with traditional time series models.
+
+However, the POMP approach also comes with increased computational complexity and requires more parameter estimation. The choice between these approaches depends on the specific goals of the analysis:
+
+-   For simple forecasting tasks with limited computational resources, ARMA/SARMA models may be sufficient.
+-   For understanding the mechanisms driving flu dynamics and obtaining biologically interpretable parameters, the POMP-based SEIRS model is clearly superior.
+
+In this case, the substantial improvement in log-likelihood suggests that the additional complexity of the POMP approach is justified by its better representation of the underlying epidemic process.
+
+## 6 Profile Likelihood
+
+To better understand the uncertainty and identifiability of key parameters in our SEIRS model, we utilize **profile likelihood analysis**. Unlike point estimates from maximum likelihood estimation, profile likelihood offers a way to explore how sensitive the likelihood is to changes in a specific parameter while optimizing over all others [6]. By profiling individual parameters such as `amp`, `Beta0`, `phase`, and `rho`, we can assess their identifiability and determine how precisely each is estimated.
+
+This approach is particularly valuable when dealing with **partially observed systems**, such as epidemiological models, where some parameters may be weakly informed by the data or correlated with others. The profile likelihood helps detect such issues, and it enhances the interpretability and robustness of our model inference.
+
+### 6.1 Profile Likelihood Strategy
+
+We implemented profile likelihood analysis to assess the uncertainty and identify of key parameters. Our approach was inspired by the HW7 solution [7], which uses a straightforward loop: fix one parameter, freeze its random walk, run `mif2()`, then evaluate log-likelihood using `pfilter()`.
+
+Due to time and computational constraints, we used a single-path profile rather than the more advanced method in Chapter 14 of the course notes [2], which samples multiple starting points within a high-likelihood box using `profile_design()`. Our simplified method still provides useful local uncertainty estimates but may miss global irregularities in the likelihood surface.
+
+For this analysis, we focused on profiling four key model parameters: `amp`, `Beta0`, `phase`, and `rho`. The computation of some profiles (particularly for `mu_EI`, `mu_IR`, and other parameters) was limited by computational resources and time constraints. We clearly note these limitations in our interpretation of the results.
+
+```{r}
+# Define MLE parameters based on our best global results
+MLE_params <- unlist(best_params %>% select(-loglik, -se))
+
+# Default random walk standard deviations template
+sd_template <- c(
+  Beta0 = 0.02,
+  amp = 0.01,
+  phase = 0.1,
+  mu_EI = 0.02,
+  mu_IR = 0.02,
+  mu_RS = 0.02,
+  rho = 0.00001,
+  k = 0.2
+)
+
+# Profile Likelihood for amp
+amp_grid <- seq(MLE_params["amp"] - 0.1, MLE_params["amp"] + 0.1, length.out = 10)
+profile_amp <- data.frame(amp = amp_grid, loglik = NA_real_)
+
+for (i in seq_along(amp_grid)) {
+  params_prof <- MLE_params
+  params_prof["amp"] <- amp_grid[i]
+  sd_vals <- sd_template
+  sd_vals["amp"] <- 0
+  rw_sd_prof <- do.call(pomp::rw_sd, as.list(sd_vals))
+  mif_prof <- pomp::mif2(flu_seirs, params = params_prof, Np = 1000, Nmif = 100,
+                         cooling.fraction.50 = 0.5, rw.sd = rw_sd_prof)
+  pf <- pomp::pfilter(mif_prof, Np = 5000)
+  profile_amp$loglik[i] <- logLik(pf)
+}
+
+# Calculate CI for amp
+cutoff_amp <- max(profile_amp$loglik) - qchisq(0.95, 1) / 2
+ci_amp <- with(profile_amp, {
+  keep <- which(loglik >= cutoff_amp)
+  c(min(amp[keep]), max(amp[keep]))
+})
+
+# Plot profile for amp
+ggplot(profile_amp, aes(x = amp, y = loglik)) +
+  geom_line(color = "steelblue") +
+  geom_point() +
+  geom_hline(yintercept = cutoff_amp, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ci_amp, linetype = "dotted", color = "blue") +
+  annotate("text", x = ci_amp, y = cutoff_amp - 5,
+           label = sprintf("%.3f", ci_amp),
+           color = "blue", vjust = 1.2) +
+  labs(
+    title = "Profile Likelihood for amp with 95% CI",
+    subtitle = sprintf("95%% CI: [%.3f, %.3f]", ci_amp[1], ci_amp[2]),
+    x = "amp (fixed)",
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+
+# Profile Likelihood for Beta0
+beta0_grid <- seq(MLE_params["Beta0"] - 0.5, MLE_params["Beta0"] + 0.5, length.out = 10)
+profile_b0 <- data.frame(Beta0 = beta0_grid, loglik = NA_real_)
+
+for (i in seq_along(beta0_grid)) {
+  params_prof <- MLE_params
+  params_prof["Beta0"] <- beta0_grid[i]
+  sd_vals <- sd_template
+  sd_vals["Beta0"] <- 0
+  rw_sd_prof <- do.call(pomp::rw_sd, as.list(sd_vals))
+  mif_prof <- pomp::mif2(flu_seirs, params = params_prof, Np = 1000, Nmif = 100,
+                         cooling.fraction.50 = 0.5, rw.sd = rw_sd_prof)
+  pf <- pomp::pfilter(mif_prof, Np = 5000)
+  profile_b0$loglik[i] <- logLik(pf)
+}
+
+# Calculate CI for Beta0
+cutoff_b0 <- max(profile_b0$loglik) - qchisq(0.95, 1) / 2
+ci_b0 <- with(profile_b0, {
+  keep <- which(loglik >= cutoff_b0)
+  c(min(Beta0[keep]), max(Beta0[keep]))
+})
+
+# Plot profile for Beta0
+ggplot(profile_b0, aes(x = Beta0, y = loglik)) +
+  geom_line(color = "darkgreen") +
+  geom_point() +
+  geom_hline(yintercept = cutoff_b0, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ci_b0, linetype = "dotted", color = "blue") +
+  annotate("text", x = ci_b0, y = cutoff_b0 - 5,
+           label = sprintf("%.3f", ci_b0),
+           color = "blue", vjust = 1.2) +
+  labs(
+    title = "Profile Likelihood for Beta0 with 95% CI",
+    subtitle = sprintf("95%% CI: [%.3f, %.3f]", ci_b0[1], ci_b0[2]),
+    x = "Beta0 (fixed)",
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+
+# Profile Likelihood for phase
+phase_grid <- seq(MLE_params["phase"] - 10, MLE_params["phase"] + 10, length.out = 10)
+profile_ph <- data.frame(phase = phase_grid, loglik = NA_real_)
+
+for (i in seq_along(phase_grid)) {
+  params_prof <- MLE_params
+  params_prof["phase"] <- phase_grid[i]
+  sd_vals <- sd_template
+  sd_vals["phase"] <- 0
+  rw_sd_prof <- do.call(pomp::rw_sd, as.list(sd_vals))
+  mif_prof <- pomp::mif2(flu_seirs, params = params_prof, Np = 1000, Nmif = 100, 
+                         cooling.fraction.50 = 0.5, rw.sd = rw_sd_prof)
+  pf <- pomp::pfilter(mif_prof, Np = 5000)
+  profile_ph$loglik[i] <- logLik(pf)
+}
+
+# Compute CI for phase
+cutoff_ph <- max(profile_ph$loglik) - qchisq(0.95, 1) / 2
+ci_ph <- with(profile_ph, {
+  keep <- which(loglik >= cutoff_ph)
+  c(min(phase[keep]), max(phase[keep]))
+})
+
+# Plot profile for phase
+ggplot(profile_ph, aes(x = phase, y = loglik)) +
+  geom_line(color = "purple") +
+  geom_point() +
+  geom_hline(yintercept = cutoff_ph, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ci_ph, linetype = "dotted", color = "blue") +
+  annotate("text", x = ci_ph, y = cutoff_ph - 5,
+           label = sprintf("%.1f", ci_ph),
+           color = "blue", vjust = 1.2) +
+  labs(
+    title = "Profile Likelihood for phase with 95% CI",
+    subtitle = sprintf("95%% CI: [%.1f, %.1f] weeks", ci_ph[1], ci_ph[2]),
+    x = "phase (weeks, fixed)",
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+
+# Profile Likelihood for rho
+rho_grid <- seq(MLE_params["rho"] * 0.8, MLE_params["rho"] * 1.2, length.out = 10)
+profile_rho <- data.frame(rho = rho_grid, loglik = NA_real_)
+
+for (i in seq_along(rho_grid)) {
+  params_prof <- MLE_params
+  params_prof["rho"] <- rho_grid[i]
+  sd_vals <- sd_template
+  sd_vals["rho"] <- 0
+  rw_sd_prof <- do.call(pomp::rw_sd, as.list(sd_vals))
+  mif_prof <- pomp::mif2(flu_seirs, params = params_prof, Np = 1000, Nmif = 100, 
+                         cooling.fraction.50 = 0.5, rw.sd = rw_sd_prof)
+  pf <- pomp::pfilter(mif_prof, Np = 5000)
+  profile_rho$loglik[i] <- logLik(pf)
+}
+
+# Compute CI for rho
+cutoff_rho <- max(profile_rho$loglik) - qchisq(0.95, 1) / 2
+ci_rho <- with(profile_rho, {
+  keep <- which(loglik >= cutoff_rho)
+  c(min(rho[keep]), max(rho[keep]))
+})
+
+# Plot profile for rho
+ggplot(profile_rho, aes(x = rho, y = loglik)) +
+  geom_line(color = "brown") +
+  geom_point() +
+  geom_hline(yintercept = cutoff_rho, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = ci_rho, linetype = "dotted", color = "blue") +
+  annotate("text", x = ci_rho, y = cutoff_rho - 5,
+           label = sprintf("%.5f", ci_rho),
+           color = "blue", vjust = 1.2) +
+  labs(
+    title = "Profile Likelihood for rho with 95% CI",
+    subtitle = sprintf("95%% CI: [%.5f, %.5f]", ci_rho[1], ci_rho[2]),
+    x = "rho (fixed)",
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+```
+
+### 6.2 Summary of Profile Likelihood Analysis
+
+We conducted profile likelihood analyses for four key parameters in the seasonal SEIRS model: `amp`, `Beta0`, `phase`, and `rho`. The objective was to estimate their confidence intervals (CIs) and assess parameter identifiability.
+
+#### amp (Amplitude of Seasonal Forcing)
+
+-   **95% CI**: [0.526, 0.570]
+-   The log-likelihood curve for `amp` is relatively well-behaved and smooth near the optimum, with a clear peak.
+-   This suggests **good identifiability** of the amplitude parameter.
+-   The confidence interval is **narrow**, indicating strong information in the data about the strength of seasonality.
+
+#### Beta0 (Baseline Transmission Rate)
+
+-   **95% CI**: [1.744, 2.300]
+-   The profile is smooth and fairly symmetric near the peak, with a moderately wide CI.
+-   This implies that `Beta0` is **reasonably well-identified**, though some uncertainty remains regarding baseline transmission intensity.
+
+#### phase (Seasonal Phase Shift)
+
+-   **95% CI**: [2.7, 2.7] (singleton)
+-   The curve is **non-symmetric** and flat outside the maximum, with a steep drop.
+-   The singleton CI suggests **limited identifiability** — the likelihood is sharply peaked at one value.
+-   This indicates the data contains **insufficient information** about the seasonal timing.
+
+#### rho (Reporting Rate)
+
+-   **95% CI**: [0.00015, 0.00015] (singleton)
+-   Similar to `phase`, the CI collapses to a **single point**.
+-   The profile shows **steep drops** on both sides of the peak.
+-   This strongly suggests `rho` is **poorly identifiable**, and the MLE is **highly sensitive** to small variations.
+
+#### Conclusion on Parameter Identification
+
+-   Parameters `amp` and `Beta0` are **well-identified**, supported by informative likelihood curves and reliable CIs.
+-   In contrast, `phase` and `rho` exhibit **identifiability issues**, with singleton or extremely narrow CIs. Additional data, prior information, or model refinement may be required for better estimation.
+-   Due to computational constraints, we were unable to complete profile likelihood analysis for all parameters (particularly `mu_EI`, `mu_IR`, and `mu_RS`). This limitation should be acknowledged when interpreting the model results.
+
+## 7 Conclusion
+
+In this project, we analyzed influenza cases in Michigan using both traditional time series approaches (ARMA and SARMA) and a mechanistic POMP framework (SEIRS model). Our primary research question was: **Can a partially-observed-Markov-process (pomp) time series model effectively represent the flu cases in Michigan?**
+
+Based on our comprehensive analysis, we can confidently answer this question in the affirmative. The POMP-based SEIRS model not only provides a significantly better fit to the data (as evidenced by the substantial improvement in log-likelihood compared to ARMA/SARMA models) but also offers a mechanistic understanding of the underlying epidemic process.
+
+### 7.1 Key Findings:
+
+1.  **Data Characteristics**: The Michigan flu data exhibits clear seasonal patterns with peaks occurring approximately every 60 weeks (around 1.15 years), as identified through decomposition and frequency analysis.
+
+2.  **ARMA/SARMA Performance**: The traditional time series models captured some aspects of the data structure, with SARMA(0,1)×(1,0)₅₂ showing improvement over the basic ARMA(0,1) model by incorporating seasonality. However, both models struggled to fully capture the non-linear dynamics of epidemic spread.
+
+3.  **SEIRS Model Success**: The mechanistic POMP model successfully reproduced the key features of the observed flu cases, including the timing and magnitude of seasonal outbreaks. The seasonal transmission function effectively captured the cyclical nature of influenza incidence.
+
+4.  **Parameter Estimation**: Through local and global search methods, we identified optimal parameter values that provide insights into the underlying epidemic process. The global search yielded slight improvements over local optimization, highlighting the importance of exploring the parameter space thoroughly.
+
+5.  **Parameter Identifiability**: Profile likelihood analysis revealed that some parameters (particularly `amp` and `Beta0`) are well-identified by the data, while others (such as `phase` and `rho`) show identifiability issues. This suggests areas where the model could benefit from additional data or refinement.
+
+6.  **Model Comparison**: The POMP-based SEIRS model significantly outperformed traditional ARMA/SARMA approaches, with a log-likelihood improvement from approximately -495 to -376, demonstrating the value of incorporating mechanistic understanding into time series modeling of infectious diseases.
+
+### 7.2 Implications and Future Directions:
+
+Our findings have important implications for public health monitoring and intervention planning. The ability to accurately model seasonal influenza dynamics using POMP models provides a foundation for:
+
+1.  **Forecasting future outbreaks**: The seasonal pattern identified could help predict the timing and potential magnitude of upcoming flu seasons.
+
+2.  **Intervention planning**: Understanding the transmission dynamics can inform the timing and intensity of public health interventions, such as vaccination campaigns.
+
+3.  **Parameter interpretability**: Unlike purely statistical models, the SEIRS framework offers biologically meaningful parameters that can be interpreted in the context of disease spread and control.
+
+Future work could focus on extending the model to incorporate additional factors such as age structure, vaccination effects, or the co-circulation of multiple influenza strains. Additionally, addressing the parameter identifiability issues identified through profile likelihood analysis could further improve model performance and reliability.
+
+In conclusion, POMP models represent a powerful approach for modeling infectious disease dynamics, offering both superior fit to data and mechanistic insights that traditional time series models cannot provide. For the specific case of influenza in Michigan, the SEIRS model successfully captures the complex seasonal patterns and provides a solid foundation for understanding and predicting future outbreaks.
+
+
+
+## 8 References
+
+We utilized the "STATS-531 - Modeling Flu Cases in Oklahoma" project (Group 5, Winter 2024) to inform our approach to analyzing influenza data using POMP models. While we adapted similar techniques, we implemented our own model framework with parameters calibrated for Michigan's population dynamics. 
+
+We consulted ChatGPT throughout the project, particularly for assistance with implementing and debugging the pomp model, as well as clarifying underlying modeling concepts. Additionally, grammar-checking tools were used to review and revise the report for spelling and grammatical correctness.
+
+[1] [Influenza cases continue to surge throughout Michigan](https://www.wilx.com/2025/02/13/influenza-cases-continue-surge-throughout-michigan/)\
+[2] [CDC FluView Interactive Dashboard](https://gis.cdc.gov/grasp/fluview/fluportaldashboard.html)\
+[3] [STATS531 W24 Final Project - Group 5](https://ionides.github.io/531w24/final_project/project05/blinded.html#SEIRS_Model)\
+[4] [STATS 531 Chapter 12 Lecture Notes](https://ionides.github.io/531w25/12/index.html)\
+[5] [STATS 531 Chapter 7 Lecture Notes](https://ionides.github.io/531w25/07/slides-annotated.pdf)\
+[6] [STATS 531 Homework7 Solution](https://ionides.github.io/531w25/hw07/sol07.html)\
+[7] [STATS 531 Chapter 14 Lecture Notes](https://ionides.github.io/531w25/14/slides-annotated.pdf)

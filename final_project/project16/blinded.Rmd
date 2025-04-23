@@ -1,0 +1,1264 @@
+---
+title: "Analyzing Whooping Cough with ARMA and POMP"
+output: html_document
+bibliography: references.bib
+csl: apa-numeric-superscript-brackets.csl
+date: "2025-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(MMWRweek)
+library(pomp)
+library(doParallel)
+library(foreach)
+library(doFuture)
+library(ISOweek)
+require(knitr)
+library(tseries)
+library(rugarch)
+library(FinTS)
+library(forecast)
+library(ggplot2)
+plan(multisession)
+```
+
+# {.tabset}
+
+
+## Introduction and Exploratory Data Analysis 
+
+### Introduction
+
+Pertussis, more commonly known as whooping cough, is a disease chacterized by a serious cough followed by an inhale that sounds like a "whoop" [@cough_basics]. It is usually seen in unvaccinated people or children who have not recieved all doses of the vaccine. Whooping cough cases are typically pretty low with small fluctuations. However, in 2024, there was an outbreak of whooping cough. Experts believed the outbreak may have been caused by an increase in vaccination hesitation or disruptions to children's normal vaccination schedule due to the COVID-19 pandemic [@2024_outbreak]. 
+
+Our goal is to analyze whooping cough data using ARMA and POMP modeling techniques. We focus specifically on whooping cough cases in the East North Central states, which include Michigan, Ohio, Indiana, Illinois, and Wisconsin. Our data was obtained from the CDC's National Notifiable Diseases Surveillance System database (NNDSS) [@data] and contains weekly data from 2017 to early 2025. 
+
+### Exploratory Data Analysis
+
+The graph below displays the weekly cases for all five east north central states from 2017-2025. 
+```{r, echo = F}
+whoop <- read.csv("data/all_data.csv") %>%
+  mutate(Date = ymd(paste(MMWR.Year, "-01-01", sep = "")) + weeks(MMWR.Week - 1)) %>%
+  select(Reporting.Area, MMWR.Year, MMWR.Week, Cases, Date)
+
+ggplot(whoop) + geom_line(aes(x = as.Date(Date), y = Cases)) + labs(x = "Date", y = "Number of Cases") + ggtitle("Whooping Cough Weekly Cases for East North Central States, 2017-2025")
+```
+
+Prior to 2024, cases remained fairly low with some small peaks. We see a large outbreak in 2024, where cases were more than twice as high as the previously highest peak. 
+
+```{r, echo = F, eval = F}
+whoop[which(is.na(whoop$Cases)),] %>%
+  arrange(MMWR.Year, MMWR.Week)
+
+full_weeks <- expand.grid(MMWR.Year = seq(2017, 2024), MMWR.Week = seq(1, 52)) %>%
+  full_join(whoop, by = c("MMWR.Year" = "MMWR.Year", "MMWR.Week"= "MMWR.Week")) %>%
+   arrange(MMWR.Year, MMWR.Week)
+
+full_weeks[which(is.na(whoop$Cases)),] %>%
+  arrange(MMWR.Year, MMWR.Week)
+
+sum(is.na(full_weeks$Cases))
+```
+
+Unfortunately, our dataset is missing over two full years of data. All of 2022 is missing, and there is very little data for 2021 or the later half of 2020. In total, there are 127 missing weeks. Some of these were orignally included in the dataset with a missing value for the number of cases; while others did not have a corresponding row in the dataset at all. We believe this was due to a reporting error by the CDC, combined with pandemic-ero reporting issues. This issue is not limited to whooping cough, as other diseases in the NNDSS database are also missing for this time period. 
+
+We also collected data on births, deaths, population, and vaccination rates during this time period. The weekly death count was obtained from the provisional CDC tables [@deaths]. Weekly data was available for 2018-2025. For 2017, we assumed deaths occured at a constant rate across the year, and divided the yearly number of deaths by 52. Vaccination data was obtained from the Michigan county immunization report cards [@vaccination]. We were unable to find sufficient vaccination data for the other four states, so we assume that rates were similar across all five states. 
+
+
+```{r, include = F}
+#MORTALITY COUNTS - INCLUDE FOR REPRODUCIBILITY
+
+mortality <- read.delim("data/mortality/mortality_2018_present.txt", header = F) #seems stupid, but setting header = F is the only way I found to load this 
+
+#preprocessing to deal with that 
+
+colnames(mortality) <- c("Notes", "Week", "Week Code", "State", "State Code", "Deaths")
+
+mortality <- select(mortality, -Notes,`State Code`)
+
+mortality <- mortality[-1,-4]
+mortality <- mortality %>%
+  mutate(MMWR.Week = as.numeric(str_extract(Week, "(?<=Week )\\d{2}"))) %>%
+  mutate(MMWR.Year = as.numeric(str_extract(Week, "\\d{4}"))) %>%
+  select(State, MMWR.Year, MMWR.Week, Deaths) %>%
+  drop_na()
+  
+mortality_wide <- mortality %>%
+  pivot_wider(names_from = State, values_from = Deaths, values_fill = list(deaths = 0)) %>%
+  mutate(Total = Illinois + Indiana + Ohio + Wisconsin + Michigan)
+
+mortality2017 <- read.delim("data/mortality/2017_monthly.txt") %>%
+  filter(Notes != "Total") %>%
+  select(State, Month, Month.Code, Deaths) %>%
+  mutate(month = str_sub(Month.Code, -2, -1)) %>%
+  mutate(year = str_sub(Month, -4, -1)) %>%
+  drop_na()
+
+mortality2017_weekly <- mortality2017 %>%
+  group_by(State) %>%
+  summarize(weekly_count = sum(Deaths)/52)
+
+mortality2017_weekly
+
+final_mortality <- data.frame(MMWR.Year = rep(2017, 52), MMWR.Week = seq(1,52), Illinois = rep(2110, 52), Indiana = rep(1251, 52), Michigan = rep(1877, 52), Ohio = rep(2378, 52), Wisconsin = rep(1013, 52)) %>%
+  mutate(Total = Illinois + Indiana + Michigan + Ohio + Wisconsin) %>%
+  rbind(mortality_wide)
+
+write.csv(final_mortality, "data/mortality/final_mortality.csv")
+```
+
+
+```{r, echo = F, warning = F, message = F}
+#loading in whooping cough cases, births, and vaccination rate
+vaccine=read.csv("data/vaccination_rates.csv")
+whoop=read.csv("data/all_data.csv") #use interpolated data
+births= read.csv("data/monthly_births.csv")
+deaths <- read.csv("data/mortality/final_mortality.csv")
+
+
+
+#converting births to Y-M-D format and calculating average number of births by month
+births <- births %>%
+  mutate(
+    Month_Num = match(Month, month.name),
+    Date = ymd(paste(Year, Month_Num, 1, sep = "-")),
+    days_in_month = days_in_month(Date),
+    daily_birth_rate = Total_Births/days_in_month(Date),
+    year = Year,
+    month = month(Date)
+  ) %>% arrange(Date) %>% select(year, month, daily_birth_rate, Total_Births, days_in_month)
+
+#converting cases to Y-M-D format
+whoop <- whoop %>%
+  mutate(
+    Date = MMWRweek2Date(MMWR.Year, MMWR.Week),
+    year = year(Date),
+    month = month(Date)
+  )
+
+whoop <- whoop %>%
+  group_by(year, month) %>%
+  mutate(is_first_week = Date == min(Date)) %>%
+  ungroup()
+
+#there are duplicated dates:
+duplicates <- duplicated(whoop$Date)
+# Remove the duplicate rows, keeping only the first occurrence
+whoop <- whoop[!duplicates, ]
+
+#want to have continous dates 2022 data is missing
+min_date <- min(whoop$Date)
+max_date <- max(whoop$Date)
+
+# Generate a sequence of all dates from the minimum to the maximum, by week
+
+full_weeks <- expand.grid(MMWR.Year = seq(2017, 2025), MMWR.Week = seq(1, 52)) %>%
+  full_join(whoop, by = c("MMWR.Year" = "MMWR.Year", "MMWR.Week"= "MMWR.Week")) %>%
+  arrange(MMWR.Year, MMWR.Week) %>%
+  mutate(Date = ymd(paste(MMWR.Year, "-01-01", sep = "")) + weeks(MMWR.Week - 1))
+  
+cases_merged <- full_weeks %>% mutate(year=year(Date), month=month(Date)) %>%
+  full_join(births, by = c("year", "month"))
+
+# Estimate weekly births: daily rate * 7 days/week
+# Round to nearest whole number as you can't have partial births
+cases_final <- cases_merged %>%
+  mutate(Estimated_Weekly_Births = round(daily_birth_rate * 7))
+
+
+cases_final <- merge(cases_final, vaccine, by.x = "year", by.y = "Year", all.x = TRUE) %>%
+  merge(deaths, by = c("MMWR.Week" = "MMWR.Week", "MMWR.Year" = "MMWR.Year")) %>%
+  rename("Deaths" = "Total")
+
+cases_final_clean <- cases_final %>% select(year, month, Date, Cases, Estimated_Weekly_Births, Vaccination_Rate, Deaths) %>% arrange(Date) %>% mutate(week=row_number())
+
+
+
+##### plotting data
+#Whooping Cough Cases
+#plot1 = ggplot(cases_final_clean, aes(x = Date, y = Cases)) +
+#  geom_line(color = "firebrick") +
+#  labs(title = "Whooping Cough Cases", y = "Cases", x = NULL) +
+#  theme_minimal()
+
+
+
+plot1 = ggplot(cases_final_clean, aes(x = Date, y = Vaccination_Rate)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Vaccine Coverage Rate", y = "Rate (%)", x = NULL) +
+  theme_minimal()
+
+ plot2=ggplot(cases_final_clean, aes(x = Date, y = Estimated_Weekly_Births)) +
+     geom_line(color = "darkgreen") +
+     labs(title = "Weekly Births", y = "Births", x = "Date")+
+     theme_minimal() 
+ 
+  plot3=ggplot(cases_final_clean, aes(x = Date, y = Deaths)) +
+     geom_line(color = "firebrick") +
+     labs(title = "Weekly Deaths", y = "Births", x = "Date")+
+     theme_minimal() 
+ 
+ 
+ 
+library(patchwork)
+#stacking plots vertically
+plot1 / plot2 / plot3 
+
+```
+
+There is a clear decrease of the vaccine coverage rate in 2020, which persists through 2024. This is likely due to the COVID-19 pandemic, which upset typical medical appointments. The full sequence of whooping cough vaccines requires five doses and so it is unsuprising that the pandemic resulted in a decrease in the number of fully vaccinated people. Also, attitudes toward vaccines have also shifted away from vaccines. We will attempt to incorporate this data into our models. 
+
+We include exploratory analysis of births and deaths here as well, although we did not include them in our model due to time constraints. We do not expect this to have significantly changed our model. Weekly births were fairly consistent, with a similar cyclical trend in each year. There is a slight decrease over time. Deaths also remained fairly constant, again with a slight cyclical pattern, except for 2021 and 2022. This was also likely due to the COVID-19 pandemic which would have resulted in additional deaths. The drop seen at the end of the dataset is likely due to a delay in releasing provisional mortality counts for some states. 
+
+
+## ARMA
+
+### ARMA model
+We take the first difference to remove trends and center the series around a constant mean (≈0), which is required for valid ARMA modeling. The differenced series then behaves like a random walk with some conditional variance.
+```{r, echo=FALSE}
+df <- read.csv("data/interpolated_cases.csv")
+pertussis_diff <- diff(df$Cases)
+plot(pertussis_diff, 
+     type = "l", 
+     main = "Differenced Pertussis Time Series", 
+     xlab = "Time", 
+     ylab = "Differenced Value")
+```
+
+Below, we plot the ACF of the differenced pertussis time series.
+```{r, echo=FALSE}
+pertussis_diff <- diff(df$Cases)
+par(mfrow = c(1,2))
+acf(pertussis_diff, lag.max = 48, main = "ACF Plot of Differenced Pertussis")
+pacf(pertussis_diff, lag.max = 48, main = "PACF Plot of Differenced Pertussis")
+```
+
+After differencing, both the ACF and PACF show a single significant spike at lag-1, with most other lags lying within the confidence bounds.
+
+### ARMA Model selection
+We calculated the Akaike Information Criterion (AIC) for each ARMA(p,q) models for p<5 and q<5 [@notes531].
+```{r, echo=FALSE}
+aic_table <- function(data,P,Q){
+  table <- matrix(NA,(P+1),(Q+1))
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      table[p+1,q+1] <- arima(data,order=c(p,0,q))$aic
+    }
+  }
+  dimnames(table) <- list(paste("AR",0:P, sep=""),
+                          paste("MA",0:Q,sep=""))
+  table
+}
+pertussis_aic_table <- aic_table(pertussis_diff,4,5)
+kable(pertussis_aic_table,digits=2)
+```
+
+Although ARMA(2,4) outperformed the other specifications on the differenced series, the estimation still experienced convergence problems—most likely a consequence of the series’ time‑varying variance.
+```{r, echo=FALSE}
+arma_model <- arima(pertussis_diff, order = c(2, 0, 4))
+res <- residuals(arma_model)
+par(mfrow = c(1,2), mar = c(4,4,2,1))
+plot(res, type = "l", main = "Residuals", ylab = "")
+Acf(res, main = "ACF of Residuals")
+```
+
+While the ARMA residuals oscillate randomly around zero, they display non‑constant variance over time. Therefore, we’ll fit an ARCH model to explicitly capture and forecast this conditional volatility.
+
+### ARCH Model
+An ARCH specification naturally captures  time‑varying volatility by making the variance depend on past shocks and outbreak magnitude. By modeling conditional heteroskedasticity, we can more accurately forecast periods of heightened uncertainty and better inform resource allocation during outbreaks [@ARCH]. 
+
+To capture the variability in pertussis case differences, we fit an ARCH(1) model in which the conditional variance depends both on the previous period’s shock and on last period’s case count as an external regressor. We assume that the time series of differenced pertussis cases, \( y_t \), can be decomposed as
+$$
+y_t = \mu + \epsilon_t,
+$$
+
+where \( \epsilon_t \sim N(0, \sigma_t^2) \) is an error term with time-varying variance. We model the conditional variance \( \sigma_t^2 \) using an ARCH-X framework, in which the variance depends not only on past errors but also on an external predictor. Specifically, we assume
+$$
+\sigma_t^2 = \omega + \alpha\,\epsilon_{t-1}^2 + \beta\,x_{t-1},
+$$
+
+where:
+- \( \omega > 0 \) is a constant,
+- \( \alpha \ge 0 \) is the ARCH parameter capturing the impact of the previous period's squared error,
+- \( \beta \) quantifies the effect of the exogenous regressor \( x_{t-1} \), which is the number of pertussis cases at time t-1.
+
+This specification allows the conditional variance of the model to adjust dynamically to both its own recent shock history and to external signals [@ARCH].
+```{r}
+# x_exog generated as the lagged pertussis time series
+x_exog <- c(NA, head(df$Cases, -1))
+x_exog <- x_exog[-1]
+pertussis_diff_adjusted <- pertussis_diff[-1]
+
+spec <- ugarchspec(
+  variance.model = list(
+    model = "sGARCH",          
+    garchOrder = c(1, 0),      
+    external.regressors = matrix(x_exog, ncol = 1)  # using the lagged cases as exogenous
+  ),
+  mean.model = list(
+    armaOrder = c(0, 0),       
+    include.mean = TRUE         
+  ),
+  distribution.model = "norm" 
+)
+
+fit <- ugarchfit(spec = spec, data = pertussis_diff)
+param_mat <- fit@fit$matcoef
+
+param_df <- data.frame(
+  Parameter    = rownames(param_mat),
+  Estimate     = param_mat[, 1],
+  `Std. Error` = param_mat[, 2],
+  `t value`    = param_mat[, 3],
+  `Pr(>|t|)`   = param_mat[, 4],
+  row.names    = NULL,
+  check.names  = FALSE
+)
+
+kable(
+  param_df,
+  caption = "ARCH Model Parameter Estimates",
+  digits  = c(0, 4, 4, 2, 3),
+  align   = c("l", "r", "r", "r", "r")
+)
+```
+
+Substituting our estimated parameters, we have
+$$
+y_t = 0.273 + \varepsilon_t,
+$$
+with
+$$
+\sigma_t^2 = 0.533\,\varepsilon_{t-1}^2 \;+\; 2.139\,x_t.
+$$
+
+Since both the ARMA and ARCH models are fitted to the same differenced series, their log‑likelihoods can be compared directly.
+```{r, echo=FALSE}
+arma24 <- arima(pertussis_diff, order = c(2, 0, 4), include.mean = TRUE)
+ll_arma  <- arma24$loglik
+ll_garch <- fit@fit$LLH
+llh_table <- data.frame(
+  Model          = c("ARMA(2,4)", "ARCH(1)"),
+  LogLikelihood  = c(ll_arma,     ll_garch),
+  row.names      = NULL,
+  check.names    = FALSE
+)
+
+kable(
+  llh_table,
+  caption = "Log‑Likelihood Comparison of Models",
+  col.names = c("Model", "Log‑Likelihood"),
+  digits    = 2,
+  align     = c("l", "r")
+)
+```
+The ARCH model obtains a log-likelihood of -1203, marking a large improvement from our original ARMA models (-1368).
+
+To evaluate our model fit, first look at the ACF of the residuals as well as the squared residuals.
+
+```{r, echo = FALSE}
+z <- residuals(fit, standardize = TRUE)
+par(mfrow = c(1, 2), mar = c(4, 4, 4, 1))
+acf(z^2, main = "ACF of Squared Std. Residuals")
+acf(z,   main = "ACF of Std. Residuals")
+par(mfrow = c(1, 1))
+```
+
+We then applied the ARCH-LM test, which tests
+
+**\(H_0\):** no remaining ARCH effects (homoskedastic residuals)  
+
+**\(H_1\):** presence of conditional heteroskedasticity [@ARCHLM]
+```{r, echo = FALSE}
+ArchTest(z, lags = 12)
+```
+
+We also ran the Ljung–Box test with  
+
+**\(H_0\):** residuals are independently distributed (no serial correlation)  
+
+**\(H_1\):** residuals are not independently distributed [@LB]
+
+to verify that the mean model has captured all linear dependence.
+```{r, echo = FALSE}
+Box.test(z, type="Ljung", lag=12)
+```
+Despite relatively flat ACFs for both residuals and squared residuals, the ARCH-LM test (p=0.01163) and Ljung–Box test (p<0.05) both reject their null hypotheses, revealing persistent volatility clustering and serial correlation; this suggests the ARCH(1) model fails to capture the full mean–variance dynamics, likely due to unmodeled external factors.
+
+Because pertussis counts are discrete and over‑dispersed, a continuous ARCH model can miss important epidemic dynamics, as our diagnostics indicate. Therefore, we implemented a compartmental SIR framework to better capture these features.
+
+## POMP
+
+### SIR Model
+We first begin by building a simple SIR compartment model[@notes531] for the outbreak of whooping cough that occurred during 2024 where:
+
+- \(S\): Susceptible  
+- \(I\): Infectious  
+- \(R\): Recovered  
+- \(C\): Number of reported whooping cough cases 
+- $\mu_{SI}$: Rate at which individuals in *S* transition to *I*
+- $\mu_{IR}$: Rate at which individuals in *I* transition to *R*
+- $\rho$: Rate at which cases are reported
+
+```{r seirs-pic, echo=FALSE, out.width="50%", fig.align="center", fig.cap="SIR Model Diagram"}
+knitr::include_graphics("data/SIR.png")
+```
+
+We assume that the population size, $N$, remained constant at 48 million individuals. The number of people in each compartment is computed as follows:
+$$
+\begin{aligned}
+S(t) &= S_0 - N_{SI}(t),\\[6pt]
+I(t) &= I_0 + N_{SI}(t) - N_{IR},\\[6pt]
+R(t) &= R_0 + N_{IR}(t)
+\end{aligned}
+$$
+We model the number of people transitioning from one compartment to the next as follows:
+$$
+\begin{aligned}
+\frac{dN_{SI}}{dt} \sim Binomial(S(t), 1- exp(\frac{-\beta I(t)}{N}\Delta t))\\[6pt]
+\frac{dN_{IR}}{dt} \sim Binomial(I(t), 1- exp(\mu_{IR}\Delta t))\\[6pt]
+\end{aligned}
+$$
+Note that this is for the 2024 outbreak only—we are not attempting to model the smaller fluctuations that occured from 2017-2023. We chose to start with this smaller time period since it was more straightforward and allowed us to avoid the missing data issues present in our data. 
+
+```{r outbreak_2024, echo=FALSE}
+whoop=read.csv("data/all_data.csv") 
+whoop <- whoop %>%
+  mutate(
+    Date = MMWRweek2Date(MMWR.Year, MMWR.Week),
+    year = year(Date),
+    month = month(Date),
+    Cases = round(Cases)
+  ) %>%
+  group_by(year, month) %>%
+  mutate(is_first_week = Date == min(Date)) %>%
+  ungroup() %>%
+  arrange(Date)
+
+whoop <- whoop %>% mutate(week=row_number()) %>% select(Date,week,Cases)
+
+whoop_truncated <- whoop %>% filter(Date>as.Date("2024-04-01"))
+```
+
+We initially use the following parameters to simulate from our model based on general searches:
+ $\beta=4$, $mu_{IR}$=0.5, $\rho=0.2$, $\eta=0.135$
+
+
+
+
+```{r SIRmodel, echo=FALSE, warning=FALSE}
+cough_mod <- whoop_truncated %>%
+  select(week, Cases) %>%
+  rename(reports = Cases) %>%
+  mutate(reports = round(reports))
+
+sir_step <- Csnippet("
+  double dN_SI = rbinom(S,1-exp(-Beta*I/N*dt));
+  double dN_IR = rbinom(I,1-exp(-mu_IR*dt));
+  S -= dN_SI;
+  I += dN_SI - dN_IR;
+  R += dN_IR;
+  H += dN_IR;
+")
+
+sir_rinit <- Csnippet("
+  S = nearbyint(eta*N);
+  I = 50;
+  R = nearbyint((1-eta)*N);
+  H = 0;
+")
+
+sir_dmeas <- Csnippet("
+  lik = dnbinom_mu(reports,k,rho*H,give_log);
+")
+
+sir_rmeas <- Csnippet("
+  reports = rnbinom_mu(k,rho*H);
+")
+
+coughSIR <- cough_mod |>
+  pomp(times = "week", t0 = 332,  
+    rprocess=euler(sir_step,delta.t=1/7),
+    rinit=sir_rinit,
+    rmeasure=sir_rmeas,
+    dmeasure=sir_dmeas,
+    accumvars="H",
+    statenames=c("S","I","R","H"),
+    paramnames=c("Beta","mu_IR","N","eta","rho","k")) 
+
+params = c(Beta=4,
+           mu_IR=0.5,
+           rho=0.2,
+           k=10,
+           eta=0.135,
+           N=48000000)
+set.seed(1)  
+coef(coughSIR, names(params)) <- params
+coughSIR|> pfilter(Np=5000) -> pf
+#plot(pf)
+#min(pf@eff.sample.size)
+
+
+
+sims <- coughSIR |>
+  simulate(
+    params=params, #population of east north central states is approx 48 million 
+    nsim=20,format="data.frame",include.data=TRUE) 
+
+sims |>
+  ggplot(aes(x=week,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  labs(title="Initial Parameter Simulations",
+       x = "Week", y = "Reports") +
+  scale_color_discrete(name="Legend",
+                       labels=c("Simulated Data", "Observed Data")) + 
+  theme(legend.position="right")
+
+```
+
+
+The simulations show that we aren't capturing the reported whooping cough cases very well. We then perform a local search for tuning our parameters to see if we can better estimate the outbreak.
+
+### SIR Local Search
+We perform a local search in which we allow $\beta$, $\eta$, and $\rho$ to vary.
+The local search results show that the log likelihoods are converging fairly well
+```{r local_search_SIR, message=FALSE, warning=FALSE, echo=FALSE,}
+
+cores <-  as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
+if(is.na(cores)) cores <- detectCores()  
+
+
+
+bake(file="data/mifs_local_SIR.rds",{
+foreach(i=seq_len(cores)+10,.combine=c,
+    .options.future=list(seed=482947940)
+  ) %dofuture% {
+    coughSIR |>
+      mif2(
+        Np=1000, Nmif=50,
+        params = params,
+        cooling.fraction.50=0.5,
+        rw.sd=rw_sd(Beta=0.005, rho=0.02, eta=ivp(0.02)),
+        partrans=parameter_trans(log="Beta",logit=c("rho","eta")),
+        paramnames=c("Beta","rho","eta")
+      )
+  }
+  }) -> local_mifs
+
+
+local_mifs |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+```
+
+
+
+We obtain the maximum log likelihood of -212 with the following parameters.
+```{r local_search_SIR2, message=FALSE, warning=FALSE, echo=FALSE}
+foreach(mf=local_mifs,.combine=rbind,
+    .options.future=list(seed=901242057)
+  ) %dofuture% {
+    evals <- replicate(10, logLik(pfilter(mf,Np=2000)))
+    ll <- logmeanexp(evals,se=TRUE)
+    mf |> coef() |> bind_rows() |>
+      bind_cols(loglik=ll[1],loglik.se=ll[2],Np=2000,nfilt=10)
+  } -> local_logliks
+
+bind_rows(local_logliks) |> arrange(-loglik) |> write_csv("data/whoop_truncated_params_SIR.csv")
+#pairs(~loglik + Beta + rho + eta+ mu_IR, data=local_logliks, pch=16)
+
+
+best_local <- local_logliks %>%
+  arrange(-loglik) %>% select(-Np, -nfilt) %>%
+  slice(1)
+
+round(best_local, 3)
+```
+
+
+### SIR Global Search
+We then perform a global search of the parameter space that will maximize the likelihood and we allow $\mu_{IR}$ to vary along with $\beta$, $\eta$, and $\rho$.
+
+```{r SIR_global, warning=FALSE, message=FALSE, echo=FALSE,}
+global_search_starttime = Sys.time()
+set.seed(2062379496)
+plan(multisession)
+
+fixed_params <- coef(coughSIR,c("N","k"))
+global_search_starttime = Sys.time()
+#building box of parameter values
+freeze(runif_design(
+lower=c(Beta=0,rho=0,mu_IR=0,eta=0),
+upper=c(Beta=250,rho=0.9,mu_IR=60, eta=0.9),
+nseq=600
+), seed=1) -> guesses
+#freeze(runif_design(
+#lower=c(Beta=100,rho=0,mu_IR=0,eta=0),
+#upper=c(Beta=300,rho=0.4,mu_IR=10, eta=0.5),
+#nseq=600
+#), seed=1) -> guesses
+
+
+mf1 <- local_mifs[[1]]
+
+bake(file="data/global-SIR.rds",{
+foreach(guess=iter(guesses,"row"), .combine=rbind,
+        .options.future=list(seed=1270401374)
+) %dofuture%{
+    mf1 |>
+      mif2(params=c(guess,fixed_params)) |>
+      mif2(Nmif=100) -> mf
+  replicate(10,mf |> pfilter(Np=5000) |> logLik()
+            ) |> logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1], loglik.se=ll[2])
+        }
+  })-> results_global
+
+new_data <- bind_rows(results_global) |> arrange(-loglik) 
+
+global_search_endtime = Sys.time()
+#global_search_endtime - global_search_starttime
+
+if (file.exists("whoop_truncated_params_SIR.csv")) {
+  write.table(new_data,
+              file = "whoop_truncated_params_SIR.csv",
+              sep = ",",
+              row.names = FALSE,
+              col.names = FALSE,
+              append = TRUE)
+} else {
+  write_csv(new_data,"whoop_truncated_params_SIR.csv")}
+
+
+pairs(
+  ~ loglik + Beta + + rho + eta+ mu_IR,
+  data = filter(results_global, loglik > max(loglik, na.rm = TRUE)-4)
+)
+```
+
+It appears from our global search that we can identify $\beta$, $\rho$, and $\eta$ but not $mu_{IR}$.
+
+```{r SIR_bestlikelihood, warning=FALSE, echo=FALSE, message=FALSE}
+params=read_csv("whoop_truncated_params_SIR.csv")
+
+params %>% filter(
+  loglik==max(loglik, na.rm=TRUE)) %>%
+  select(-loglik,-loglik.se) ->params_opt
+
+set.seed(1234567)
+sims <- coughSIR |>
+  simulate(
+    params=params_opt, 
+    nsim=10,format="data.frame",include.data=TRUE) 
+
+sims |>
+  ggplot(aes(x=week,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  labs(title="Global Search Parameter Simulations",
+       x = "Week", y = "Reports") +
+  scale_color_discrete(name="Legend",
+                       labels=c("Simulated Data", "Observed Data")) + 
+  theme(legend.position="right")
+```
+
+Simulating using the parameters from the highest log likelihood of -204 produces results that are more closely aligned with the true number of whooping cough cases. The parameters obtained from the global search were $\beta=259$, $\rho=0.052$, $\mu_{IR}=6.92$, $\eta= 0.018$
+
+
+### SEIR Model
+We then expand our model to include an exposure compartment and attempt to model all of the cases spanning from 2017 to 2025. 
+
+- \(S\): Susceptible  
+- \(E\): Exposed
+- \(I\): Infectious  
+- \(R\): Recovered  
+- \(C\): Number of reported whooping cough cases 
+
+- $\mu_{SI}$: Rate at which individuals in *S* transition to *E*
+- $\mu_{EI}$: Rate at which individuals in *E* transition to *I*,
+- $\mu_{IR}$: Rate at which individuals in *I* transition to *R*
+- $\rho$: Rate at which cases are reported
+
+
+We assume that the population size, $N$, remained constant at 48 million individuals. The number of people in each compartment is computed as follows:
+
+$$
+\begin{aligned}
+S(t) &= S_0 - N_{SE}(t),\\[6pt]
+E(t) &= E_0 + N_{SE}(t) - N_{EI}(t),\\[6pt]
+I(t) &= I_0 + N_{EI}(t) - N_{IR},\\[6pt]
+R(t) &= R_0 + N_{IR}(t)
+\end{aligned}
+$$
+We model the number of people transitioning from one compartment to the next as follows:
+
+$$
+\begin{aligned}
+\frac{dN_{SE}}{dt} \sim Binomial(S(t), 1- exp(\frac{-\beta(t)I(t)}{N}\Delta t))\\[6pt]
+\frac{dN_{EI}}{dt} \sim Binomial(E(t), 1- exp(\mu_{EI}\Delta t))\\[6pt]
+\frac{dN_{IR}}{dt} \sim Binomial(I(t), 1- exp(\mu_{IR}\Delta t))\\[6pt]
+\end{aligned}
+$$
+We model the transmission rate $\beta(t)$ as a function of time since we see a surge of cases in 2024.
+
+We let
+$$
+\beta(t) = 
+\begin{cases}
+&\beta_{\text{no outbreak}}, & t < t_{\text{outbreak start}}, \\
+&\beta_{\text{outbreak}}, & t \ge t_{\text{outbreak start}},
+\end{cases}
+$$
+meaning \(\beta\) switches from \(\beta_{\text{no outbreak}}\) to \(\beta_{\text{ outbreak}}\) at time \(t_{\text{outbreak start}}\). We choose \(t_{\text{outbreak start}}\) to be April 7th 2024 (week 332) since this is before the number of cases begin to surge.
+
+```{r beta_t, message=FALSE, warning=FALSE, echo=FALSE}
+whoop=read.csv("data/all_data.csv") 
+whoop <- whoop %>%
+  mutate(
+    Date = MMWRweek2Date(MMWR.Year, MMWR.Week),
+    year = year(Date),
+    month = month(Date),
+    Cases = round(Cases)
+  ) %>%
+  group_by(year, month) %>%
+  mutate(is_first_week = Date == min(Date)) %>%
+  ungroup() %>%
+  arrange(Date)
+
+whoop <- whoop %>% mutate(week=row_number()) %>% select(week,Cases)
+
+# 1. Create the covariate table to indicate the period
+beta_period <- covariate_table(
+  t = whoop$week,
+  outbreak = c(
+    rep(0, 332), # Weeks before the outbreak start
+    rep(1, 381 - 332)),     # Weeks during the outbreak
+  times = "t"
+)
+
+sier_dmeas <- Csnippet("
+  lik = (ISNA(Cases)) ? 0 : dnbinom_mu(Cases, k, rho * H + 1e-9, give_log);
+")
+
+sier_rmeas <- Csnippet("Cases = rnbinom_mu(k, rho * H);")
+
+#Modify the seir_step C snippet to use the covariate
+seir_step <- Csnippet("
+  double Beta = (outbreak == 1) ? outbreak_beta : base_beta;
+  double dN_SE = rbinom(S, 1 - exp(-Beta * I / N * dt));
+  double dN_EI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dN_IR = rbinom(I, 1 - exp(-mu_IR * dt));
+  S -= dN_SE;
+  E += dN_SE - dN_EI;
+  I += dN_EI - dN_IR;
+  R += dN_IR;
+  H += dN_IR;
+")
+
+seir_rinit <- Csnippet("
+  S = nearbyint(eta * N);
+  E = 15;
+  I = 25;
+  R = nearbyint((1 - eta) * N) - E - I;
+  H = 1;
+")
+
+pomp(
+  data = whoop,
+  times="week", t0=min(whoop$week),
+  rprocess = euler(seir_step, delta.t = 1/7),
+  rinit = seir_rinit,
+  rmeasure =sier_rmeas,
+  dmeasure = sier_dmeas,
+  accumvars = "H",
+  statenames = c("S", "E", "I", "R", "H"),
+  #Update paramnames to include both beta values
+  paramnames = c("base_beta", "outbreak_beta", "mu_IR", "mu_EI", "eta", "rho", "k", "N"),
+  #Update params with initial guesses for both beta values
+  partrans = parameter_trans(
+    log = c("base_beta", "outbreak_beta", "mu_IR", "mu_EI", "k"),
+    logit = c("eta", "rho")
+  ),
+  #Add the covariate table
+  covar = beta_period
+) ->coughSEIR
+
+params = c(
+  base_beta = 4.75,      #updated 
+  outbreak_beta = 5.3, #updated 
+  mu_IR = 0.5,      #updated (avg infectious period = 2 weeks)
+  mu_EI = 0.5,      #updated (avg latent period = 2 weeks) - could revisit
+  N = 48000000,     #fixed
+  eta = 0.102,        #updated (10% initially susceptible)
+  rho = 0.35,        #kept - unsure
+  k = 5             #kept
+)
+
+
+
+coef(coughSEIR, names(params)) <- params
+fixed_params = params[c("N")]
+
+
+  
+coughSEIR |> pfilter(Np=5000) -> pf
+#plot(pf)
+
+
+set.seed(1)
+coughSEIR |>
+  simulate(params=params,nsim=10,format="data.frame",include.data=TRUE) |>
+  ggplot(aes(x=week,y=Cases,group=.id,color=.id=="data")) +
+  geom_line()+
+  labs(title="Initial Parameter Simulations",
+       x = "Week", y = "Reports") +
+  scale_color_discrete(name="Legend",
+                       labels=c("Simulated Data", "Observed Data")) + 
+  theme(legend.position="right")
+
+
+```
+
+Using the following parameters, 
+
+- \(\beta_{\text{no outbreak}} = 4.75\)  
+- \(\beta_{\text{outbreak}} = 5.3\)  
+- \(\mu_{\mathrm{IR}} = 0.5\)  
+- \(\mu_{\mathrm{EI}} = 0.5\)  
+- \(N = 48{,}000{,}000\)  
+- \(\eta = 0.102\)  
+- \(\rho = 0.35\)  
+- \(k = 5\)    
+
+
+we obtain our simulation results. Some of our simulations show an outbreak that occurs at a similar time as the reported cases, though we are not estimating the number of cases correctly. We also see that we can simulate the number of cases for when we have missing data for 2022.
+
+
+### SEIR Local Search
+We will start with a local search for the parameters and allow $\mu_{EI}$, $\mu_{IR}$, $\beta$, $\eta$, and $\rho$ to vary.
+```{r local_search_SEIR, message=FALSE, warning=FALSE, echo=FALSE}
+library(doParallel)
+library(foreach)
+library(doFuture)
+plan(multisession)
+
+cores <-  as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
+if(is.na(cores)) cores <- detectCores()  
+
+
+
+bake(file="data/mifs_localSEIR.rds",{
+foreach(i=seq_len(cores),.combine=c,
+    .options.future=list(seed=482947940)
+  ) %dofuture% {
+    coughSEIR |>
+      mif2(
+        Np=2000, Nmif=50,
+        params=params,
+        cooling.fraction.50=0.5,
+        rw.sd=rw_sd(base_beta=ifelse(whoop$week < 332, 0.02, 0),
+                    outbreak_beta=ifelse(whoop$week > 332, 0.02, 0),
+                    rho=0.02, 
+                    eta=ivp(0.02), 
+                    mu_EI=0.02,
+                    mu_IR = 0.02)
+      )
+  }
+  }) -> local_mifs
+
+local_mifs |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+
+
+foreach(mf=local_mifs,.combine=rbind,
+    .options.future=list(seed=901242057)
+  ) %dofuture% {
+    evals <- replicate(10, logLik(pfilter(mf,Np=2000)))
+    ll <- logmeanexp(evals,se=TRUE)
+    mf |> coef() |> bind_rows() |>
+      bind_cols(loglik=ll[1],loglik.se=ll[2],Np=2000,nfilt=10)
+  } -> local_logliks
+
+#bind_rows(local_logliks) |> arrange(-loglik) |> write_csv("whoop_params_betat.csv")
+#pairs(~loglik + base_beta +outbreak_beta + rho + eta + mu_EI+ mu_IR, data=local_logliks, pch=16)
+
+if (file.exists("whoop_params_betat.csv")) {
+  write.table(new_data,
+              file = "whoop_params_betat.csv",
+              sep = ",",
+              row.names = FALSE,
+              col.names = FALSE,
+              append = TRUE)
+}
+
+```
+
+We see that the log likelihood appears to be converging which is a good sign and we obtain the maximized likelihood of -1480.
+
+```{r local_loglik_betat_SEIR, echo=FALSE}
+best_local <- local_logliks %>%
+  arrange(-loglik) %>%
+  slice(1)
+
+round(best_local, 3)
+
+```
+
+
+ 
+### SEIR Global Search 
+Now we perform a global search to explore the potential parameter values that maximizes the log likelihod.
+
+```{r SEIR_global, warning=FALSE, echo=FALSE, message=FALSE}
+global_search_starttime = Sys.time()
+set.seed(2062379496)
+plan(multisession)
+
+
+fixed_params <- coef(coughSEIR,c("N","k"))
+
+
+global_search_starttime = Sys.time()
+#building box of parameter values
+freeze(runif_design(
+  lower = c(base_beta=0, outbreak_beta=0, rho=0, eta=0, mu_EI=0, mu_IR=0),
+  upper = c(base_beta=25, outbreak_beta=25, rho=1.0, eta=1, mu_EI=10, mu_IR=10),
+  nseq = 500
+), seed=1) -> guesses
+
+mf1 <- local_mifs[[1]]
+
+#change Np=5000 unlist(guess) and Nmif=100
+bake(file="data/global-SEIR.rds",{
+foreach(guess=iter(guesses,"row"), .combine=rbind,
+        .options.future=list(seed=1270401374)
+) %dofuture%{
+    mf1 |>
+      mif2(params=c(guess, fixed_params)) |>
+      mif2(Nmif=100) -> mf
+  replicate(10, mf |> pfilter(Np=5000) |> logLik()
+            ) |> logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1], loglik.se=ll[2])
+        }
+  })-> results_global
+
+global_search_endtime = Sys.time()
+#global_search_endtime - global_search_starttime
+
+
+#pairs(
+#  ~ loglik + base_beta +outbreak_beta + rho + eta + mu_EI+ mu_IR,
+#  data = filter(results_global, loglik > max(loglik, na.rm = TRUE)-20)
+#)
+```
+
+We obtain a maximum log likelihood of -1471 from the global search and simulate the whooping cough cases using the parameters that produced this log likelihood.
+
+```{r SEIR_opt_params_global, echo=FALSE}
+results_global %>% filter(
+  loglik==max(loglik, na.rm=TRUE))
+results_global %>% filter(
+  loglik==max(loglik, na.rm=TRUE)) %>%
+  select(-loglik,-loglik.se) ->params_opt_SEIR
+
+set.seed(1234567890)
+sims_SEIR <- coughSEIR |>
+  simulate(
+    params=params_opt_SEIR, #population of east north central states is approx 48 million 
+    nsim=10,format="data.frame",include.data=TRUE) 
+
+sims_SEIR |>
+  ggplot(aes(x=week,y=Cases,group=.id,color=.id=="data"))+
+  geom_line()+
+  labs(title="Global Search Parameter Simulations",
+       x = "Week", y = "Reports") +
+  scale_color_discrete(name="Legend",
+                       labels=c("Simulated Data", "Observed Data")) + 
+  theme(legend.position="right")
+
+```
+
+From the plot above, we see that our simulations don't match the reported number of whooping cough cases. We then explored using vaccination data as covariates in a SEIRV model since we see a decline in vaccination coverage over the years to see if this could help explain the surge of cases in 2024. Unfortunately, we could only obtain vaccination coverage for babies and children. When we applied the ~70% vaccination coverage into the entire population in our model, the number of susceptible people was drastically minimized and drove whooping cough to eradication. In reality, vaccination only “removes” babies and children from susceptibility, and many older individuals remain at risk. We were unable to incorporate births and deaths into our model and leave this as a potential future project.
+
+
+### SEIR Model for ARCH Comparison
+Since we are interested in benchmarking our POMP model against our ARCH model, we reran the SEIR model from before, but removed the first data point to account for the differencing data used in ARCH contains one less data point. This ensure that both models are using the same data which allows us to make fair comparisons.
+
+Performing a global search across the same parameter space as before, we obtained a log likelihood of -1442. Simulating from the parameters we obtained for this log likelihood, we still see that the simulations fail to capture the surge in reported whooping cough cases.
+
+```{r beta_t_onedataremoved, message=FALSE, warning=FALSE, echo=FALSE}
+whoop=read.csv("data/all_data.csv") 
+whoop <- whoop %>%
+  mutate(
+    Date = MMWRweek2Date(MMWR.Year, MMWR.Week),
+    year = year(Date),
+    month = month(Date),
+    Cases = round(Cases)
+  ) %>%
+  group_by(year, month) %>%
+  mutate(is_first_week = Date == min(Date)) %>%
+  ungroup() %>%
+  arrange(Date)
+
+whoop <- whoop %>% mutate(week=row_number()) %>% select(week,Cases)
+whoop <- whoop[-1,] #removing the first entry to compare with ARMA model
+
+# 1. Create the covariate table to indicate the period
+beta_period <- covariate_table(
+  t = whoop$week,
+  outbreak = c(
+    rep(0, 331), # Weeks before the outbreak start
+    rep(1, 380 - 331)),     # Weeks during the outbreak
+  times = "t"
+)
+
+sier_dmeas <- Csnippet("
+  lik = (ISNA(Cases)) ? 0 : dnbinom_mu(Cases, k, rho * H + 1e-9, give_log);
+")
+
+sier_rmeas <- Csnippet("Cases = rnbinom_mu(k, rho * H);")
+
+#Modify the seir_step C snippet to use the covariate
+seir_step <- Csnippet("
+  double Beta = (outbreak == 1) ? outbreak_beta : base_beta;
+  double dN_SE = rbinom(S, 1 - exp(-Beta * I / N * dt));
+  double dN_EI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dN_IR = rbinom(I, 1 - exp(-mu_IR * dt));
+  S -= dN_SE;
+  E += dN_SE - dN_EI;
+  I += dN_EI - dN_IR;
+  R += dN_IR;
+  H += dN_IR;
+")
+
+seir_rinit <- Csnippet("
+  S = nearbyint(eta * N);
+  E = 15;
+  I = 25;
+  R = nearbyint((1 - eta) * N) - E - I;
+  H = 1;
+")
+
+pomp(
+  data = whoop,
+  times="week", t0=min(whoop$week),
+  rprocess = euler(seir_step, delta.t = 1/7),
+  rinit = seir_rinit,
+  rmeasure =sier_rmeas,
+  dmeasure = sier_dmeas,
+  accumvars = "H",
+  statenames = c("S", "E", "I", "R", "H"),
+  #Update paramnames to include both beta values
+  paramnames = c("base_beta", "outbreak_beta", "mu_IR", "mu_EI", "eta", "rho", "k", "N"),
+  #Update params with initial guesses for both beta values
+  partrans = parameter_trans(
+    log = c("base_beta", "outbreak_beta", "mu_IR", "mu_EI", "k"),
+    logit = c("eta", "rho")
+  ),
+  #Add the covariate table
+  covar = beta_period
+) ->coughSEIR
+
+params = c(
+  base_beta = 4.75,      #updated 
+  outbreak_beta = 5.3, #updated 
+  mu_IR = 0.5,      #updated (avg infectious period = 2 weeks)
+  mu_EI = 0.5,      #updated (avg latent period = 2 weeks) - could revisit
+  N = 48000000,     #fixed
+  eta = 0.102,        #updated (10% initially susceptible)
+  rho = 0.35,        #kept - unsure
+  k = 5             #kept
+)
+
+coef(coughSEIR, names(params)) <- params
+fixed_params = params[c("N")]
+
+
+  
+coughSEIR |> pfilter(Np=5000) -> pf
+#plot(pf)
+
+
+#set.seed(1)
+#coughSEIR |>
+#  simulate(params=params,nsim=10,format="data.frame",include.data=TRUE) |>
+#  ggplot(aes(x=week,y=Cases,group=.id,color=.id=="data")) +
+#  geom_line()+
+#  labs(title="Initial Parameter Simulations",
+#       x = "Week", y = "Reports") +
+#  scale_color_discrete(name="Legend",
+#                       labels=c("Simulated Data", "Observed Data")) + 
+#  theme(legend.position="right")
+
+##################localsearch##########################################
+
+cores <-  as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
+if(is.na(cores)) cores <- detectCores()  
+
+
+
+bake(file="data/mifs_localSEIR_1datapointrmv.rds",{
+foreach(i=seq_len(cores),.combine=c,
+    .options.future=list(seed=482947940)
+  ) %dofuture% {
+    coughSEIR |>
+      mif2(
+        Np=2000, Nmif=50,
+        params=params,
+        cooling.fraction.50=0.5,
+        rw.sd=rw_sd(base_beta=ifelse(whoop$week < 331, 0.02, 0),
+                    outbreak_beta=ifelse(whoop$week > 331, 0.02, 0),
+                    rho=0.02, 
+                    eta=ivp(0.02), 
+                    mu_EI=0.02,
+                    mu_IR = 0.02)
+      )
+  }
+  }) -> local_mifs
+
+  
+
+#local_mifs |>
+#  traces() |>
+#  melt() |>
+#  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+#  geom_line()+
+#  guides(color="none")+
+#  facet_wrap(~name,scales="free_y")
+
+
+foreach(mf=local_mifs,.combine=rbind,
+    .options.future=list(seed=901242057)
+  ) %dofuture% {
+    evals <- replicate(10, logLik(pfilter(mf,Np=2000)))
+    ll <- logmeanexp(evals,se=TRUE)
+    mf |> coef() |> bind_rows() |>
+      bind_cols(loglik=ll[1],loglik.se=ll[2],Np=2000,nfilt=10)
+  } -> local_logliks
+
+#bind_rows(local_logliks) |> arrange(-loglik) |> write_csv("whoop_params_betat.csv")
+#pairs(~loglik + base_beta +outbreak_beta + rho + eta + mu_EI+ mu_IR, data=local_logliks, pch=16)
+
+if (file.exists("whoop_params_betat_1datapointrmv.csv")) {
+  write.table(new_data,
+              file = "whoop_params_betat_1datapointrmv.csv",
+              sep = ",",
+              row.names = FALSE,
+              col.names = FALSE,
+              append = TRUE)
+}
+
+#best_local <- local_logliks %>%
+#  arrange(-loglik) %>%
+#  slice(1)
+
+#round(best_local, 3)
+
+###########################global search###############################
+global_search_starttime = Sys.time()
+set.seed(2062379496)
+plan(multisession)
+
+
+fixed_params <- coef(coughSEIR,c("N","k"))
+
+
+global_search_starttime = Sys.time()
+#building box of parameter values
+freeze(runif_design(
+  lower = c(base_beta=0, outbreak_beta=0, rho=0, eta=0, mu_EI=0, mu_IR=0),
+  upper = c(base_beta=25, outbreak_beta=25, rho=1.0, eta=1, mu_EI=10, mu_IR=10),
+  nseq = 500
+), seed=1) -> guesses
+
+mf1 <- local_mifs[[1]]
+
+#change Np=5000 unlist(guess) and Nmif=100
+bake(file="data/global-SEIR_1datapointrmv.rds",{
+foreach(guess=iter(guesses,"row"), .combine=rbind,
+        .options.future=list(seed=1270401374)
+) %dofuture%{
+    mf1 |>
+      mif2(params=c(guess, fixed_params)) |>
+      mif2(Nmif=100) -> mf
+  replicate(10, mf |> pfilter(Np=5000) |> logLik()
+            ) |> logmeanexp(se=TRUE) -> ll
+  mf |> coef() |> bind_rows() |>
+    bind_cols(loglik=ll[1], loglik.se=ll[2])
+        }
+  })-> results_global
+
+global_search_endtime = Sys.time()
+
+results_global %>% filter(
+  loglik==max(loglik, na.rm=TRUE)) %>%
+  select(-loglik,-loglik.se) ->params_opt_SEIR
+
+results_global %>% filter(
+  loglik==max(loglik, na.rm=TRUE))
+
+set.seed(1234567890)
+sims_SEIR <- coughSEIR |>
+  simulate(
+    params=params_opt_SEIR, #population of east north central states is approx 48 million 
+    nsim=10,format="data.frame",include.data=TRUE) 
+
+sims_SEIR |>
+  ggplot(aes(x=week,y=Cases,group=.id,color=.id=="data"))+
+  geom_line()+
+  labs(title="Global Search Parameter Simulations - Removed 1st Data Point",
+       x = "Week", y = "Reports") +
+  scale_color_discrete(name="Legend",
+                       labels=c("Simulated Data", "Observed Data")) + 
+  theme(legend.position="right")
+
+
+
+```
+
+
+
+## Comparisons 
+
+### ARMA vs. POMP
+
+As our differenced series exhibited clear heteroskedasticity that our initial ARMA model could not capture, we next fitted an ARCH(1) model. This specification improved the log‑likelihood substantially (–1203 vs. –1366), but diagnostic tests still revealed residual dependencies and lingering volatility clustering—signs that important dynamics remained unmodeled. Moreover, pertussis case counts are discrete and often over‑dispersed, so a continuous ARCH model may overlook key epidemic behavior; thus, we explored implementing a compartmental SIR model to better accommodate those features.
+
+For our POMP model, we started with a simple SIR model for a single outbreak (2024). We then modified this model by adding an exposure period, modeling the entire time period from 2017-2025, allowing $\beta$ to vary with time, and adding vaccination data. All of these actually proved to be worse than the original SIR model. Unsurprisingly, it was much harder to model the entire time period than a single outbreak. We included an exposure period and allowed $\beta$ to vary with time in a attempt to better model this time period, but it did not work well. Futhermore, the inclusion of vaccination data led the outbreak to die out quickly and did not help as we intended. The inclusion of vaccination data caused the outbreak to die out quickly. 
+
+Although the POMP model provides insights into disease transmission dynamics through its compartmental structure, our ARCH model demonstrated superior performance with higher log‑likelihood (–1203 vs. –1442). Since first differencing is a linear transformation with a constant Jacobian, we can directly compare these fits after accounting for the dropped initial term, confirming the ARCH model's superior grounding. While the POMP framework attempts to model latent states and transmission processes explicitly, its poorer fit suggests potential misspecification of the underlying epidemic mechanics. The ARCH model's ability to capture conditional variance patterns in the time series without imposing restrictive epidemiological assumptions  proved more effective for forecasting pertussis case dynamics in our dataset. However, this advantage should be interpreted with caution, as the ARCH model’s statistical superiority comes at the expense of epidemiological realism and may not generalize beyond our dataset.
+
+### Discussion 
+
+To improve our ARCH model, future work could shift to a count‐based INGARCH (or negative‐binomial INGARCH) to enforce non‑negativity, and directly handle over dispersion [@INGARCH]. Introducing nonlinear effects of lagged incidence and volatility dynamics would allow the model to distinguish outbreak from endemic phases more realistically. Finally, adopting asymmetric or heavy‑tailed error distributions could improve the fit for occasional large spikes in case counts.
+
+Our POMP models were unable to model this data well. One idea for future work is to include birth and death data. We initially intended to do this, but ran out of time. We also only had vaccination coverage for children, which may have contributed to the outbreak dying out immediately when using that data. Future work could use vaccination rates for the whole population, which we were unable to find. The missing data from 2022 also made things difficult. We attempted to find alternative data sources to replace the missing values, but were unable to find any data sources that did not have the same issue. 
+
+
+
+### Scholarship
+
+There were two other final projects that looked at whooping cough. The first, from 2020, looked at pertussis cases in Michigan from 2006 to 2011 [@project2020-15]. There were no large outbreaks in this case as cases only ranged from 0 to 21 weekly cases. The second pertussis project, from 2016, looked at a similar population and time period [@project2016-7]. We looked at a larger population (Michigan, Ohio, Wisconsin, Indiana, and Illinois) over a more interesting time period (2017-2024) that actually had an outbreak. 
+
+Both projects focused only on POMP models with slight modifications. The first started with an SIR model and added vaccination rates. The second started with an SEIR model and added birth, death, and vaccination data. We attempted something similar with our POMP models, but we also compared to ARMA models. Our ARMA models also went beyond what was covered in class, which was not commonly seen in other final projects. There were other projects that compared ARMA and POMP that inspired us but they did not explore additional ARMA modifications [@project2024-2] [@project2024-4] [@project2022-21] [@project2021-11]. 
+
+We also approached our POMP models differently than these previous projects. Since we had a longer time period with one outbreak, we experimented with modeling the entire time period versus just a portion of it. We also attempted to use different parameters for different time periods. Unsurprisingly, our models for the shorter time period that contained the outbreak worked much better than models for the entire time period. However, attempting to model a longer time period containing outbreaks and general low-level disease was not commonly seen in other final projects.
+
+
+## References 
+**<big>References</big>**.
+
+

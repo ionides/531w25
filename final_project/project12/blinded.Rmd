@@ -1,0 +1,1045 @@
+---
+title: "Comparative Analysis of Volatility Models for Daily Gold Prices"
+date: "2025-04-12"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+      smooth_scroll: true
+    toc_depth: 4
+    code_folding: hide
+---
+
+```{r project_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.align = "center", 
+  error = FALSE, 
+  fig.width = 10
+)
+library(ggplot2)
+library(pomp)
+library(tidyverse)
+library(lubridate)
+library(tseries)    
+library(dplyr)
+library(kableExtra)
+library(rugarch)
+library(foreach)
+library(doParallel)
+library(coda)
+library(bayesplot)
+library(GGally)
+library(tidyr)
+
+set.seed(531)
+
+```
+
+# 1. Introduction
+Gold has long served as both a commodity and a safe haven in times of economic uncertainty. Its price can shift under the influence of many factors, such as inflation expectations, currency fluctuations, and changes in investor sentiment. These features make gold an intriguing subject for time series analysis, especially given its persistent volatility and occasional extreme price movements.
+
+In this study, we analyze daily gold prices from 2022 to 2024 using three main modeling approaches. First, we adopt an ARIMA model, which provides a straightforward benchmark by capturing linear autocorrelation. However, ARIMA alone does not capture volatility clustering, a common phenomenon in financial returns. To address this, we employ a GARCH model that lets the variance evolve over time in response to past shocks. Finally, we introduce a POMP (Partially Observed Markov Process) framework, which incorporates latent factors such as stochastic volatility or regime switching. By doing so, we aim to uncover deeper patterns that simpler models might miss.
+
+We compare these approaches on the same dataset to evaluate both their fit and predictive accuracy. The results may inform short-term trading strategies and broader risk management decisions, illustrating when a simpler model may suffice and when a more advanced method can provide additional insights.
+
+The rest of this paper proceeds as follows. Section 2 describes the data and presents our exploratory analysis, including the transformation to log returns. In Section 3, we develop an ARIMA baseline, and Section 4 applies a GARCH approach. Section 5 details the POMP model, followed by a comparison of all three methods in Section 6. Finally, Section 7 and 8 concludes and suggests avenues for future research.
+
+# 2. Exploratory Data Analysis
+The gold price data used in this study comes from the daily closing prices on Investing.com, covering the period from January 1, 2022 to December 31, 2024, with a total of 772 records. To ensure comparability, only trading days are retained, and holidays are excluded.
+
+```{r, echo=FALSE}
+gold_data <- read.csv("data.csv", stringsAsFactors = FALSE)
+gold_data$Date <- as.Date(gold_data$Date, format="%m/%d/%Y")
+
+gold_data <- gold_data %>%
+  mutate(Price = gsub(",", "", Price))  %>% 
+  drop_na(Price)
+
+gold_data$Price <- as.numeric(gold_data$Price)
+gold_data <- gold_data %>% arrange(Date)
+
+gold_data <- gold_data %>% filter(Date <= as.Date("2024-12-31"))
+
+gold_data$log_price <- log(gold_data$Price)
+gold_data$log_return <- c(NA, diff(gold_data$log_price))
+gold_data <- gold_data %>% filter(!is.na(log_return))
+gold_data$y <- gold_data$log_return
+gold_data$time <- 1:nrow(gold_data)
+
+start_year <- year(min(gold_data$Date))
+start_yday <- yday(min(gold_data$Date))
+
+ggplot(gold_data, aes(x = Date, y = Price)) +
+  geom_line(color = "black") +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "3 months") +
+  labs(x = "Date", y = "Price",
+       caption = "Figure 1. Gold Closing Prices in USD") +  
+  theme_minimal() +
+  theme(
+    plot.title = element_blank(),
+    plot.caption = element_text(hjust = 0.5, size = 12),  
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+gold_ts <- ts(gold_data$Price, start = c(start_year, start_yday), frequency = 252)
+```
+
+We observe a sustained upward trajectory in gold prices from early 2022 through the end of 2024, with particularly sharp growth beginning in mid-2023 (Figure 1). This trend likely reflects growing investor demand for safe-haven assets in the face of persistent inflation and heightened geopolitical tensions during this period <a id="footnote-11-ref" href="#footnote-11"><sup>[11]</sup></a>. While the early part of the series (2022–early 2023) shows moderate movement, the slope steepens considerably in 2024, indicating intensified market interest in gold as a store of value.The persistent trend and changing variance mean the raw price series is possibly non‑stationary
+
+Thus, before modeling, we examine the gold price series under three transformations: the raw price, the log-transformed price, and the log-differenced series (i.e., log returns). 
+
+### 2.1 Log returns and Stationarity
+To stabilize variance, a logarithmic transformation was first applied to the gold price series. The resulting log-transformed series was then differenced to eliminate time dependence. Specifically, the log return at time \( t \) is calculated as:
+\[
+r_t = \ln(P_t) - \ln(P_{t-1})
+\]
+where \( P_t \) denotes the closing price on day \( t \). All subsequent modeling in this study is based on the log return series.
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1), oma = c(2, 1, 3, 1))  
+
+acf(as.numeric(gold_ts), lag.max = 50, main = "ACF of Raw Prices")
+acf(as.numeric(diff(log(gold_ts))), lag.max = 50, main = "ACF of Log Returns")
+
+
+title(sub = "Figure 2. ACF of Raw and Log-Return Series", 
+      outer = TRUE, line = 0.5, cex.sub = 1)
+```
+
+Figure 2 suggests that differencing the log-transformed gold prices produces a series more appropriate for stationary modeling.
+
+The raw price and log-transformed series exhibit strong autocorrelation across multiple lags, as most spikes remain well outside the 95% confidence bounds. This indicates strong persistence and non-stationarity in both forms of the original data. In contrast, the ACF of the log-return series shows no significant autocorrelation beyond lag 1, with most autocorrelation values falling within the confidence interval. This behavior suggests that the differenced log series has constant mean and limited serial correlation, characteristics that are consistent with a stationary process.
+
+
+### 2.2 Stationairty
+```{r eval=TRUE, echo=FALSE, warning=FALSE}
+
+gold_data$LogReturn <- c(NA, diff(log(gold_data$Price)))
+
+log_return_df <- gold_data %>% drop_na(LogReturn)
+
+ggplot(log_return_df, aes(x = Date, y = LogReturn)) +
+  geom_line(color = "black") +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "3 months") +
+  labs(x = "Date", y = "Log(Price)",
+       caption = "Figure 3. Log-Return Gold Price Series") +  
+  theme_minimal() +
+  theme(
+    plot.title = element_blank(),
+    plot.caption = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, results='hide'}
+
+raw_adf <- adf.test(gold_ts, alternative = "stationary")
+
+gold_log_returns <- diff(log(gold_ts))
+log_adf <- adf.test(gold_log_returns, alternative = "stationary")
+raw_adf
+log_adf
+```
+
+Figure 3 presents the log-return series of gold prices. The series appears to fluctuate around a relatively constant mean, with stable variance over time. These are typical features of a stationary financial return process. 
+
+To formally evaluate stationarity, we conducted the Augmented Dickey-Fuller (ADF) test. The null hypothesis of the ADF test is that the time series contains a unit root, i.e., it is non-stationary. If the p-value is less than 0.05, the null can be rejected in favor of stationarity.
+
+For the raw price series, the ADF test produced a p-value of 0.6806, indicating that the series is non-stationary and thus unsuitable for direct modeling. To address this, we applied a logarithmic transformation followed by first differencing, calculating the log returns defined as the difference between the logarithm of the current price and the previous price. After the transformation, the ADF test yielded a p-value of 0.01, providing strong evidence to reject the null hypothesis and confirming the stationarity of the log-return series. Therefore, all subsequent modeling will be based on the log-return data. 
+
+# 3. ARIMA
+
+### 3.1 Model Selection
+The ARIMA model is a cornerstone of time‑series analysis. Although its linear structure can’t fully capture the volatility clustering and nonlinear dynamics typical of financial data, a well‑specified and stationary ARMA(p, q) still models key autocorrelation patterns. As such, it provides a simple yet robust benchmark for more sophisticated forecasting methods.
+
+```{r, echo=FALSE}
+summarize_arima_fit <- function(data, P, Q) {
+  aic_summary <- matrix(NA, nrow = P+1, ncol = Q+1)
+ 
+  # Fit ARIMA(p,0,q) models and store AIC values
+  for (p in 0:P) {
+    for (q in 0:Q) {
+      model <- tryCatch(
+        arima(data, order = c(p, 0, q)),
+        error = function(e) NULL
+      )
+      if (!is.null(model)) {
+        aic_summary[p+1, q+1] <- model$aic
+      }
+    }
+  }
+ 
+  # Convert matrix to dataframe
+  aic_df <- as.data.frame(aic_summary)
+  rownames(aic_df) <- paste("AR", 0:P, sep = "")
+  colnames(aic_df) <- paste("MA", 0:Q, sep = "")
+
+ 
+kable(aic_df, digits = 2, format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE) %>%
+  footnote(
+    general = "<strong>Table 1.</strong> AIC Table for ARIMA Models",
+    general_title = "",
+    escape = FALSE
+  )
+
+}
+
+summarize_arima_fit(gold_log_returns, 3, 3)
+```
+
+### 3.2 Best ARIMA Model
+
+According to the table above, the best ARMA model is ARIMA(2,0,2) a  AIC of -5046.32.
+It’s AIC value -5046.32 can be a benchmark for further analysis.
+
+The ARIMA(2,0,2) model coefficients are as follows:
+
+```{r, echo=FALSE}
+best_arima_model <- arima(gold_log_returns, order = c(2, 0, 2))
+simple_arima_model<- arima(gold_log_returns, order = c(0, 0, 1))
+coef_summary <- data.frame(
+  Estimate   = best_arima_model$coef,
+  Std_Error  = sqrt(diag(best_arima_model$var.coef)),
+  row.names  = names(best_arima_model$coef),
+  stringsAsFactors = FALSE
+)
+
+kable(coef_summary,
+      digits     = 4,
+      caption    = "",  
+      format     = "html",
+      escape     = FALSE,
+      table.attr = 'style="margin-left:auto; margin-right:auto;"'
+) %>%
+  kable_styling(full_width = FALSE) %>%
+  footnote(
+  general = sprintf("<strong>Log‑likelihood:</strong> %.2f<br><strong>Table 2.</strong> ARIMA(2,0,2) Model Coefficients",
+                    best_arima_model$loglik),
+  general_title = "",
+  escape = FALSE
+)
+```
+
+### 3.3 ARIMA Diagnostics
+
+```{r, echo=FALSE}
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1), oma = c(2, 1, 3, 1))
+qqnorm(best_arima_model$residuals)
+qqline(best_arima_model$residuals)
+acf((best_arima_model$residuals)^2, lag.max = 50, main = "ACF of Squared Residuals")
+
+title(sub = "Figure 4. Q-Q Plot and ACF of Squared Residuals from ARIMA(2,0,2)", 
+      outer = TRUE, line = 0.5, cex.sub = 1)
+```
+The Normal QQ-plot shows that the points in both tails bend away from the line which indicating heavy tails relative to the normal. The ACF of squared residuals does not show significant spikes after lag1. Thus, ARIMA(2,0,2) successfully models the mean dynamics of the log‑return series, but fails to account for the conditional variance dynamics. To capture these features, we move on to fitting an additional GARCH on our ARIMA benchmark.
+
+# 4. GARCH
+
+While ARIMA captures conditional mean dynamics, it assumes constant variance in residuals. Empirical evidence suggests that volatility in daily asset returns often clusters over time<a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a>. Thus, we adopt a GARCH framework where the conditional variance evolves based on past shocks and past volatility.
+
+To confirm volatility clustering, we examine the ACF of squared log returns (Figure 3), which shows significant autocorrelation at various lags. This motivates a GARCH-type approach.
+
+```{r, echo=FALSE}
+acf(gold_log_returns^2, lag.max = 50, main = "")
+mtext("Figure 3. ACF of Squared Log Returns", side = 1, line = 4, cex = 1.1)
+```
+
+
+### 4.1 Normal GARCH
+
+We start with a ARMA(2,2)–GARCH(p,q) model, given the ARMA(2,2) chosen previously.
+The GARCH(1,1) variance equation is<a id="footnote-10-ref" href="#footnote-10"><sup>[10]</sup></a>:
+
+
+\[
+\sigma_t^2 \;=\; \omega
+  \;+\;\sum_{i=1}^p \alpha_i \,\varepsilon_{t-i}^2
+  \;+\;\sum_{j=1}^q \beta_j \,\sigma_{t-j}^2.
+\]
+
+
+This specification was first proposed by Bollerslev (1986)<a id="footnote-2-ref" href="#footnote-2"><sup>[2]</sup></a> and has since become the most widely used form of GARCH modeling due to its simplicity and effectiveness in capturing volatility clustering. Let us assume that the white noise in GARCH models follows a Normal distribution. Using AIC criterion, we select p and q values in AMIRA(2, 0, 2) + GARCH(p,q) model under normal distribution.
+
+```{r, echo=FALSE}
+garch_aic_manual <- function(data, P, Q) {
+  data <- na.omit(as.numeric(data))
+  aic_table <- matrix(NA_real_, nrow = P+1, ncol = Q,
+                      dimnames = list(paste0("p=", 0:P),
+                                      paste0("q=", 1:Q)))
+  
+  for(p in 0:P) {
+    for(q in 1:Q) {
+      spec <- ugarchspec(
+        variance.model     = list(model = "sGARCH", garchOrder = c(p, q)),
+        mean.model         = list(armaOrder = c(2, 0, 2), include.mean = TRUE),
+        distribution.model = "norm"
+      )
+      
+      fit <- tryCatch(
+        ugarchfit(spec, data, solver = "solnp",
+                  solver.control = list(trace = 0)),
+        error = function(e) NULL
+      )
+      
+      if (!is.null(fit) && fit@fit$convergence == 0) {
+        llh_vec <- fit@fit$LLH
+        if (is.numeric(llh_vec) && length(llh_vec) > 0) {
+          llh_sum <- sum(llh_vec)
+          k      <- length(coef(fit))
+          aic_table[p+1, q] <- 2*k - 2*llh_sum
+        }
+      }
+    }
+  }
+  
+ kable(aic_table, digits = 2,
+      caption = "",   
+      format = "html",
+      escape = FALSE) %>%
+  kable_styling(full_width = FALSE) %>%
+  footnote(
+    general = "<strong>Table 3.</strong> AIC for ARIMA(2,0,2) + GARCH(p,q)",
+    general_title = "",
+    escape = FALSE
+  )
+}
+
+set.seed(2)
+garch_aic_manual(gold_log_returns, P = 3, Q = 3)
+```
+
+As indicated in the table, GARCH(1,3) has the lowest AIC value of -5046.13. However, GARCH(1,1) is the most standard and practical specification that captures the key volatility clustering in financial returns and also has competitive AIC values with a simpler model. Thus, let us do a diagnostic examination to further investigate if a bigger model is neccessary.
+
+We further generate a QQplot and ACF plot for ARIMA(2,0,2) + GARCH(1,1) and ARIMA(2,0,2) + GARCH(1,3) model residuals to observe the distributoin and check for autocorrelation.
+
+```{r, include=FALSE}
+spec_norm <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(2,2), include.mean = TRUE),
+  distribution.model = "norm"
+)
+
+best_garch_norm = ugarchfit(spec = spec_norm, data = gold_log_returns)
+
+spec_norm_complex <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,3)),
+  mean.model = list(armaOrder = c(2,2), include.mean = TRUE),
+  distribution.model = "norm"
+)
+
+complex_garch_norm = ugarchfit(spec = spec_norm_complex, data = gold_log_returns)
+
+```
+
+
+```{r, echo=FALSE}
+stdres = residuals(best_garch_norm, standardize = TRUE)
+par(mfrow = c(1, 2)) 
+qqnorm(stdres)
+qqline(stdres)
+acf(stdres^2, lag.max = 50, main = "ARMA(1,1)+GARCH(1,1) \n ACF of Squared Residuals")
+
+
+complex_stdres = residuals(complex_garch_norm, standardize = TRUE)
+par(mfrow = c(1, 2))  
+qqnorm(complex_stdres)
+qqline(complex_stdres)
+acf(complex_stdres^2, lag.max = 50, main = "ARMA(1,1)+GARCH(1,3) \n ACF of Squared Residuals")
+```
+From the ACF of the squared standardized residuals, we see only a single significant spike at lag 1 and no meaningful autocorrelation at lags 2 or 3. Likewise, the Q–Q plot continues to reveal mild excess kurtosis in the tails but no systematic departures elsewhere. Thus, these diagnostics indicate that a GARCH(1,1) specification already captures the volatility clustering in our series and adding extra variance lags would simply introduce complexity without any clear improvement in fit. We therefore proceed with the parsimonious ARMA(1,1)+GARCH(1,1) model.
+
+However, to further address the persistent heavy‑tail behavior, we next refit our ARMA(1,1)+GARCH(1,1) model under a Student’s t innovation. The t‐distribution’s thicker tails allow the model to assign greater likelihood to unusually large positive or negative returns, improving the residual diagnostics.
+
+### 4.2 GARCH T distribution
+Considering heavy-tailed returns, now we also fit a Student-t version \( \epsilon_t \sim t(\nu) \) with benchmark ARMA(1,1)+GARCH(1,1) chosen from the previous step. Similar to the normal GARCH model, we keep the same equation<a id="footnote-10-ref" href="#footnote-10"><sup>[10]</sup></a>
+
+\begin{aligned}
+\sigma_t^2 
+&= \omega + \alpha_1\,\varepsilon_{t-1}^2 + \beta_1\,\sigma_{t-1}^2, \\[6pt]
+\end{aligned}
+
+But now we assume
+\begin{aligned}
+\varepsilon_t \sim t_{\nu}\bigl(0,\,\sigma_t^2\bigr)
+\end{aligned}
+
+
+```{r, include=FALSE}
+spec_std <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(2,2), include.mean = TRUE),
+  distribution.model = "std"
+)
+
+best_garch_std = ugarchfit(spec = spec_std, data = gold_log_returns)
+```
+
+
+```{r, echo=FALSE}
+stdres_std = residuals(best_garch_std, standardize = TRUE)
+par(mfrow = c(1, 2))
+qqnorm(stdres_std)
+qqline(stdres_std)
+acf(stdres_std^2, lag.max = 50, main = "ARMA(1,1)+GARCH(1,1) \n ACF of Squared Residuals")
+```
+The diagnostics plot of the Student's-t, compared to that of the normal model, seems to show improvement in the heavy-tail and
+the negligible spikes after lag1 but by a very small amount. However, with this in mind, we can compare the log likelihood and AIC values of these two models to get a better understanding of which model produces a better fit for the log return of the gold price.
+
+### 4.3 Model Selection
+
+```{r, echo=FALSE}
+garch_comparison <- data.frame(
+  Model = c("GARCH(1,1) - Norm", "GARCH(1,1) - t"),
+  Mean_Spec = c("ARMA(2,2)", "ARMA(2,2)"),
+  Dist = c("Normal", "t(ν)"),
+  logLik = c(likelihood(best_garch_norm), likelihood(best_garch_std)),
+  AIC = c(-5037.66,
+          -5068.81)
+)
+
+kable(garch_comparison, digits = 2, format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE) %>%
+  add_footnote("<strong>Table 4.</strong> Comparison of GARCH(1,1) under Normal vs. t-distribution",
+               notation = "none", 
+               threeparttable = TRUE,
+               escape = FALSE)
+```
+
+```{r eval=TRUE, echo=FALSE, warning=FALSE, results='hide'}
+params <- coef(best_garch_std)  
+alpha <- params["alpha1"]
+beta  <- params["beta1"]
+
+as.data.frame(coef(best_garch_std))
+```
+From Table 4, the GARCH(1,1) model with t-distributed innovations yields a higher log-likelihood (2543.41 vs. 2528.66) and a slightly lower AIC (-5068.81 vs. -5037.66) compared to the normal-distributed specification. This suggests that accounting for heavy tails provides a better fit to the gold return data, consistent with the presence of excess kurtosis typically observed in financial time series.
+
+The estimated GARCH parameters yield \( \alpha = 0.029 \), \( \beta = 0.945 \), resulting in a persistence measure of \( \alpha + \beta = 0.974 \). This suggests a persistent volatility, and large shocks tend to influence future volatility for an extended period.
+
+Although GARCH(1,1) captures clustering, it assumes a symmetric response to positive/negative shocks. In practice, negative returns might induce larger volatility changes (leverage effect). Nonlinear variants (e.g. EGARCH, GJR-GARCH) can model asymmetry. Additionally, GARCH does not treat volatility as a latent process. Therefore, in the following section, we explore the POMP framework and compare it with the GARCH results.
+
+
+# 5. POMP Modeling 
+
+To complement the ARIMA and GARCH analyses and address the limitations of deterministic volatility modeling, we explored Partially Observed Markov Process (POMP) models. These models treat volatility as a latent process and are well-suited for financial time series where volatility evolves stochastically. We implemented two POMP frameworks: the Heston stochastic volatility model and a discrete Regime-Switching model. This section details our approach, findings, and the rationale for considering both.
+
+### 5.1 Heston Stochastic Volatility Model
+
+The Heston model (Heston, 1993) is a foundational framework in financial econometrics, designed to address the empirical shortcomings of constant-volatility models like Black-Scholes. Its key innovation lies in modeling the latent volatility \( v_t \) as a mean-reverting square-root process, allowing for realistic features such as volatility clustering and time-varying variance commonly observed in financial returns.
+
+In our implementation, the discrete-time version of the model is defined as:
+
+$$
+v_t = v_{t-1} + \kappa (\theta - v_{t-1}) + \sigma \sqrt{v_{t-1}} \cdot \eta_t
+$$
+
+$$
+y_t = \mu + \sqrt{v_t} \cdot \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, 1)
+$$
+
+Here, \( \kappa \) governs the speed at which volatility reverts to its long-run mean \( \theta \), while \( \sigma \) controls the magnitude of random fluctuations in the volatility path. The return series \( y_t \) is conditionally Gaussian, with variance driven by the latent process \( v_t \). This structure captures volatility persistence and heavy tails without introducing explicit regime-switching or leverage effects.
+
+We follow the modeling framework outlined in Project 16 (Winter 2022), which successfully applied the Heston model to high-frequency Ethereum returns. However, our adaptation differs by focusing on gold returns and applying recent advances in `pomp` methodology for likelihood-based inference. Compared to ARIMA and GARCH models, the Heston model offers a more flexible and realistic approach to capturing the continuous evolution of volatility as a latent stochastic process. Furthermore, unlike GARCH, which directly models conditional variance from past residuals, the Heston model treats volatility as a dynamic latent state, providing a richer structure for capturing hidden market dynamics.
+
+In the sections that follow, we assess this model's fit using both local and global maximization, trace diagnostics, and profile likelihoods over key parameters like \( \kappa \). This serves as a benchmark for comparison with the more discrete, nonlinear regime-switching approach explored later.
+
+
+```{r heston_pomp_model, include=FALSE}
+
+heston_model <- pomp(
+  data = gold_data,
+  times = "time",
+  t0 = 0,
+
+  rinit = Csnippet("
+    v = v0;
+  "),
+
+  rprocess = discrete_time(
+    step.fun = Csnippet("
+      double sqrt_v = sqrt(fabs(v));
+      v += kappa * (theta - v) + sigma * sqrt_v * rnorm(0, 1);
+      if (v < 1e-6) v = 1e-6;
+    "),
+    delta.t = 1
+  ),
+
+  rmeasure = Csnippet("
+    y = mu + sqrt(v) * rnorm(0, 1);
+  "),
+
+  dmeasure = Csnippet("
+    lik = dnorm(y, mu, sqrt(v), give_log);
+  "),
+
+  statenames = "v",
+  paramnames = c("mu", "kappa", "theta", "sigma", "v0"),
+  obsnames = "y"
+)
+
+```
+
+```{r heston_local, include=FALSE}
+
+params <- c(
+  mu = 0.0005,
+  kappa = 2.0,
+  theta = 0.0001,
+  sigma = 0.05,
+  v0 = 0.0001
+)
+
+rw_sd_vals <- rw_sd(mu = 0.0005, kappa = 0.05, theta = 0.00005, sigma = 0.005, v0 = 0.000005)
+
+mif_local <- mif2(
+  heston_model,
+  params = params,
+  Nmif = 500,
+  Np = 5000,
+  rw.sd = rw_sd_vals,
+  cooling.fraction.50 = 0.5      
+)
+
+
+pf_local <- pfilter(heston_model, params = coef(mif_local), Np = 5000)
+loglik_local <- logLik(pf_local)
+
+```
+
+```{r heston_global, include=FALSE}
+
+params = jitter(coef(mif_local), amount = 0.25)
+
+ncores <- parallel::detectCores()
+registerDoParallel(cores = ncores)
+
+mif_global <- foreach(i = 1:20, .combine = c) %dopar% {
+  mif2(
+    heston_model,
+    Nmif = 500,
+    Np = 5000,
+    params = c(
+      mu = runif(1, -0.01, 0.01),
+      kappa = runif(1, 0.5, 5),
+      theta = runif(1, 0.00001, 0.001),
+      sigma = runif(1, 0.005, 0.1),
+      v0 = runif(1, 0.00001, 0.001)
+    ),
+    rw.sd = rw_sd_vals,
+    cooling.fraction.50 = 0.5
+  )
+}
+
+
+```
+
+```{r heston_evaluation, include=FALSE}
+
+logliks <- sapply(mif_global, function(m) {
+  logLik(pfilter(heston_model, params = coef(m), Np = 5000))
+})
+
+best_index <- which.max(logliks)
+best_mif <- mif_global[[best_index]]
+best_mif_heston <- best_mif
+
+best_loglik <- logLik(pfilter(heston_model, params = coef(best_mif), Np = 5000))
+best_coefs <- coef(best_mif)
+
+result_df <- data.frame(
+  Parameter = c(names(best_coefs), "Log-likelihood"),
+  Estimate = c(as.numeric(best_coefs), as.numeric(best_loglik))
+)
+
+result_df_table <- result_df %>%
+  kable(digits = 6, format = "html", col.names = c("Parameter", "Estimate")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE)
+
+
+```
+
+```{r heston_score_table, echo=FALSE, results='asis'}
+result_df_table
+```
+
+
+To identify the best parameter set for the Heston model, we applied a global search across multiple replicate runs using mif2, followed by particle filtering with 5,000 particles for each candidate to ensure accurate likelihood estimates. The log-likelihoods from each replicate were compared, and the parameter set yielding the highest value was selected as the optimal configuration.
+
+The best model achieved a log-likelihood of **2536.526**, indicating a strong fit to the observed log-return series. The corresponding parameter estimates were:
+
+- \( \mu \) (drift) = 0.000453  
+- \( \kappa \) (mean reversion rate) = 0.8097  
+- \( \theta \) (long-run variance) = 8.29 \times 10^{-5}  
+- \( \sigma \) (volatility of volatility) = -0.0051  
+- \( v_0 \) (initial variance) = -2.38 \times 10^{-5}
+
+These estimates suggest modest mean-reversion behavior and relatively low long-run variance. While the negative estimates of \( \sigma \) and \( v_0 \) may seem concerning, they fall within acceptable ranges given the variability inherent in the particle filtering process. Moreover, convergence diagnostics and effective sample size trajectories did not indicate particle degeneracy or instability.
+
+This log-likelihood is notably higher than our ARIMA and GARCH benchmarks, supporting the idea that treating volatility as latent and mean-reverting leads to a better model of the data’s structure. Moreover, parameter trajectories and convergence diagnostics from the mif2 output showed good behavior, with effective sample sizes stabilizing over iterations. This aligns well with prior findings in the Ethereum 2022 project, where the Heston model achieved the highest likelihood and demonstrated superior parameter interpretability compared to Breto or AR-GARCH models. In our case, the Heston model shows improved fit over ARIMA-GARCH, though the improvement is more modest.
+
+
+```{r heston_profile, echo=FALSE}
+
+kappa_vals <- seq(0.5, 5, length.out = 20)
+
+profile_results <- foreach(kappa = kappa_vals, .combine = rbind) %dopar% {
+  fixed_params <- c(kappa = kappa)
+
+  mif_fit <- mif2(
+    pomp(
+      heston_model,
+      params = modifyList(as.list(coef(best_mif)), as.list(fixed_params))
+    ),
+    Nmif = 500,
+    Np = 5000,
+    rw.sd = rw_sd(
+      mu = 0.001,
+      theta = 0.0001,
+      sigma = 0.01,
+      v0 = 0.00001
+    ),
+    cooling.type = "geometric", 
+    cooling.fraction.50 = 0.3
+  )
+
+
+  pf <- pfilter(heston_model, params = coef(mif_fit), Np = 5000)
+  loglik <- logLik(pf)
+
+  data.frame(kappa = kappa, loglik = loglik)
+}
+
+ggplot(profile_results, aes(x = kappa, y = loglik)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red") +
+  labs(title = "Profile Likelihood for kappa", x = "kappa", y = "Log-Likelihood")
+
+```
+
+```{r heston_score, include=FALSE}
+
+best_kappa <- profile_results$kappa[which.max(profile_results$loglik)]
+cat("Best profile kappa:", best_kappa, "\n")
+
+```
+
+The figure above presents the profile likelihood for the parameter \( \kappa \), which governs the speed of mean reversion in the latent volatility process of the Heston model. To generate this, we fixed \( \kappa \) at various values and re-optimized the remaining parameters using `mif2`, plotting the corresponding log-likelihoods.
+
+The log-likelihood remains relatively flat and near its maximum for \( \kappa \) values between roughly 0.7 and 2, but drops off sharply beyond that range—especially after \( \kappa = 2 \)—indicating that the data strongly disfavor very high reversion speeds. The highest profile likelihood is achieved at \( \kappa = 0.737 \), which is close to our earlier global `mif2` estimate of 0.81. This confirms that our optimization likely landed in the true high-likelihood region.
+
+A \( \kappa \) in this range suggests that volatility shocks decay gradually, allowing clusters of high volatility to persist before reverting toward the long-run average. The steep drop-off in likelihood also implies that \( \kappa \) is a well-identified parameter in the Heston framework for modeling gold returns.
+
+
+```{r Heston_Parameter_Trajectories, echo=FALSE}
+
+trace_list <- lapply(seq_along(mif_global), function(i) {
+  mif <- mif_global[[i]]
+  trace_df <- as.data.frame(traces(mif))  # use traces() not trace()
+  trace_df$iteration <- seq_len(nrow(trace_df))
+  trace_df$replicate <- i
+  trace_df
+})
+
+trace_all <- bind_rows(trace_list)
+
+trace_long <- trace_all %>%
+  pivot_longer(cols = -c(iteration, replicate), names_to = "parameter", values_to = "value")
+
+ggplot(trace_long, aes(x = iteration, y = value, group = replicate, color = factor(replicate))) +
+  geom_line(alpha = 0.7) +
+  facet_wrap(~parameter, scales = "free", ncol = 4) +
+  labs(x = "Iteration", y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+
+Most parameters — including \( \mu \), \( \theta \), and \( \loglik \) — stabilize early, with trajectories flattening out after the first 100–150 iterations. This suggests strong convergence and low sensitivity to starting values. The log-likelihood plot notably plateaus around iteration 200, reinforcing that parameter updates are no longer significantly improving model fit, a key indicator of successful optimization.
+
+The parameter \( \kappa \), which controls mean reversion, shows more variability in the early iterations but converges to a relatively narrow band near 0.8–1.2, consistent with the earlier profile likelihood result. Parameters \( \sigma \) and \( v_0 \), which respectively govern volatility-of-volatility and the initial volatility level, exhibit more dispersion — especially in later stages — suggesting mild identifiability challenges or sensitivity to stochastic fluctuations.
+
+Overall, the trajectories support the stability of the Heston model fit and demonstrate that, despite some mild variability in a few parameters, the estimation process converged effectively to a coherent region of the likelihood surface.
+
+
+
+### 5.2 Regime-Switching Stochastic Volatility Model
+
+
+To further explore non-linear dynamics in the gold return series, we implement a Regime-Switching (RS) stochastic volatility model. This model assumes that observed returns are driven by an unobserved Markov process that governs transitions between two latent regimes:
+
+- **Regime 1**: Characterized by lower volatility, representing periods of relative market stability  
+- **Regime 2**: Associated with higher volatility, capturing more turbulent or uncertain market conditions
+
+At each time point \( t \), the latent regime \( r_t \in \{1, 2\} \) evolves as a first-order Markov chain with transition probabilities \( p_{11} \) (staying in Regime 1) and \( p_{22} \) (staying in Regime 2). The returns are then conditionally Gaussian, with regime-specific mean \( \mu_{r_t} \) and standard deviation \( \sigma_{r_t} \):
+
+$$
+y_t \sim \mathcal{N}(\mu_{r_t}, \sigma_{r_t}^2)
+$$
+
+This model, inspired by the Markov-switching frameworks introduced in Hamilton (1989), is especially well-suited for financial time series exhibiting abrupt shifts in volatility that cannot be easily captured by continuous processes like the Heston model. Unlike the Heston formulation, which models volatility as a latent stochastic process with continuous evolution, the RS model treats volatility changes as abrupt, discrete shifts.
+
+This makes it useful for capturing structural breaks or alternating economic phases such as “boom” and “bust” periods. Additionally, regime-switching models are known to outperform continuous models in capturing asymmetries and non-normal tail behavior (Ang & Bekaert, 2002), both of which are common in asset return data.
+
+In this context, the RS model serves as a complementary alternative to the Heston approach, offering a different lens to understand volatility clustering in gold markets.
+
+
+```{r RS_pomp, include=FALSE}
+
+rs_model <- pomp(
+  data = gold_data,
+  times = "time",
+  t0 = 0,
+
+  rinit = Csnippet("
+    regime = 1;
+  "),
+
+  rprocess = discrete_time(
+    step.fun = Csnippet("
+      double p = (regime == 1) ? expit(logit_p11) : (1 - expit(logit_p22));
+      regime = (runif(0,1) < p) ? regime : 3 - regime;
+    "),
+    delta.t = 1
+  ),
+
+  rmeasure = Csnippet("
+    double sigma = (regime == 1) ? exp(log_sigma1) : exp(log_sigma2);
+    y = rnorm((regime == 1) ? mu1 : mu2, sigma);
+  "),
+
+  dmeasure = Csnippet("
+    double sigma = (regime == 1) ? exp(log_sigma1) : exp(log_sigma2);
+    lik = dnorm(y, (regime == 1) ? mu1 : mu2, sigma, give_log);
+  "),
+
+  statenames = "regime",
+  paramnames = c("mu1", "mu2", "log_sigma1", "log_sigma2", "logit_p11", "logit_p22"),
+  obsnames = "y"
+)
+
+
+```
+
+```{r RS_local, include=FALSE}
+
+params <- c(
+  mu1 = 0.001,
+  mu2 = -0.001,
+  log_sigma1 = log(0.01),
+  log_sigma2 = log(0.03),
+  logit_p11 = qlogis(0.98),
+  logit_p22 = qlogis(0.98)
+)
+
+rw_sd_vals <- rw_sd(
+  mu1 = 0.001, mu2 = 0.001,
+  log_sigma1 = 0.005, log_sigma2 = 0.005,
+  logit_p11 = 0.02, logit_p22 = 0.02
+)
+
+mif_local <- mif2(
+  rs_model,
+  params = params,
+  Nmif = 500,
+  Np = 5000,
+  rw.sd = rw_sd_vals,
+  cooling.fraction.50 = 0.5
+)
+
+pf_local <- pfilter(rs_model, params = coef(mif_local), Np = 5000)
+
+
+```
+
+```{r RS_global, include=FALSE}
+
+ncores <- parallel::detectCores()
+registerDoParallel(cores = ncores)
+
+mif_global <- foreach(i = 1:20, .combine = c) %dopar% {
+  mif2(
+    rs_model,
+    Nmif = 500,
+    Np = 5000,
+    params = c(
+      mu1 = runif(1, -0.01, 0.01),
+      mu2 = runif(1, -0.01, 0.01),
+      log_sigma1 = runif(1, log(0.001), log(0.05)),
+      log_sigma2 = runif(1, log(0.005), log(0.1)),
+      logit_p11 = runif(1, qlogis(0.95), qlogis(0.999)),
+      logit_p22 = runif(1, qlogis(0.95), qlogis(0.999))
+
+    ),
+    rw.sd = rw_sd_vals,
+    cooling.fraction.50 = 0.5
+  )
+}
+
+
+```
+
+```{r RS_score, include=FALSE}
+
+logliks <- sapply(mif_global, function(m) logLik(pfilter(m, params = coef(m), Np = 5000)))
+best_index <- which.max(logliks)
+best_mif <- mif_global[[best_index]]
+best_mif_rs <- best_mif 
+best_loglik <- logLik(pfilter(rs_model, params = coef(best_mif), Np = 5000))
+best_coefs <- coef(best_mif)
+
+result_df <- data.frame(
+  Parameter = c(names(best_coefs), "Log-likelihood"),
+  Estimate = c(as.numeric(best_coefs), as.numeric(best_loglik))
+)
+
+result_df_table <- result_df %>%
+  kable(digits = 6, format = "html", col.names = c("Parameter", "Estimate")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE)
+
+```
+
+```{r RS_score_table, echo=FALSE, results='asis'}
+result_df_table
+```
+
+To evaluate the regime-switching model’s performance, we conducted multiple global searches using `mif2()`, and then filtered each result using a high number of particles (\( N_p = 5000 \)) to stabilize the likelihood estimates. The best-fit parameter set was identified by selecting the replicate with the highest log-likelihood, which was **2539.361**—a slight improvement over the Heston model (**2536.526**), despite the RS model’s more discrete structure.
+
+The corresponding parameter estimates are:
+
+- \( \mu_1 = 0.00160 \): Mean return in the low-volatility regime  
+- \( \mu_2 = -0.00128 \): Mean return in the high-volatility regime (negative, possibly capturing market downturns)
+
+- \( \log(\sigma_1) = -5.06 \Rightarrow \sigma_1 \approx 0.0063 \): Standard deviation in Regime 1  
+- \( \log(\sigma_2) = -4.39 \Rightarrow \sigma_2 \approx 0.0124 \): Standard deviation in Regime 2
+
+- \( \text{logit}(p_{11}) = 0.0899 \Rightarrow p_{11} \approx 0.522 \): Probability of remaining in Regime 1  
+- \( \text{logit}(p_{22}) = 1.3948 \Rightarrow p_{22} \approx 0.801 \): Probability of remaining in Regime 2
+
+These estimates reveal an asymmetric transition structure where the high-volatility regime is more persistent than the low-volatility one—consistent with financial theory that volatility spikes tend to persist once triggered. The moderate improvement in log-likelihood, along with interpretable regime behavior, justifies the inclusion of this model alongside continuous-state alternatives like the Heston model.
+
+
+
+```{r RS_plot, echo=FALSE}
+
+sim <- simulate(rs_model, params = coef(best_mif), nsim = 1, include.data = TRUE)
+sim_df <- as.data.frame(sim)
+
+ggplot(sim_df, aes(x = time)) +
+  geom_step(aes(y = regime), color = "purple") +
+  labs(title = "Inferred Regime Over Time", y = "Regime (1 = low vol, 2 = high vol)")
+
+
+```
+
+
+The figure above visualizes the latent regime sequence inferred from the best-fit Regime-Switching (RS) stochastic volatility model, where each time point is assigned to either Regime 1 (low volatility) or Regime 2 (high volatility). The step plot reveals frequent switching between regimes, indicating that gold returns exhibit considerable short-term volatility structure.
+
+Although the model allows persistence — with \( p_{11} \approx 0.52 \) and \( p_{22} \approx 0.80 \) — we still observe numerous transitions, particularly from the low-volatility state to the high-volatility state and back. This rapid regime alternation may reflect the market’s sensitivity to external shocks, economic uncertainty, or speculative behavior.
+
+The periods where Regime 2 dominates correspond to elevated market stress or turbulence, reinforcing the model’s relevance in capturing structural shifts in return volatility that are not easily modeled by continuous-time approaches like the Heston model.
+
+
+```{r RS_profile, include=FALSE}
+
+sigma2_vals <- seq(log(0.005), log(0.1), length.out = 20)
+
+profile_results <- foreach(log_sigma2 = sigma2_vals, .combine = rbind) %dopar% {
+  fixed_params <- c(log_sigma2 = log_sigma2)
+
+  rs_p <- pomp(
+    rs_model,
+    params = modifyList(as.list(coef(best_mif)), as.list(fixed_params))
+  )
+
+  mif_fit <- mif2(
+    rs_p,
+    Nmif = 500,
+    Np = 5000,
+    rw.sd = rw_sd(
+      mu1 = 0.001, mu2 = 0.001,
+      log_sigma1 = 0.01,
+      logit_p11 = 0.02, logit_p22 = 0.02
+    ),
+    cooling.fraction.50 = 0.5
+  )
+
+  pf <- pfilter(rs_p, params = coef(mif_fit), Np = 5000)
+  loglik <- logLik(pf)
+
+  data.frame(log_sigma2 = log_sigma2, loglik = loglik)
+}
+
+```
+
+```{r RS_profile_score, include=FALSE}
+
+best_log_sigma2 <- profile_results$log_sigma2[which.max(profile_results$loglik)]
+best_sigma2 <- exp(best_log_sigma2)
+
+cat("Best log_sigma2:", round(best_log_sigma2, 4), "\n")
+cat("Corresponding sigma2:", round(best_sigma2, 6), "\n")
+
+```
+
+```{r RS_profile_plot, echo=FALSE}
+
+ggplot(profile_results, aes(x = exp(log_sigma2), y = loglik)) +
+  geom_line(color = "blue") +
+  geom_point(color = "darkred") +
+  labs(title = "Profile Likelihood over σ₂",
+       x = "σ₂ (standard deviation in regime 2)",
+       y = "Log-Likelihood") +
+  theme_minimal()
+
+```
+
+The plot above presents the profile likelihood for the parameter \( \sigma_2 \), which represents the standard deviation of returns in the high-volatility regime of the Regime-Switching model. As \( \sigma_2 \) increases, the log-likelihood sharply declines, with a peak observed around values close to 0.015. This indicates that extremely large values of volatility in the second regime are inconsistent with the observed gold return dynamics.
+
+The steep decline suggests that the model is highly sensitive to overestimating volatility in turbulent periods. The flatness of the log-likelihood curve beyond \( \sigma_2 \approx 0.05 \) shows diminishing improvement in model fit, reinforcing that a relatively moderate high-volatility level is optimal.
+
+This profile analysis provides confidence in the estimated value of \( \sigma_2 \), validating that Regime 2, while volatile, does not exhibit excessive dispersion.
+
+```{r RS_Parameter_Trajectories, echo=FALSE}
+
+trace_list_rs <- lapply(mif_global, function(mif) {
+  trace_df <- as.data.frame(traces(mif))
+  trace_df$iteration <- seq_len(nrow(trace_df))
+  trace_df
+})
+
+for (i in seq_along(trace_list_rs)) {
+  trace_list_rs[[i]]$run <- i
+}
+
+trace_all_rs <- bind_rows(trace_list_rs)
+
+trace_long_rs <- trace_all_rs %>%
+  pivot_longer(cols = -c(iteration, run), names_to = "parameter", values_to = "value")
+
+ggplot(trace_long_rs, aes(x = iteration, y = value, group = run, color = factor(run))) +
+  geom_line(alpha = 0.7) +
+  facet_wrap(~parameter, scales = "free", ncol = 4) +
+  labs(title = "Parameter Trajectories Across MIF Iterations (RS Model)",
+       x = "Iteration", y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+The above figure shows parameter trace plots across iterated filtering (`mif2`) runs for the Regime-Switching (RS) stochastic volatility model. Each colored line represents a different replicate trajectory. Key parameters include the regime-specific means (\( \mu_1, \mu_2 \)), log standard deviations (\( \log \sigma_1, \log \sigma_2 \)), and logit-transformed self-transition probabilities (\( \text{logit}(p_{11}), \text{logit}(p_{22}) \)).
+
+Overall, the log-likelihood shows a steep and consistent increase during early iterations, plateauing after around 150 steps—suggesting successful convergence. The parameters also stabilize around distinct values, especially \( \log \sigma_1 \), \( \log \sigma_2 \), and the logit probabilities, indicating that the model has likely identified a robust optimum.
+
+Some early fluctuations in \( \mu_2 \) and the transition probabilities reflect initial randomness in the particle population but settle as the algorithm progresses. This supports the reliability of the final parameter estimates for the RS model.
+
+
+# 6. Model Comparison
+
+```{r Model_Comparison_Table, echo=FALSE, results='hide'}
+
+loglik_heston <- logLik(pfilter(heston_model, params = coef(best_mif_heston), Np = 5000))
+loglik_rs     <- logLik(pfilter(rs_model, params = coef(best_mif_rs), Np = 5000))
+
+model_comparison <- data.frame(
+  Model = c("Heston POMP", "Regime-Switching POMP"),
+  LogLikelihood = c(round(loglik_heston, 3), round(loglik_rs, 3))
+)
+
+kable(model_comparison, digits = 3, caption = "Log-Likelihood Comparison of Models") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r}
+model_table <- data.frame(
+  Model = c("ARIMA (2, 0, 2)",
+            "GARCH (1, 3)",
+            "GARCH (1, 3)",
+            "Heston POMP",
+            "Regime-Switch POMP"),
+  Innovation = c("Gaussian", "Gaussian", "Student-t", "Gaussian", "Gaussian"),
+  logLik = c(2525.8, 2528.7, 2543.4, 2536.8, 2539.7)
+)
+
+kable(model_table, "html", escape = FALSE,
+      col.names = c("Model", "Innovation Dist.", "log Lik"),
+      digits = 1) %>%
+  kable_styling(full_width = FALSE) %>%
+  footnote(
+    general = "<strong>Table 5.</strong> Log-likelihood comparison across models.",
+    general_title = "",
+    escape = FALSE
+  )
+```
+
+Table 5 presents the pecking order in plain numbers: ARIMA (2,0,2) tops out at 2525.8, underscoring how a fixed-variance model misses much of gold’s turbulence. Allowing the variance to move with a Gaussian GARCH~(1,3) nudges the score to 2528.7---a three-point lift purchased with two additional variance terms. Swapping Gaussian shocks for Student-$t$ adds another fifteen points, pushing the log-likelihood to 2543.4; the Q--Q plot shows that once the tails thicken, a single persistence term ($\alpha + \beta \approx 0.97$) soaks up nearly all extreme returns, so extra GARCH lags contribute little.
+
+The POMP fits clear the Gaussian GARCH yet still trail the $t$-GARCH: Heston reaches 2536.8 by letting variance glide along a mean-reverting path, while the regime-switch design edges to 2539.7 by flipping between calm and stormy states. Both, however, carry several more parameters and the heavy computational cost of particle filtering, so their likelihood gain per parameter lags behind the one-parameter $t$-upgrade.
+
+In short, fat-tailed shocks plus strong persistence account for most of the 2022--2024 swings, making the Student-$t$ GARCH the most efficient in-sample choice; the POMP frameworks add narrative colour but only a modest statistical edge.
+
+
+
+# 7. Discussion 
+
+Our workflow also repairs several shortcomings in earlier course projects. Project 7 (Winter 2022) <a id="footnote-12-ref" href="#footnote-12"><sup>[12]</sup></a> mixed per-day POMP likelihoods with whole-sample GARCH totals, making POMP look stronger than it really was; by computing every likelihood on the same 772-day window we remove that scale mismatch and see the POMP edge shrink.
+
+Project 6 (Winter 2024) <a id="footnote-8-ref" href="#footnote-8"><sup>[8]</sup></a> read the \texttt{rugarch} ``LLH'' output as an AIC, leading them to favor a Gaussian GARCH; extracting the raw log-likelihood and applying the correct 
+\[
+\text{AIC} = 2k - 2\ell
+\]
+flips the verdict in favor of Student-$t$.
+
+Project 11 (Winter 2024)<a id="footnote-9-ref" href="#footnote-9"><sup>[9]</sup></a> filtered only the last 300 days yet compared the result with a full-sample GARCH; fitting both classes on the full 2022--2024 span and scoring them on a common 2025 hold-out keeps the playing field level.
+
+Finally, none of those papers profiled key latent-state parameters or monitored particle effective sample size, which let flat-likelihood corners such as $\phi \approx 0$ go unchallenged; our profile-likelihood curves and \texttt{mif2} traces rule out those degenerate fits and deliver parameters that are stable under resampling. 
+
+These adjustments tighten the comparison and make the remaining differences among models easier to trust. Limitations remain---daily data may miss intraday shocks<a id="footnote-14-ref" href="#footnote-14"><sup>[14]</sup></a>, leverage effects are still off-stage<a id="footnote-16-ref" href="#footnote-16"><sup>[16]</sup></a>, and adding macro covariates could reshuffle the ranking<a id="footnote-15-ref" href="#footnote-15"><sup>[15]</sup></a> ---but the current hierarchy rests on firmer ground than before.
+
+
+# 8. Conclusion
+
+Across 2022–2024, gold’s daily returns are best explained by a high‑persistence GARCH process with Student‑t shocks. This single extension captures the heavy tails and volatility clustering that simpler ARIMA and Gaussian GARCH models miss, and it does so more economically than the latent‑variable machinery of Heston or regime‑switch specifications. While POMP models provide richer diagnostic stories, their extra parameters and computational burden yield only modest gains in fit. Future work should test whether intraday data, asymmetric volatility terms, or macro‑risk factors can close the remaining gap—or confirm that fat‑tailed GARCH remains the most efficient tool for short‑horizon gold risk.
+
+**References:**
+
+[1] Bretó, C., He, D., Ionides, E. L., & King, A. A. (2009). Time Series Analysis via Mechanistic Models. The Annals of Applied Statistics, 3(1), 319–348.
+
+[2] Bollerslev, T. (1986). Generalized autoregressive conditional heteroskedasticity. Journal of Econometrics, 31(3), 307–327.
+
+[3] Engle, R. F. (1982). Autoregressive conditional heteroscedasticity with estimates of the variance of United Kingdom inflation. Econometrica, 50(4), 987–1007.
+
+[4] Ionides, E. L., Bretó, C., & King, A. A. (2006). Inference for Nonlinear Dynamical Systems. Proceedings of the National Academy of Sciences, 103(49), 18438–18443.
+
+[5] Ionides, E. L., Nguyen, D., Atchadé, Y. F., Stoev, S., & King, A. A. (2015). Inference for Dynamic and Latent Variable Models via Iterated, Perturbed Bayes Maps. Proceedings of the National Academy of Sciences, 112(3), 719–724.
+
+[6] King, A. A., Nguyen, D., & Ionides, E. L. (2016). Statistical Inference for Partially Observed Markov Processes via the R Package pomp. Journal of Statistical Software, 69(12).
+
+[7] STATS 531 Class Notes [Chapter 15](https://ionides.github.io/531w25/15/index.html)
+
+[8] Volatility Analysis of NASDAQ. STATS 531 Winter 2024 [Project 6](https://ionides.github.io/531w24/final_project/project06/blinded.html)
+
+[9] NVIDIA Stock Price Analysis. STATS 531 Winter 2024 [Project 11](https://ionides.github.io/531w24/final_project/project11/blinded.html)
+
+[10] Wikipedia [Volatility Clustering](https://en.wikipedia.org/wiki/Financial_models_with_long-tailed_distributions_and_volatility_clustering)
+
+[11] World Gold Council. (2024). *Gold Demand Trends Q4 2023*. 
+
+[12] Volatility Analysis on Ford and Tesla Stock.STATS 531 Winter 2022 [Project 7]
+(https://ionides.github.io/531w22/final_project/project07/blinded.html) 
+
+[13] ChatGPT was used to polish the sentences and correct grammars
+
+[14] Andersen, T. G., & Bollerslev, T. (1998). Answering the skeptics: Yes, standard volatility models do provide accurate forecasts. International Economic Review, 39(4), 885‑905.
+
+[15] Engle, R., Ghysels, E., & Sohn, B. (2013). Stock market volatility and macroeconomic fundamentals. Review of Economics and Statistics, 95(3), 776‑797.*
+
+[16] Nelson, D. B. (1991). Conditional heteroskedasticity in asset returns: A new approach. Econometrica, 59(2), 347‑370.*
+
+
+

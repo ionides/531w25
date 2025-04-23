@@ -1,0 +1,11 @@
+numpy
+pandas
+scikit-learn
+sktime
+torch
+ray
+neuralforecast
+statsforecast
+matplotlib
+ipykernel
+ipywidgets

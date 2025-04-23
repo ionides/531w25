@@ -1,0 +1,665 @@
+---
+title: "pomp_final"
+author: "Yuezhou Qu"
+date: "2025-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(quantmod)
+library(zoo)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(tseries)
+library(forecast)
+library(rugarch)
+library(pomp)
+library(doParallel)
+library(foreach)
+library(doRNG)
+```
+
+```{r packages, include=FALSE, message=FALSE, warning=FALSE}
+library(quantmod)
+library(zoo)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(tseries)
+library(forecast)
+
+# modeling
+library(rugarch)
+```
+
+
+
+```{r obtain_data, include=FALSE}
+# Obtain OHLCV data for NFLX and SPY from Yahoo Finance
+getSymbols(c("NFLX", "SPY"), src = "yahoo", from = "2015-01-01", to = "2025-04-01")
+
+# Save NFLX data if not already saved, ensuring consistent column names
+if (!file.exists("nflx_ohlcv.csv")) {
+  colnames(NFLX) <- sub("NFLX\\.", "", colnames(NFLX))
+  write.zoo(NFLX, file = "nflx_ohlcv.csv", sep = ",")
+}
+
+# Save SPY data if not already saved, ensuring consistent column names
+if (!file.exists("spy_ohlcv.csv")) {
+  colnames(SPY) <- sub("SPY\\.", "", colnames(SPY))
+  write.zoo(SPY, file = "spy_ohlcv.csv", sep = ",")
+}
+```
+
+
+
+```{r load-data, message=FALSE, warning=FALSE, include=FALSE}
+nflx <- read.csv("nflx_ohlcv.csv") %>%
+  mutate(Date = as.Date(Index))
+spy <- read.csv("spy_ohlcv.csv") %>%
+  mutate(Date = as.Date(Index))
+
+# Check for missing values
+if (sum(is.na(nflx)) > 0) {
+  cat("NFLX data contains", sum(is.na(nflx)), "missing values.\n")
+}
+if (sum(is.na(spy)) > 0) {
+  cat("SPY data contains", sum(is.na(spy)), "missing values.\n")
+}
+
+# Split the data into training (up to 12-31-2022) and holdout sets
+nflx_train <- nflx %>% filter(Date <= as.Date("2022-12-31"))
+nflx_holdout <- nflx %>% filter(Date > as.Date("2022-12-31"))
+
+spy_train <- spy %>% filter(Date <= as.Date("2022-12-31"))
+spy_holdout <- spy %>% filter(Date > as.Date("2022-12-31"))
+
+nflx_train$log_return <- c(0, diff(log(nflx_train$Close)))
+spy_train$log_return <- c(0, diff(log(spy_train$Close)))
+
+# Inspect the data structures
+glimpse(nflx_train)
+glimpse(spy_train)
+```
+
+
+```{r}
+nflx_returns <- nflx_train$log_return
+spy_returns <- spy_train$log_return
+```
+
+```{r}
+nflx_dates <- nflx_train$Date
+nflx_returns_xts <- xts(nflx_returns, order.by = nflx_dates)
+```
+
+
+# 6. POMP Analysis
+
+### 6.1 Model Specification
+Our POMP model treats each day's centered log-return $Y_n$ of NFLX (and likewise SPY) as a noisy observation of the latent volatility process. Concretely, we write
+
+$$
+Y_n=\exp \left\{H_n / 2\right\} \epsilon_n,
+$$
+
+where $\epsilon_n \sim N(0,1)$ is a noisy measurement of $\exp \left\{H_n\right\}$ the conditional variance on day $n$. The unobserved log-volatility $H_n$ evolves via
+
+$$
+H_n=\mu_h(1-\phi)+\phi H_{n-1}+\beta_{n-1} R_n \exp \left\{-H_{n-1} / 2\right\}+\omega_n
+$$
+
+
+Here $\mu_h$ denotes the long-run mean of the log-volatility; $\phi \in(-1,1)$ measures its persistence from one day to the next; and the innovation
+
+$$
+\beta_{n-1}=Y_{n-1} \sigma_\eta \sqrt{1-\phi^2}, \quad \omega_n \sim N\left(0, \sigma_\eta^2\left(1-\phi^2\right)\left(1-R_n^2\right)\right)
+$$
+
+scales past return $Y_{n-1}$ by the shock volatility $\sigma_\eta$ and the leverage factor $R_n$, thereby allowing positive or negative returns to have asymmetric impact on current volatility. The leverage ratio
+
+$$
+R_n=\frac{\exp \left\{2 G_n\right\}-1}{\exp \left\{2 G_n\right\}+1} \in(-1,1)
+$$
+
+transforms the latent driver $G_n$ into a bounded quantity, so that large negative returns ( $R_n<0$ ) can generate higher volatility shocks. Finally, $G_n$ itself follows a Gaussian random walk
+
+$$
+G_n=G_{n-1}+\nu_n, \quad \nu_n \sim N\left(0, \sigma_\nu^2\right),
+$$
+
+with $\sigma_\nu$ governing the variability of the leverage process. The initial conditions $H_0$ and $G_0$ are treated as parameters to be estimated.
+
+Inference for the static parameter vector $\theta=\left(\mu_h, \phi, \sigma_\eta, \sigma_\nu, G_0, H_0\right)$ proceeds by maximizing the joint data likelihood
+
+$$
+L(\theta)=\prod_{n=1}^N f\left(Y_n \mid Y_{1: n-1} ; \theta\right)
+$$
+which—because of the nonlinear, latent structure-is not available in closed form. We therefore approximate each one-step predictive density $f\left(Y_n \mid Y_{1: n-1} ; \theta\right)$ via the bootstrap particle filter with $N_p$ particles. At each time step the filter propagates particles $\left\{\left(G_n^{(j)}, H_n^{(j)}\right)\right\}$ according to the state equations and then weights and resamples them based on the measurement density $f\left(Y_n \mid H_n^{(j)} ; \theta\right)$. Summing the particle weights yields an unbiased estimate of the incremental likelihood, and summing log-increments gives an unbiased log-likelihood estimator. We first run multiple short iterated-filtering (MIF2) passes-each perturbing $\theta$ with a decreasing random walk-to home in on a local maximum. To ensure global exploration, we then initialize MIF2 from a broad "box" of starting values, rerun the algorithm in parallel, and compare log-likelihoods and convergence traces. Applying this identical pipeline to both NFLX and SPY allows a direct comparison of their volatility dynamics under the same model structure and inference strategy.
+
+
+
+### 6.2 Parameter Estimation
+
+We first derive a baseline likelihood, we perform particle filtering for both NFLX and SPY
+
+```{r}
+# Define state and parameter names
+statenames <- c("H", "G", "Y_state")
+rp_names <- c("sigma_nu", "mu_h", "phi", "sigma_eta")
+ivp_names <- c("G_0", "H_0")
+paramnames <- c(rp_names, ivp_names)
+
+# Define process model C snippets for simulation and filtering
+rproc1 <- Csnippet("
+  double beta, omega, nu;
+  omega = rnorm(0, sigma_eta * sqrt(1 - phi*phi) * sqrt(1 - tanh(G)*tanh(G)));
+  nu = rnorm(0, sigma_nu);
+  G += nu;
+  beta = Y_state * sigma_eta * sqrt(1 - phi*phi);
+  H = mu_h*(1 - phi) + phi*H + beta * tanh(G) * exp(-H/2) + omega;
+")
+rproc2.sim <- Csnippet("Y_state = rnorm(0, exp(H/2));")
+rproc2.filt <- Csnippet("Y_state = covaryt;")
+rproc.sim <- Csnippet("
+  double beta, omega, nu;
+  omega = rnorm(0, sigma_eta * sqrt(1 - phi*phi) * sqrt(1 - tanh(G)*tanh(G)));
+  nu = rnorm(0, sigma_nu);
+  G += nu;
+  beta = Y_state * sigma_eta * sqrt(1 - phi*phi);
+  H = mu_h*(1 - phi) + phi*H + beta * tanh(G) * exp(-H/2) + omega;
+  Y_state = rnorm(0, exp(H/2));
+")
+rproc.filt <- Csnippet("
+  double beta, omega, nu;
+  omega = rnorm(0, sigma_eta * sqrt(1 - phi*phi) * sqrt(1 - tanh(G)*tanh(G)));
+  nu = rnorm(0, sigma_nu);
+  G += nu;
+  beta = Y_state * sigma_eta * sqrt(1 - phi*phi);
+  H = mu_h*(1 - phi) + phi*H + beta * tanh(G) * exp(-H/2) + omega;
+  Y_state = covaryt;
+")
+
+# Initialization and measurement models
+rinit <- Csnippet("
+  G = G_0;
+  H = H_0;
+  Y_state = rnorm(0, exp(H/2));
+")
+rmeasure <- Csnippet("y = Y_state;")
+dmeasure <- Csnippet("lik = dnorm(y, 0, exp(H/2), give_log);")
+
+# Transform parameters: use log for sigma's and logit for phi
+partrans <- parameter_trans(
+  log = c("sigma_eta", "sigma_nu"),
+  logit = "phi"
+)
+
+# Build the POMP objects for NFLX and SPY; nflx_returns and spy_returns are the differenced return series.
+nflx_filter <- pomp(
+  data = data.frame(y = nflx_returns, time = 1:length(nflx_returns)),
+  statenames = statenames,
+  paramnames = paramnames,
+  times = "time",
+  t0 = 0,
+  covar = covariate_table(
+    time = 0:length(nflx_returns),
+    covaryt = c(0, nflx_returns),
+    times = "time"
+  ),
+  rmeasure = rmeasure,
+  dmeasure = dmeasure,
+  rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1),
+  rinit = rinit,
+  partrans = partrans
+)
+
+spy_filter <- pomp(
+  data = data.frame(y = spy_returns, time = 1:length(spy_returns)),
+  statenames = statenames,
+  paramnames = paramnames,
+  times = "time",
+  t0 = 0,
+  covar = covariate_table(
+    time = 0:length(spy_returns),
+    covaryt = c(0, spy_returns),
+    times = "time"
+  ),
+  rmeasure = rmeasure,
+  dmeasure = dmeasure,
+  rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1),
+  rinit = rinit,
+  partrans = partrans
+)
+```
+
+
+```{r}
+cores <- detectCores()
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+registerDoRNG(5312025)
+getDoParWorkers()
+
+# Particle filtering for NFLX using params_test
+nflx_pf <- foreach(i = 1:10, .packages = 'pomp') %dopar% {
+  pfilter(nflx_filter, params = params_test, Np = 1000)
+}
+nflx_ll <- logmeanexp(sapply(nflx_pf, logLik), se = TRUE)
+print(nflx_ll)
+
+# Particle filtering for SPY using params_test
+spy_pf <- foreach(i = 1:10, .packages = 'pomp') %dopar% {
+  pfilter(spy_filter, params = params_test, Np = 1000)
+}
+spy_ll <- logmeanexp(sapply(spy_pf, logLik), se = TRUE)
+print(spy_ll)
+
+stopCluster(cl)
+```
+
+
+```{r}
+# Define random-walk standard deviations for iterated filtering using pomp functions
+nlfx_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+spy_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+# Set number of iterated filtering iterations and replicates for NFLX and SPY (using the same values)
+nmif <- 100
+n_reps <- 10
+
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+library(doRNG)
+registerDoRNG(5312025)
+
+# Iterated filtering for NFLX
+nflx_mif <- foreach(i = 1:n_reps, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(nflx_filter, params = params_test, Np = 1000, Nmif = nmif,
+       cooling.fraction.50 = 0.5, rw.sd = nlfx_rw_sd)
+}
+nflx_ll_mif <- foreach(i = 1:n_reps, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(10, logLik(pfilter(nflx_filter, params = coef(nflx_mif[[i]]), Np = 1000))), se = TRUE)
+}
+print(nflx_ll_mif)
+
+# Iterated filtering for SPY
+spy_mif <- foreach(i = 1:n_reps, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(spy_filter, params = params_test, Np = 1000, Nmif = nmif,
+       cooling.fraction.50 = 0.5, rw.sd = spy_rw_sd)
+}
+spy_ll_mif <- foreach(i = 1:n_reps, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(10, logLik(pfilter(spy_filter, params = coef(spy_mif[[i]]), Np = 1000))), se = TRUE)
+}
+print(spy_ll_mif)
+
+stopCluster(cl)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Likelihood Estimation Codes
+
+```{r}
+# Set run level (1 = quick test, 2 = moderate, 3 = full run)
+run_level <- 2  
+
+# NFLX run parameters
+nflx_Np           <- switch(run_level, 100, 1000, 2000)
+nflx_Nmif         <- switch(run_level,  10,  100,  200)
+nflx_Nreps_eval   <- switch(run_level,   4,   10,   20)
+nflx_Nreps_local  <- switch(run_level,  10,   20,   20)
+nflx_Nreps_global <- switch(run_level,  10,   20,  100)
+
+# SPY uses the same settings
+spy_Np           <- nflx_Np
+spy_Nmif         <- nflx_Nmif
+spy_Nreps_eval   <- nflx_Nreps_eval
+spy_Nreps_local  <- nflx_Nreps_local
+spy_Nreps_global <- nflx_Nreps_global
+```
+
+```{r}
+params_nflx_guess <- c(
+  sigma_nu = exp(-6),
+  mu_h     = -0.25,
+  phi      = plogis(4),
+  sigma_eta= exp(-0.07),
+  G_0      = 0,
+  H_0      = 0
+)
+
+nflx_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+nflx_mif <- foreach(i = 1:nflx_Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(nflx_filter, params = params_nflx_guess, Np = nflx_Np, Nmif = nflx_Nmif,
+       cooling.fraction.50 = 0.5, rw.sd = nflx_rw_sd)
+}
+
+nflx_ll_mif <- foreach(i = 1:nflx_Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(nflx_Nreps_eval, logLik(pfilter(nflx_filter, params = coef(nflx_mif[[i]]), Np = nflx_Np))), se = TRUE)
+}
+
+print(nflx_ll_mif)
+colnames(nflx_ll_mif) <- c("logLik", "logLik_se")
+
+stopCluster(cl)
+```
+
+
+
+```{r}
+nflx_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),   # only perturb at t=0
+  H_0       = ivp(0.1)    # only perturb at t=0
+)
+
+
+# Define parameter bounds for NFLX global search
+nflx_box <- rbind(
+  sigma_nu  = c(exp(-8), exp(-2)),
+  mu_h      = c(-1, 0),
+  phi       = c(0.9, 0.999),
+  sigma_eta = c(0.2, 2),
+  G_0       = c(-2, 2),
+  H_0       = c(-2, 2)
+)
+
+# Draw named starting parameter vectors
+nflx_start_params <- lapply(1:nflx_Nreps_global, function(i) {
+  apply(nflx_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+})
+
+# Run IF2 global search for NFLX
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+nflx_mif_global <- foreach(i = 1:nflx_Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(nflx_filter,
+       params = nflx_start_params[[i]],
+       Np     = nflx_Np,
+       Nmif   = nflx_Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd  = nflx_rw_sd)
+}
+
+nflx_ll_global <- foreach(i = 1:nflx_Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(nflx_Nreps_eval,
+                       logLik(pfilter(nflx_filter,
+                                      params = coef(nflx_mif_global[[i]]),
+                                      Np = nflx_Np))),
+             se = TRUE)
+}
+
+print(nflx_ll_global)
+colnames(nflx_ll_global) <- c("logLik", "logLik_se")
+```
+
+
+
+
+```{r}
+params_spy_guess <- c(
+  sigma_nu = exp(-6),
+  mu_h     = -0.25,
+  phi      = plogis(4),
+  sigma_eta= exp(-0.07),
+  G_0      = 0,
+  H_0      = 0
+)
+
+spy_rw_sd <- rw_sd(
+  sigma_nu  = 0.02,
+  mu_h      = 0.02,
+  phi       = 0.02,
+  sigma_eta = 0.02,
+  G_0       = ivp(0.1),
+  H_0       = ivp(0.1)
+)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+spy_mif <- foreach(i = 1:spy_Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(spy_filter, params = params_spy_guess, Np = spy_Np, Nmif = spy_Nmif,
+       cooling.fraction.50 = 0.5, rw.sd = spy_rw_sd)
+}
+
+spy_ll_mif <- foreach(i = 1:spy_Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(spy_Nreps_eval, logLik(pfilter(spy_filter, params = coef(spy_mif[[i]]), Np = spy_Np))), se = TRUE)
+}
+
+print(spy_ll_mif)
+
+colnames(spy_ll_mif) <- c("logLik", "logLik_se")
+stopCluster(cl)
+```
+
+
+```{r}
+# Define parameter bounds for SPY global search
+spy_box <- rbind(
+  sigma_nu  = c(exp(-8), exp(-2)),
+  mu_h      = c(-1, 0),
+  phi       = c(0.9, 0.999),
+  sigma_eta = c(0.2, 2),
+  G_0       = c(-2, 2),
+  H_0       = c(-2, 2)
+)
+
+# Draw named starting parameter vectors
+spy_start_params <- lapply(1:spy_Nreps_global, function(i) {
+  apply(spy_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+})
+
+# Run IF2 global search for SPY
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+registerDoRNG(5312025)
+
+spy_mif_global <- foreach(i = 1:spy_Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(spy_filter,
+       params = spy_start_params[[i]],
+       Np     = spy_Np,
+       Nmif   = spy_Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd  = spy_rw_sd)
+}
+
+spy_ll_global <- foreach(i = 1:spy_Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(spy_Nreps_eval,
+                       logLik(pfilter(spy_filter,
+                                      params = coef(spy_mif_global[[i]]),
+                                      Np = spy_Np))),
+             se = TRUE)
+}
+
+print(spy_ll_global)
+colnames(spy_ll_global) <- c("logLik", "logLik_se")
+```
+
+
+### Saving and Loading Results
+
+```{r}
+save(nflx_mif, nflx_ll_mif, file = sprintf("nflx_local_mif%d.rda", run_level))
+
+nflx_param_mat_local <- t(sapply(nflx_mif, coef))
+nflx_results_df_local <- data.frame(
+  logLik    = nflx_ll_mif[, "logLik"],
+  logLik_se = nflx_ll_mif[, "logLik_se"],
+  nflx_param_mat_local
+)
+write.csv(nflx_results_df_local, file = "nflx_params_local.csv", row.names = FALSE)
+```
+
+```{r}
+# Save results
+save(nflx_mif_global, nflx_ll_global, file = sprintf("nflx_global_mif%d.rda", run_level))
+
+nflx_param_mat_global <- t(sapply(nflx_mif_global, coef))
+nflx_results_df_global <- data.frame(
+  logLik    = nflx_ll_global[, "logLik"],
+  logLik_se = nflx_ll_global[, "logLik_se"],
+  nflx_param_mat_global
+)
+write.csv(nflx_results_df_global, file = "nflx_params_global.csv", row.names = FALSE)
+```
+
+```{r}
+save(spy_mif, spy_ll_mif, file = sprintf("spy_local_mif%d.rda", run_level))
+
+spy_param_mat_local <- t(sapply(spy_mif, coef))
+spy_results_df_local <- data.frame(
+  logLik    = spy_ll_mif[, "logLik"],
+  logLik_se = spy_ll_mif[, "logLik_se"],
+  spy_param_mat_local
+)
+write.csv(spy_results_df_local, file = "spy_params_local.csv", row.names = FALSE)
+```
+
+```{r}
+save(spy_mif, spy_ll_mif, file = sprintf("spy_local_mif%d.rda", run_level))
+
+spy_param_mat_local <- t(sapply(spy_mif, coef))
+spy_results_df_local <- data.frame(
+  logLik    = spy_ll_mif[, "logLik"],
+  logLik_se = spy_ll_mif[, "logLik_se"],
+  spy_param_mat_local
+)
+write.csv(spy_results_df_local, file = "spy_params_local.csv", row.names = FALSE)
+```
+
+```{r}
+save(spy_mif_global, spy_ll_global, file = sprintf("spy_global_mif%d.rda", run_level))
+
+spy_param_mat_global <- t(sapply(spy_mif_global, coef))
+spy_results_df_global <- data.frame(
+  logLik    = spy_ll_global[, "logLik"],
+  logLik_se = spy_ll_global[, "logLik_se"],
+  spy_param_mat_global
+)
+write.csv(spy_results_df_global, file = "spy_params_global.csv", row.names = FALSE)
+```
+
+```{r}
+# Load CSV outputs
+nflx_local_df  <- read.csv("nflx_params_local.csv")
+nflx_global_df <- read.csv("nflx_params_global.csv")
+spy_local_df   <- read.csv("spy_params_local.csv")
+spy_global_df  <- read.csv("spy_params_global.csv")
+
+# 1. Print log-likelihood tables
+library(knitr)
+cat("NFLX Local Search:\n")
+max_row <- nflx_local_df[which.max(nflx_local_df$logLik), ]
+kable(max_row)
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = nflx_global_df,
+      main = "NFLX Global Search", pch = 20)
+plot(nflx_mif[[1]], main = "NFLX Local Convergence")
+
+cat("\nNFLX Global Search:\n")
+max_row <- nflx_global_df[which.max(nflx_global_df$logLik), ]
+kable(max_row)
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = nflx_global_df,
+      main = "NFLX Global Search", pch = 20)
+plot(nflx_mif[[1]], main = "NFLX Global Convergence")
+
+cat("\nSPY Local Search:\n")
+max_row <- spy_local_df[which.max(spy_local_df$logLik), ]
+kable(max_row)
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = spy_local_df,
+      main = "SPY Global Search", pch = 20)
+
+cat("\nSPY Global Search:\n")
+max_row <- spy_global_df[which.max(spy__df$logLik), ]
+kable(max_row)
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = spy_global_df,
+      main = "SPY Global Search", pch = 20)
+
+# 3. Convergence plots from MIF objects
+plot(nflx_mif, main = "NFLX Local Convergence")
+
+plot(nflx_mif_global, main = "NFLX Global Convergence")
+
+plot(spy_mif, main = "SPY Local Convergence")
+
+plot(spy_mif_global, main = "SPY Global Convergence")
+```
+
+```{r}
+cat("\nNFLX Global Search:\n")
+max_row <- nflx_global_df[which.max(nflx_global_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = nflx_global_df,
+      main = "NFLX Global Search", pch = 20)
+
+plot(nflx_mif_global, main = "NFLX Global Convergence")
+```
+
+
+```{r}
+# SPY Local Search diagnostics
+spy_local_df <- read.csv("spy_params_local.csv")
+load(sprintf("spy_local_mif%d.rda", 2)) 
+
+cat("SPY Local Search:\n")
+max_row <- spy_local_df[which.max(spy_local_df$logLik), ]
+kable(max_row)
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta, data = spy_local_df,
+      main = "SPY Local Search", pch = 20)
+
+plot(spy_mif, main = "SPY Local Convergence")
+```
+

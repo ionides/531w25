@@ -1,0 +1,96 @@
+#!/bin/bash
+
+#SBATCH --job-name=DEFAULT
+#SBATCH --mail-user=paulzh@umich.edu
+#SBATCH --mail-type=BEGIN,END,FAIL
+ 
+#SBATCH --account=datasci531w25_class
+#SBATCH --partition=standard
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=36
+
+## 5GB/cpu is the basic share
+#SBATCH --mem-per-cpu=5GB
+
+## wall time hours:minutes:seconds
+#SBATCH --time=1:00:00
+
+###   Load software modules
+
+module load R
+module list
+
+### ARGS
+
+R_SCRIPT="model.R"
+LOG_FILE="model.log"
+CLEAR_RDS="false"
+
+for arg in "$@"; do
+    case $arg in
+        --script=*)
+            R_SCRIPT="${arg#*=}"
+            shift ;;
+        --log_file=*)
+            LOG_FILE="${arg#*=}"
+            shift ;;
+        --clear_rds=*)
+            CLEAR_RDS="${arg#*=}"
+            shift ;;
+        *)
+            echo "[ERROR] Unknown argument: $arg"
+            exit 1 ;;
+    esac
+done
+
+if [ ! -f "$R_SCRIPT" ]; then
+    echo "[ERROR] File '$R_SCRIPT' not found in $(pwd)"
+    exit 1
+fi
+
+# clear cached rds files
+shopt -s nullglob
+rds_files=(*.rds)
+
+if [[ "$CLEAR_RDS" == "true" ]]; then
+  if (( ${#rds_files[@]} > 0 )); then
+    rm -f "${rds_files[@]}"
+    echo "[WARNING] --clear_rds=true: All cached RDS files deleted."
+  else
+    echo "[INFO] --clear_rds=true: No RDS files to delete."
+  fi
+else
+  echo "[INFO] --clear_rds=false: RDS files left untouched."
+fi
+
+####  Commands your job should run follow this line
+
+START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+START_EPOCH=$(date '+%s')
+
+{
+echo "============================================="
+echo "[INFO] New session started at $START_TIME"
+echo "============================================="
+} >> "$LOG_FILE"
+
+Rscript --vanilla "$R_SCRIPT" >> "$LOG_FILE" 2>&1
+EXIT_CODE=$?
+
+END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+END_EPOCH=$(date '+%s')
+RUN_TIME=$((END_EPOCH - START_EPOCH))
+
+{
+echo "[INFO] Runtime: $RUN_TIME seconds"
+echo "[INFO] Exit code: $EXIT_CODE"
+echo "[INFO] ----- End of Session at $END_TIME -----"
+echo ""
+} >> "$LOG_FILE"
+
+echo "Running on $SLURM_JOB_NODELIST"
+echo "Running in $(pwd)"
+
+

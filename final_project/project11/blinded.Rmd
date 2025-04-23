@@ -1,0 +1,990 @@
+---
+title: "Time Series Analysis of Apple Stock Price"
+date: "2025-04-13"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 2
+    fig_caption: true
+    number_sections: true
+bibliography: references.bib
+csl: vancouver.csl 
+nocite: |
+  @KentCounty2024
+---
+# Introduction
+
+Understanding and forecasting stock price volatility is vital for navigating today’s increasingly turbulent financial markets. From the COVID-19 shock to ongoing macroeconomic uncertainty, accurately modeling asset return dynamics plays a central role in risk management, portfolio optimization, and derivative pricing [@christoffersen2012]. This study compares two prominent time series frameworks: ARMA-GARCH and Partially Observed Markov Process (POMP) models—in capturing the volatility behavior of Apple Inc. (AAPL) log-returns between 2020 and 2025. While ARMA-GARCH is a benchmark in financial econometrics, combining linear return dynamics with conditional heteroskedasticity, POMP models offer a state-space approach capable of handling nonlinearities and latent processes [@ionides2006]. By evaluating both models on a dataset encompassing major market regime changes, this research explores their effectiveness in addressing stylized facts like volatility clustering, leverage effects, and fat tails. The goal is to shed light on the trade-offs between traditional and more flexible modeling strategies in the context of evolving financial environments.
+
+
+
+```{r include=FALSE}
+library(forecast)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(kableExtra)
+library(lubridate)
+library(zoo)
+library(xts)
+library(fGarch, quietly = TRUE)
+library(doFuture)
+library(rugarch)
+library(tidyverse)
+library(tseries)
+library(forecast)
+library(lmtest)
+library(FinTS)
+library(ggplot2)
+library(ggfortify) 
+library(moments)
+library(gridExtra)
+library(quantmod) 
+```
+
+```{r echo=FALSE}
+df = read.csv("apple_stock.csv")
+df$X <- as.Date(df$X, format = "%Y-%m-%d")
+subset_data <- subset(df, X >= as.Date("2020-01-01"))
+write.csv(subset_data, "apple_subset.csv")
+df = read.csv("apple_subset.csv")
+df$X <- as.Date(df$X, format = "%Y-%m-%d")
+```
+
+# Data
+
+The dataset we used was obtained from Kaggle, a popular platform for sharing datasets and data science resources. It contains historical stock price information for Apple Inc. (AAPL) starting from 1980. For the purpose of this analysis, we focused on data from January 2020 onward, a period that captures significant market events such as the COVID-19 pandemic, monetary policy shifts, and post-pandemic market adjustments. This time frame provides a rich environment for evaluating volatility modeling techniques under various economic regimes.
+
+First, we plot Apple Inc.’s (AAPL) daily Close prices from January 2020-01 to 2025-01, sourced from dataset [@kaggle_appl_2025]. While the dataset includes high/low prices and trading volume, we focus on Close prices to isolate foundational daily price movements.
+
+```{r, echo = FALSE,fig.cap="Figure 2.1: Close Price of Apple Stock Over Time", fig.align='center'}
+# Closeing price overview
+plot(
+  df$X, df$Close, type = "l",
+  xlab = "Date", ylab = "Close Price",
+)
+```
+
+Apple’s stock exhibits distinct structural phases. A major shift occurred in 2020, marked by a rapid surge in prices and increased volatility—likely triggered by the COVID-19 pandemic and a global acceleration in digital adoption. The stock reached its peak in late 2022 amid strong product demand, followed by a corrective phase. As of 2024, the price has rebounded significantly, nearing previous highs. If this trajectory continues into 2025, Apple may surpass prior records, although this outlook depends on broader macroeconomic conditions and innovation cycles.
+
+
+# Explorable Data Analysis
+
+```{r include=FALSE}
+summary(subset_data)
+```
+
+```{r echo=FALSE,fig.cap="Figure 3.1: Density Plot of Apple Stock Price", fig.align='center'}
+#ggplot(subset_data, aes(x = Close))+ 
+# geom_histogram(binwidth = 10, fill = "blue", alpha = 0.6, color = "black") + 
+# labs(title = "Histogram of Stock Price", x = "price", y = "Frequency")
+
+ggplot(subset_data, aes(x = Close)) +
+  geom_density(fill = "red", alpha = 0.4) +
+  labs(title = "Density Plot of Gold Prices", x = "price", y = "Density")
+```
+
+
+
+```{r echo=FALSE}
+subset_data$Close = 1 + log(subset_data$Close) #log-transform
+apple_ts <- ts(subset_data$Close, start = c(2020, 1), frequency = 260) 
+stl_decomp <- stl(apple_ts, s.window = "periodic")
+```
+```{r echo=FALSE, fig.cap="Figure 3.2: STL Decomposition of Apple Stock Price",fig.align="center"}
+plot(stl_decomp, main = "STL Decomposition of Apple Stock Price")
+```
+
+According to the density plot, the distribution appears fairly symmetrical with two peaks, but it does not follow a normal distribution. Next, we apply a logarithmic transformation to the original price series, and then we apply the STL (Seasonal-Trend decomposition using Loess) algorithm to decompose the stock price time series, and the results are shown in the figure. We can observe that between 2020 and 2025, the stock prices exhibit an upward trend, with a generally steady overall movement. It is also evident that the seasonal pattern in the stock price series is not very 
+obvious. Over the five-year period, the algorithm identifies five cycles. At the beginning of each year, there is a slight drop in price, but no clear seasonality or monthly cyclical pattern is observed.
+
+The heightened volatility post-2020 introduces non-stationarity into the price series, violating core assumptions required for ARMA modeling. To address this, we compute **log returns** as the first difference of log-transformed daily Closeing prices. As the log returns closely approximate continuously compounded returns, making them more suitable for long-term financial analysis [@kotary2019]. After that, we subtract the mean from the log returns to obtain the demeaned daily log return series [@chapter17]. 
+
+\begin{align}
+
+y^*_n &= log(z_n) - log(z_{n-1}) \\
+a^*_n &= y^*_n - \frac{1}{N- 1}\sum^N_{k=2}y^*_k
+
+\end{align}
+
+Where $z^*_i$ is the original price, $y^*_i$ is the log return, and $a^*_i$ is the demeaned daily return value. $N$ is the sample size.
+
+```{r echo=FALSE}
+diffRtn = diff(apple_ts)
+deMeanRtn = diffRtn - mean(diffRtn)
+```
+
+```{r, echo = FALSE,fig.cap="Figure 3.3: Apple Log Returns Over Time",fig.align='center'}
+# Daily log returns based on the Closeing prices 
+df$log_return <- c(NA, diff(log(df$Close)))
+
+plot(df$X, df$log_return, type = "l", xlab = "Date", ylab = "Return Rate")
+
+abline(h = 0, col = "red", lty = 2)
+```
+
+The plot of Apple's log returns from 2020 to 2024 exhibits volatility clustering, with pronounced fluctuations during 2020 which likely reflecting the pandemic-driven market turbulence and 2022 which might potentially tied to macroeconomic uncertainty. Returns oscillate around zero, indicating mean reversion, but display heavy-tailed behavior, evidenced by extreme spikes. Post-2022, volatility moderates slightly, though persistent fluctuations suggest ongoing market sensitivity. The series highlights non-stationary variance, a hallmark of financial returns, necessitating models that account for time-dependent volatility.
+
+Later, we will also use different models to analyze volatility and explore which model best captures the trend and the volatility of Apple’s stock price.
+
+# ARMA + GARCH Models
+
+
+```{r, echo = FALSE,fig.cap="Figure 4.1: ACF plots of Close Prices", fig.align='center'}
+# Autocorrelation plots
+acf(na.omit(df$Close))
+```
+```{r, echo = FALSE,fig.cap="Figure 4.2: ACF plots of Log Returns", fig.align='center'}
+acf(na.omit(df$log_return))
+```
+
+The autocorrelation function plots for Apple’s stock reveal stark contrasts between raw close prices and log-transformed returns. The ACF of the raw prices displays strong, slowly decaying autocorrelations—persisting up to lag 30 with values around 0.6–0.8—indicating pronounced non-stationarity and trend persistence, a common trait in price-level series.
+
+In contrast, the ACF of log returns rapidly decays to near zero after just a few lags. Most spikes fall within the 95% confidence bounds, suggesting no statistically significant autocorrelation. This behavior is consistent with stationarity and supports the weak-form Efficient Market Hypothesis (EMH)[@fama1970], which posits that past return information holds little to no predictive power. A minor spike at lag 1 may hint at weak momentum or mean-reversion effects, but the overall lack of structure validates the use of returns for time series modeling.
+
+Therefore, the requirement of stationarity for ARMA and related models has been satisfied.
+
+## ARMA Model
+
+We start our modeling process with the autoregressive-moving average
+model (ARMA) model, which is given by:
+
+$$
+Y_t = c + \sum_{i=1}^{p} \phi_i Y_{t-i} + \epsilon_t + \sum_{j=1}^{q} \theta_j \epsilon_{t-j}
+$$
+
+where $\{\epsilon_n\}$ is a white noise process following
+$N(0, \sigma^2)$ [@ionides20254]. Terms with $\phi$ are autoregressive
+terms, and terms with $\psi$ are moving average terms. From this general
+form of ARMA(p,q) model, we can derive the ARMA(1,1) model as the following expression
+
+$$
+\text{ARMA(1,1): } X_t = c+ \phi X_{t-1} + \epsilon_t + \theta_1 \epsilon_{t-1}
+$$
+
+### AIC Table for Model Selection
+The AICs of fitted ARMA models are used to determine which model has the best performance, as well as the log-likelihoods [@box2015]:
+
+$$
+\mathrm{AIC} = -2 \times l(\theta^*) + 2D \\
+\ell(\theta) = \log L(\theta) = \sum_{i=1}^{n} \log f(X_i \mid \theta)
+$$
+where $l(\theta^*)$ represents the maximized log likelihood and $D$
+represents the number of parameters [@ionides20255]. The formula shows
+that AIC penalizes overfitting models for their increasing number of
+parameters. The AICs of models from ARMA(0, 0) to ARMA(4, 4) are
+summarized in the table below.
+
+
+```{r, echo = FALSE}
+# Fit ARMA models and compute AIC table for model selection
+best_aic <- Inf  # Initialize best AIC value
+best_model <- NULL  # Initialize best model
+P = 4;
+Q = 4;
+table <- matrix(NA,(P+1),(Q+1)) 
+for (p in 0:P) {
+  for (q in 0:Q) {
+    model <- tryCatch({suppressWarnings(arima(df$log_return, order=c(p,0,q)))}, error=function(e) NULL)
+
+    if (!is.null(model)) {
+      aic_value <- AIC(model)  # Compute AIC for model comparison
+      table[p+1,q+1] <- aic_value
+      #cat("ARMA(", p, ",", q, ") AIC: ", aic_value, "\n")
+      if (aic_value < best_aic) {
+        best_aic <- aic_value  # Update best AIC
+        best_model <- model  # Update best model
+      }
+    }
+  }
+}
+dimnames(table) <- list(paste("AR",0:P, sep=""),
+paste("MA",0:Q,sep=""))
+
+require(knitr)
+print(best_model)
+table %>%
+  kable(caption = "Table 4.1: ARMA Model Selection",digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),position = "center")
+```
+To identify the most appropriate ARMA model, we compared the AIC table for the models and selected ARMA(1,1) model due to its relative low AIC value and simple structure. Although AR(4) and MA(4) models also yielded very low AICs, indicating statistically comparable performance. Following the principle of parsimony, we chose the simpler ARMA(1,1) specification to reduce the risk of overfitting.
+
+ARMA models capture the conditional mean dynamics of a time series but do not account for time-varying volatility (heteroskedasticity), which is a common feature in financial return data[@bollerslev1986]. This motivates the use of GARCH models to model conditional variance.
+
+Before introducing GARCH, we conducted **Ljung-Box Test** and **ARCH-LM Test** tests on the residual from the fitted ARMA(1,1) model to ensure it is indeed white noise.
+
+
+### Model Diagonostics
+
+```{r, echo = FALSE}
+Box.test(residuals(best_model), lag = 20, type = "Ljung-Box")
+ArchTest(residuals(best_model), lags = 12)
+```
+By Ljung-Box test, the **p-value** is 0.4882 > 0.05, indicating he residual sequence has no significant autocorrelation. Therefore, after ARMA(1,1) fitting, the residual is basically white noise. However, the **p-value** is very small (much less than 0.05), reject the null hypothesis of no ARCH effect in the residuals. So there is a significant volatility clustering, showing the significance of using GARCH model[@bollerslev1986].
+
+```{r, echo = FALSE,fig.cap="Figure 4.2: ARMA Diagnostics Plots", fig.align='center'}
+residuals_arma11 <- residuals(best_model)
+
+plot_residual_diagnostics <- function(residuals, model_name) {
+  par(mfrow = c(1,3))  # Set up a 1x3 plot layout
+  
+  # Plot Residuals
+  plot(residuals, type = "l", main = paste("Residuals of", model_name), ylab = "Residuals")
+  abline(h = 0, col = "red", lty = 2)
+  
+  # ACF Plot
+  acf(residuals, main = paste("ACF of Residuals (", model_name, ")", sep=""))
+  
+  # QQ Plot
+  qqnorm(residuals, main = paste("QQ Plot (", model_name, ")", sep=""))
+  qqline(residuals, col = "red")
+  
+  par(mfrow = c(1,1))  # Reset layout
+}
+
+plot_residual_diagnostics(na.omit(residuals_arma11), "ARMA(1,1)")
+```
+
+Observations: 
+The residuals fluctuate around 0, with no obvious trend structure. Which is
+signs of slight heteroskedasticity, suggest the potential ARCH effects.
+
+All lags of ACF are within the blue confidence interval, and there is no significant autocorrelation, showing ARMA(1,1) captures the temporal structure of the mean well.
+
+The middle section in the QQ plot is basically along the diagonal line, but the tail has obvious deviations. So the residuals may have fat tails (not subject to normal distribution)
+
+
+## GARCH Model
+
+### Standard GARCH(p, q) Model
+
+The standard GARCH model is defined as:
+$$
+\sigma_t^2 = \omega + \sum_{i=1}^{p} \alpha_i \epsilon_{t-i}^2 + \sum_{j=1}^{q} \beta_j \sigma_{t-j}^2
+$$
+
+where \( \omega > 0 \), \( \alpha_i \geq 0 \), and \( \beta_j \geq 0 \) to ensure that the conditional variance remains positive. The model captures **volatility clustering**—a characteristic feature of financial time series where large (or small) shocks tend to be followed by similarly large (or small) shocks[@bollerslev1986].
+
+The **stationarity condition**, given by: \sum (\alpha_i + \beta_j) < 1,
+ensures that the effect of shocks gradually dissipates over time, preventing the variance from exploding.
+
+However, the standard GARCH model assumes **symmetric volatility response**, meaning that both positive and negative shocks \( \epsilon_{t-i} \) have the same effect on future volatility. This assumption can be limiting in financial applications like Apple stock, which often display **asymmetric volatility behavior**—where negative news tends to increase volatility more than positive news of the same magnitude. This limitation motivates the use of asymmetric GARCH models such as EGARCH and GJR-GARCH.
+
+```{r, echo = FALSE}
+distributions <- c("norm", "std", "ged")
+models <- list()
+logLik_values <- list()
+
+# Loop through each distribution
+for (dist in distributions) {
+  # sGARCH model
+  spec_sgarch <- ugarchspec(
+    variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+    mean.model = list(armaOrder = c(1,1)),
+    distribution.model = dist
+  )
+  
+  fit_sgarch <- ugarchfit(spec_sgarch, data = na.omit(df$log_return), solver = "hybrid")
+  models[[paste0("sGARCH_", dist)]] <- fit_sgarch
+  logLik_values[[paste0("sGARCH_", dist)]] <- fit_sgarch@fit$LLH
+  
+  cat(paste0("== sGARCH with ", dist, " distribution ==\n"))
+  show(infocriteria(fit_sgarch))
+  #cat("Log-Likelihood: ", logLik_values[[paste0("sGARCH_", dist)]], "\n\n")
+}
+
+```
+### EGARCH Model
+The EGARCH (Exponential GARCH) model addresses asymmetry in volatility dynamics through its logarithmic specification[@nelson1991]:
+
+$$
+\log(\sigma_t^2) = \omega + \sum_{i=1}^{p} \alpha_i \left( \frac{|\epsilon_{t-i}|}{\sigma_{t-i}} - \mathbb{E} \left[\frac{|\epsilon_{t-i}|}{\sigma_{t-i}}\right] \right) + \sum_{j=1}^{q} \beta_j \log(\sigma_{t-j}^2) + \sum_{k=1}^{r} \gamma_k \frac{\epsilon_{t-k}}{\sigma_{t-k}}
+$$
+Key features include:
+
+- **Asymmetry**: The term \( \gamma_k \) captures the "leverage effect." If \( \gamma_k < 0 \), negative shocks \( (\epsilon_{t-k} < 0) \) increase future volatility more than positive shocks of equal magnitude.
+
+- **No Parameter Constraints**: Due to the log specification, the model inherently ensures \( \sigma_t^2 > 0 \) without requiring constraints such as \( \omega > 0 \), \( \alpha_i \geq 0 \), or \( \beta_j \geq 0 \).
+
+- **Fat-Tailed Errors**: By assuming \( \epsilon_t \sim t_\nu \) (Student’s t-distribution), the model accommodates the heavy-tailed nature of financial return distributions.
+```{r, echo = FALSE}
+# eGARCH model (asymmetric modeling)
+spec_egarch <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(1,1)),
+  distribution.model = "std"  # Using t-distribution
+)
+
+fit_egarch <- ugarchfit(spec_egarch, data = na.omit(df$log_return), solver = "hybrid")
+models[["eGARCH_std"]] <- fit_egarch
+logLik_values[["eGARCH_std"]] <- fit_egarch@fit$LLH
+
+cat("== eGARCH with t-distribution ==\n")
+show(infocriteria(fit_egarch))
+#cat("Log-Likelihood: ", logLik_values[["eGARCH_std"]], "\n\n")
+
+```
+### GJR-GARCH Model
+The GJR-GARCH (Glosten-Jagannathan-Runkle) model also introduces asymmetry in volatility using an indicator function[@glosten1993]:
+$$
+\sigma_t^2 = \omega + \sum_{i=1}^{p} \alpha_i \epsilon_{t-i}^2 + \sum_{j=1}^{q} \beta_j \sigma_{t-j}^2 + \sum_{k=1}^{r} \gamma_k \mathbb{I}(\epsilon_{t-k} < 0) \epsilon_{t-k}^2
+$$
+
+Here, \( \mathbb{I}(\epsilon_{t-k} < 0) \) is an indicator function that equals 1 if the past shock is negative and 0 otherwise. When \( \gamma_k > 0 \), negative shocks have a larger impact on volatility than positive shocks of the same magnitude.
+
+Key features:
+
+- **Explicit Leverage Effects**: The model captures the asymmetry in financial markets where bad news tends to increase volatility more than good news—consistent with behavioral finance literature.
+
+- **Fat-Tailed Distributions**: Like EGARCH, GJR-GARCH can be fitted with Student’s t-distributed errors \( (\epsilon_t \sim t_\nu) \), allowing the model to accommodate heavy tails in return distributions.
+
+
+```{r, echo = FALSE}
+# GJR-GARCH model (with leverage effect)
+spec_gjr <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(1,1)),
+  distribution.model = "std"  # Using t-distribution
+)
+
+fit_gjr <- ugarchfit(spec_gjr, data = na.omit(df$log_return), solver = "hybrid")
+models[["gjrGARCH_std"]] <- fit_gjr
+logLik_values[["gjrGARCH_std"]] <- fit_gjr@fit$LLH
+
+cat("== GJR-GARCH with t-distribution ==\n")
+show(infocriteria(fit_gjr))
+#cat("Log-Likelihood: ", logLik_values[["gjrGARCH_std"]], "\n\n")
+```
+
+### GARCH Model Selection
+```{r, echo = FALSE}
+# Print log-likelihood values for all models
+cat("Log-Likelihood values for different models:\n")
+for (model in names(logLik_values)) {
+  cat(paste0(model, ": ", logLik_values[[model]], "\n"))
+}
+```
+The **gjrGARCH_std** model provides the highest log-likelihood(3328.37), suggesting it fits the data best. This might due to **Leverage Effect** and **Fat-Tailed Distribution**.
+But despite having the lowest log-likelihood, **sGARCH-norm** achieves the **lowest AIC** due to its simpler structure. Since **normal distribution** has fewer parameters than the t-distribution (which includes degrees of freedom). And the **sGARCH** model is simpler than **gjrGARCH**, which includes additional asymmetric terms. This reflects the trade-off in AIC: it penalizes model complexity while rewarding fit.
+
+If the Goal is to forecast accuracy, then we choose to use sGARCH-norm, which assumes symmetry and normally distributed errors, which may understate tail risks and asymmetric volatility. But in this report our goal is to capture the financial volatility dynamics. So we selected **gjrGarch** for further analysis.
+
+```{r, echo = FALSE,fig.cap="Figure 5.1: gjrGARCH Diagnostics Plots", fig.align='center'}
+garch_residual_diagnostics <- function(fit, plot=TRUE) {
+  
+  # Extract standardized residuals
+  res <- residuals(fit, standardize=TRUE)
+  res_sq <- res^2  # Squared residuals for ARCH effect testing
+  
+  # 1. Basic statistics output
+  cat("\n=== Standardized Residuals: Basic Statistics ===\n")
+  print(summary(res))
+  cat("\nSkewness:", skewness(res))
+  cat("\nKurtosis:", kurtosis(res))
+  cat("\nJarque-Bera test p-value:", jarque.bera.test(res)$p.value, "\n")
+  
+  # 2. ARCH effect test
+  cat("\n=== ARCH Effect Test ===\n")
+  arch_test <- ArchTest(res, lags=12)
+  print(arch_test)
+  
+  # 3. Ljung-Box test (residuals and squared residuals)
+  cat("\n=== Ljung-Box Test ===\n")
+  lb_test_res <- Box.test(res, lag=12, type="Ljung-Box")
+  lb_test_ressq <- Box.test(res_sq, lag=12, type="Ljung-Box")
+  cat("Ljung-Box test p-value for residuals:", lb_test_res$p.value, "\n")
+  cat("Ljung-Box test p-value for squared residuals:", lb_test_ressq$p.value, "\n")
+  
+  # 4. Visualization
+  if(plot){
+    # Prepare data frame
+    df_plot <- data.frame(
+      Date = index(fit@model$modeldata$data),
+      Residuals = as.numeric(res),
+      Fitted = as.numeric(fitted(fit))
+    )
+    
+    # Residual series plot
+    p1 <- ggplot(df_plot, aes(x=Date, y=Residuals)) +
+      geom_line(color="steelblue") +
+      geom_hline(yintercept=0, linetype="dashed", color="red") +
+      labs(title="Standardized Residual Series", x="Time", y="Standardized Residuals") +
+      theme_minimal()
+    
+    # Residual histogram vs normal distribution
+    p2 <- ggplot(df_plot, aes(x=Residuals)) +
+      geom_histogram(aes(y=after_stat(density)), bins=30, fill="steelblue", alpha=0.7) +
+      stat_function(fun=dnorm, args=list(mean=mean(res), sd=sd(res)), 
+                  color="red", linewidth=1) +
+      labs(title="Residual Distribution", y="Density") +
+      theme_minimal()
+    
+    # Q-Q plot
+    p3 <- ggplot(df_plot, aes(sample=Residuals)) +
+      stat_qq(color="steelblue") +
+      stat_qq_line(color="red") +
+      labs(title="Q-Q Plot") +
+      theme_minimal()
+    
+    # ACF/PACF plots
+    p4 <- ggAcf(res, lag.max=24) + 
+      labs(title="ACF of Standardized Residuals") +
+      theme_minimal()
+    
+    p5 <- ggPacf(res, lag.max=24) + 
+      labs(title="PACF of Standardized Residuals") +
+      theme_minimal()
+    
+    # Squared residuals ACF
+    p6 <- ggAcf(res_sq, lag.max=24) + 
+      labs(title="ACF of Squared Standardized Residuals") +
+      theme_minimal()
+    
+    # Combine plots
+    grid.arrange(p1, p2, p3, p4, p5, p6, ncol=2)
+  }
+  
+  # Return diagnostics results
+  return(list(
+    residuals = res,
+    skewness = skewness(res),
+    kurtosis = kurtosis(res),
+    jb_test = jarque.bera.test(res),
+    arch_test = arch_test,
+    lb_test_res = lb_test_res,
+    lb_test_ressq = lb_test_ressq
+  ))
+}
+
+# Select model to test (e.g., eGARCH-std)
+model_to_test <- models[["eGARCH_std"]]
+
+# Run diagnostics
+diagnostics <- garch_residual_diagnostics(model_to_test)
+
+
+```
+**Skewness (0.0067)**: Skewness is near 0, indicating residuals are hardly biased.
+**Kurtosis (4.97)**: Far exceeds 3 (normal distribution), confirming heavy-tailed residuals, common in financial returns.
+**Jarque-Bera Test (p=0)**: Rejects normality, justifying the use of t-distribution in gjrGARCH.
+
+**ARCH-LM Test (p=0.9736)**:Fails to reject the null hypothesis of no ARCH effects at 5% significance. This indicates the gjrGARCH model has successfully captured volatility clustering, leaving no residual heteroskedasticity.
+
+**Ljung-Box Tests**:
+Residuals (p=0.87): No autocorrelation in residuals.
+Squared Residuals (p=0.97): No autocorrelation in squared residuals.
+
+**Standardized Residual Series**:
+Fluctuates around zero with sporadic extreme values (-5 to 5), consistent with heavy tails. No visible trends or structural breaks.
+
+**Q-Q Plot**:
+Deviations from the reference line at the tails confirm slight non-normality (heavy-tailed).
+
+**ACF/PACF of Residuals**:
+All autocorrelations lie within confidence bands, indicating no significant lagged correlations.
+
+**Residual Distribution**:
+Peaked center and fat tails, corroborating high kurtosis.
+
+**Based on all these observations, gjrGARCH successfully captures volatility clustering.**
+
+# Discrete-time Stochastic Volatility Model
+
+We propose a Partially Observed Markov Process (POMP) model for stochastic volatility with leverage effects to capture the time-varying volatility and asymmetric return-volatility relationship of Apple stock returns.
+
+## Model Specification
+
+Let the latent state be $X_n = (G_n, H_n)$, where $G_n$ is Transformed leverage parameter, $H_n$is Log volatility at time $n$, and the observed $Y_n$ represents the log return of the stock at time $n$.
+
+According to Bretó [@breto2014idiosyncratic] and course slides [@chapter17], we propose the model:
+
+\begin{align}
+Y_n &= e^{H_n/2} \cdot \epsilon_n, \quad \epsilon_n \sim N(0, 1) \\
+H_n &= \mu_h(1 - \phi) + \phi H_{n-1} + \beta_{n-1} R_n e^{-H_{n-1}/2} + \omega_n\\
+G_n &= G_{n-1} + \nu_n, \quad \nu_n \sim N(0, \sigma_\nu^2) 
+\end{align}
+
+where 
+$$
+\beta_{n-1} = Y_{n-1} \cdot \sigma_\eta \cdot \sqrt{1 - \phi^2} 
+$$
+and 
+
+$$
+\omega_n \sim N\left(0, \sigma_\eta^2 (1 - \phi^2)(1 - R_n^2)\right) 
+$$
+
+$\{G_n\}$ is the Gaussian random walk, and $\{\nu_n\}$ is an iid $N(0,\sigma_{\nu}^2)$ sequence.
+
+And $R_n$ is defined as:
+$$
+R_n = \frac{e^{2G_n} - 1}{e^{2G_n} + 1}
+$$
+
+which is a transformed random walk [@chapter17].
+
+## Model Parameters
+
+The parameters and descriptions of the model are listed in the table below.
+
+| Parameter      | Description                          | Type / Notes         |
+|----------------|--------------------------------------|-----------------------|
+| $\mu_h$     | Long-term mean of log volatility     |                   |
+| $\phi$      | Volatility persistence coefficient   | $\in (0, 1)$     |
+| $\sigma_\nu$ | Innovation SD of leverage process   | $> 0$             |
+| $\sigma_\eta$ | Volatility shock magnitude         | $> 0$             |
+| $G_0$       | Initial leverage state               |             |
+| $H_0$       | Initial log volatility state         |           |
+
+
+```{r echo=FALSE}
+apple_statenames <- c("H","G","Y_state") 
+apple_rp_names <- c("sigma_nu","mu_h","phi","sigma_eta") 
+apple_ivp_names <- c("G_0","H_0") 
+apple_paramnames <- c(apple_rp_names,apple_ivp_names)
+```
+
+```{r echo=FALSE}
+rproc1 <- " double beta,omega,nu; 
+  omega = rnorm(0,sigma_eta * sqrt( 1- phi*phi ) * sqrt(1-tanh(G)*tanh(G)));
+  nu = rnorm(0, sigma_nu);
+  G += nu;
+  beta = Y_state * sigma_eta * sqrt( 1- phi*phi );
+  H = mu_h*(1- phi) + phi*H + beta * tanh( G ) * exp(-H/2) + omega; " 
+rproc2.sim <- " Y_state = rnorm( 0,exp(H/2) ); " 
+rproc2.filt <- " Y_state = covaryt; " 
+apple_rproc.sim <- paste(rproc1,rproc2.sim) 
+apple_rproc.filt <- paste(rproc1,rproc2.filt)
+```
+
+```{r echo=FALSE}
+apple_rinit<-"G=G_0; 
+              H=H_0;
+              Y_state=rnorm(0,exp(H/2));"
+apple_rmeasure <- "
+  y=Y_state;"
+
+apple_dmeasure <- "
+ lik=dnorm(y,0,exp(H/2),give_log);"
+```
+
+```{r echo=FALSE,message=FALSE,warning=FALSE}
+library(pomp)
+apple_partrans <- parameter_trans(
+  log = c("sigma_eta","sigma_nu"),
+  logit="phi"
+)
+```
+
+
+```{r echo=FALSE}
+apple.filt <- pomp(data=data.frame(
+  y=deMeanRtn,time=1:length(deMeanRtn)),
+  statenames=apple_statenames,
+  paramnames=apple_paramnames,
+  times="time",
+  t0=0,
+  covar=covariate_table(
+    time=0:length(deMeanRtn),
+    covaryt=c(0,deMeanRtn),
+    times="time"),
+  rmeasure=Csnippet(apple_rmeasure),
+  dmeasure=Csnippet(apple_dmeasure),
+  rprocess=discrete_time(step.fun=Csnippet(apple_rproc.filt),
+                         delta.t=1),
+  rinit=Csnippet(apple_rinit),
+  partrans=apple_partrans
+  )
+```
+
+
+```{r echo=FALSE}
+params_test <- c( sigma_nu = exp(-2.5), mu_h =-0.5, phi = expit(2), sigma_eta = exp(-0.05), G_0 = 0, H_0=0 ) 
+sim1.sim <- pomp(apple.filt, statenames=apple_statenames, paramnames=apple_paramnames, rprocess=discrete_time(step.fun=Csnippet(apple_rproc.sim),delta.t=1) ) 
+sim1.sim <- simulate(sim1.sim,seed=1,params=params_test)
+
+sim1.filt<-pomp(sim1.sim,
+                covar=covariate_table(time=c(timezero(sim1.sim),time(sim1.sim)),
+                covaryt=c(obs(sim1.sim),NA), times="time"),
+                statenames=apple_statenames, paramnames=apple_paramnames,
+                rprocess=discrete_time(step.fun=Csnippet(apple_rproc.filt),delta.t=1))
+
+
+```
+
+```{r echo=FALSE}
+run_level<-2
+apple_Np<-switch(run_level, 100,1e3,2e3) 
+apple_Nmif <-switch(run_level, 10,50,100) 
+apple_Nreps_eval<-switch(run_level, 5,10, 50) 
+apple_Nreps_local<-switch(run_level, 10,50, 100) 
+apple_Nreps_global<-switch(run_level, 10,50, 100)
+```
+
+```{r echo=FALSE,message=FALSE,warning=FALSE}
+library(doParallel)
+cores <- 6 #as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE',unset=NA))
+if(is.na(cores)) cores <- detectCores()  
+registerDoParallel(cores)
+library(doRNG)
+registerDoRNG(12345)
+```
+
+```{r include=FALSE}
+stew(file=paste0("pf1_",run_level,".rda"),{
+  t.pf1 <- system.time(
+    pf1 <- foreach(i=1:apple_Nreps_eval,
+      .packages='pomp') %dopar% pfilter(sim1.filt,Np=apple_Np))
+})
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+```
+```{r echo=FALSE}
+apple_rw.sd_rp <- 0.02
+apple_rw.sd_ivp <- 0.1
+apple_cooling.fraction.50 <- 0.5
+apple_rw.sd <- rw_sd(
+  sigma_nu  = apple_rw.sd_rp,
+  mu_h      = apple_rw.sd_rp,
+  phi       = apple_rw.sd_rp,
+  sigma_eta = apple_rw.sd_rp,
+  G_0       = ivp(apple_rw.sd_ivp),
+  H_0       = ivp(apple_rw.sd_ivp)
+)	 
+```
+
+## Local Search
+
+```{r echo=FALSE}
+stew(file=paste0("mif1_",run_level,".rda"),{
+  t.if1 <- system.time({
+  if1 <- foreach(i=1:apple_Nreps_local,
+    .packages='pomp', .combine=c) %dopar% mif2(apple.filt,
+      params=params_test,
+      Np=apple_Np,
+      Nmif=apple_Nmif,
+      cooling.fraction.50=apple_cooling.fraction.50,
+      rw.sd = apple_rw.sd)
+  L.if1 <- foreach(i=1:apple_Nreps_local,
+    .packages='pomp', .combine=rbind) %dopar% logmeanexp(
+      replicate(apple_Nreps_eval, logLik(pfilter(apple.filt,
+        params=coef(if1[[i]]),Np=apple_Np))), se=TRUE)
+  })
+})
+r.if1 <- data.frame(logLik=L.if1[,1],logLik_se=L.if1[,2],
+  t(sapply(if1,coef)))
+if (run_level>1) write.table(r.if1,file="apple_params.csv",
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+```
+
+
+```{r echo=FALSE,fig.cap="Figure 6.1: Local Search Convergence Diagnostics",fig.align='center'}
+if1 |> 
+  traces() |> 
+  melt()|> 
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+ geom_line()+
+  guides(color="none")+ facet_wrap(~name,scales="free_y")
+```
+
+We conducted a local search. For parameter settings, we first performed a low-computation test. After observing poor convergence in the log-likelihood, we moderately increased the number of particles and iterations. We ultimately settled on 50 iterations and 1,000 particles, conducting 50 search runs in total. The random walk perturbations for variables $\mu_h,\sigma_{\nu},\sigma_{\eta},\phi$, were set to 0.02, while the perturbations for $G_0$ and $H_0$ were set to 0.1. The diagnostic plot of the model is shown below.
+
+From the diagnostic plot, we can observe that the log-likelihood shows good convergence, with a dispersion range of approximately 100 log units. Additionally, the parameter values across different runs vary significantly, indicating that Multiple sets of different parameters yield similar fitting results.
+
+
+
+```{r, fig.keep='first',echo=FALSE,fig.cap="Figure 6.2: Filter Diagnostics for Local Search",fig.align='center'}
+plot(if1)
+```
+
+By examining the diagnostic plots, we can see that most points are well-fitted, with high conditional log-likelihood values. However, at certain time points, the effective sample size drops below 50, and the conditional log-likelihood also falls into negative values. This indicates that the model does not fit the data well during those periods, suggesting potential model misspecification. 
+
+It is difficult to construct a model that can fit all data points perfectly. We think such situations may arise due to external factors that the model cannot capture, leading to a sharp decline in the weights of most particles. Due to time constraints, we were not able to fine-tune the pomp model. However, we believe that appropriately modifying the parameter distributions in the model assumptions could potentially improve the model’s performance.
+
+```{r echo=FALSE}
+results.if1 <- data.frame(logLik = L.if1[,1],
+                    logLik_se = L.if1[,2],
+                    t(sapply(if1, coef)))
+
+top10 <- results.if1 %>%
+  arrange(desc(logLik)) %>%
+  slice(1:10)
+
+top10 %>%
+  kable(caption = "Table 6.1: Top 10 Parameter Sets From the Local Search") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),position = "center")
+```
+
+```{r echo=FALSE, fig.cap="Figure 6.3: Pair Plot of the Parameters and Log-likelihood",fig.align='center'}
+# pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta,
+#   data=subset(r.if1,logLik>max(logLik)-20))
+
+pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta,
+  data=subset(r.if1,logLik>max(logLik)-100))
+```
+
+We plotted the pair plot for samples with relatively high log-likelihood and selected the 10 parameter sets with the highest log-likelihood. Upon observation, it's difficult to identify any clear signs of convergence among the parameters. Notably, while most values of phi are close to 1, the values of phi corresponding to the highest log-likelihoods are all below 0.9. We will revisit this phenomenon during the global search phase to see if it persists.
+
+## Global Search
+
+```{r echo=FALSE}
+apple_box <- rbind(
+ sigma_nu=c(0.005,0.05),
+ mu_h    =c(-1,0),
+ phi = c(0.5,0.99),
+ sigma_eta = c(0.5,1),
+ G_0 = c(-2,2),
+ H_0 = c(-1,1)
+)
+```
+
+Next, we conducted a global search, keeping the parameters consistent with those from the local search. The search range is as follows:
+
+
+$$
+\left\{
+  \begin{array}{l}
+  \sigma_{\nu} \in [0.005,0.05] \\
+  \mu_h \in [-1,0] \\
+  \phi \in [0.5,0.99] \\
+  \sigma_{\eta} \in [0.5,1] \\
+  G_0 \in [-2,2] \\
+  H_0 \in [-1,1]
+  \end{array}
+\right.
+$$
+
+
+
+
+```{r echo=FALSE}
+stew(file=paste0("box_eval_",run_level,".rda"),{
+  if.box <- foreach(i=1:apple_Nreps_global,
+    .packages='pomp',.combine=c) %dopar% mif2(if1[[1]],
+      params=apply(apple_box,1,function(x)runif(1,x)))
+  L.box <- foreach(i=1:apple_Nreps_global,
+    .packages='pomp',.combine=rbind) %dopar% {
+       logmeanexp(replicate(apple_Nreps_eval, logLik(pfilter(
+         apple.filt,params=coef(if.box[[i]]),Np=apple_Np))), 
+         se=TRUE)}
+})
+timing.box <- .system.time["elapsed"]
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+  t(sapply(if.box,coef)))
+if(run_level>1) write.table(r.box,file="apple_params.csv",
+  append=TRUE,col.names=FALSE,row.names=FALSE)
+```
+
+```{r echo=FALSE,fig.cap="Figure 6.4: Global Search Convergence Diagnostics",fig.align='center'}
+if.box |> 
+  traces() |> 
+  melt()|> 
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+ geom_line()+
+  guides(color="none")+ facet_wrap(~name,scales="free_y")
+```
+
+
+```{r, fig.keep='first',echo=FALSE,fig.cap="Figure 6.5: Filter Diagnostics for Global Search",fig.align='center'}
+plot(if.box)
+```
+```{r echo=FALSE}
+top10.global <- r.box %>%
+  arrange(desc(logLik)) %>%
+  slice(1:10)
+
+top10.global %>%
+  kable(caption = "Table 6.2: Top 10 Parameter Sets From the Global Search") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),position = "center")
+```
+
+From the results, we can see that the highest log-likelihood was still achieved with a phi value around 0.9, reaching up to 3289. The corresponding $\mu_h$ is also approximately -8.6. However, we still cannot rule out the possibility that this parameter set reached the optimal value due to random perturbations. Therefore, further validation is needed. A $\phi$ value closer to 1 might provide a more stable parameter combination.
+
+```{r echo=FALSE,fig.cap="Figure 6.6: Pair Plot of the Parameters and Log-likelihood for Global Search",fig.align='center'}
+pairs(~logLik+log(sigma_nu)+mu_h+phi+sigma_eta+H_0,
+  data=subset(r.box,logLik>max(logLik)-50))
+```
+```{r echo=FALSE}
+bake(file="evaluation.rds",{
+  top5_params <- r.box[order(-r.box$logLik), ][1:5, ]
+
+top5_simulate_results <- list()
+
+for (i in 1:5) {
+  current_params <- top5_params[i, -(1:2)]
+  current_params
+  
+  sims <- simulate(apple.filt, 
+                   params = current_params, 
+                   nsim = 50, 
+                   format = "array", 
+                   include.data = FALSE)
+  
+  loglik_vals <- sapply(sims, function(sim) {
+    logLik(pfilter(apple.filt, params=current_params, Np=apple_Np))
+  })
+
+  loglik_mean <- logmeanexp(loglik_vals, se=TRUE)
+
+  top5_simulate_results[[i]] <- list(
+    index = i,
+    logLik = loglik_mean[1],
+    logLik_se = loglik_mean[2],
+    logLik_all = loglik_vals
+  )
+}
+
+top5_simulate_summary <- do.call(rbind, lapply(top5_simulate_results, function(res) {
+  data.frame(index = res$index,
+             logLik = res$logLik,
+             logLik_se = res$logLik_se)}))
+
+
+top5_simulate_summary %>%
+  kable(caption = "") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),position = "center")
+
+})
+```
+
+Therefore, we selected the 5 parameter sets with the highest log-likelihood and simulated each set 50 times. We then observed the mean log-likelihood to determine whether the improved performance was due to perturbation.
+Based on repeated simulations, the parameter set demonstrates consistent log-likelihood performance, with a mean value of 3288.548 across 50 simulations—closely aligning with the result obtained from the global search.Hence, we decided to use it as the final model parameters.
+
+```{r echo=FALSE}
+top5_params <- r.box[order(-r.box$logLik), ][1:5, ]
+top5_params[1,] %>%
+  kable(caption = "Table 6.3: Final Parameters of Discrete-time Stochastic Volatility Model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),position = "center")
+```
+
+## Profile Likelihood
+
+```{r echo=FALSE}
+r.box |>
+  filter(logLik>max(logLik)-50,logLik_se<5) |>
+  sapply(range) -> box
+```
+
+```{r echo=FALSE}
+freeze(seed=12345,
+  profile_design(
+    phi=seq(0.85,0.99,length=10),
+    lower=box[1,c("sigma_nu","mu_h","sigma_eta","G_0","H_0")],
+    upper=box[2,c("sigma_nu","mu_h","sigma_eta","G_0","H_0")],
+    nprof=15, type="runif"
+  )) -> guesses
+```
+
+```{r echo=FALSE}
+mf1 <- if.box[[1]]
+bake(file="eta_profile.rds",
+  dependson=guesses,{
+    foreach(guess=iter(guesses,"row"), .combine=rbind,
+      .options.future=list(seed=12345)
+    ) %dofuture% {
+      mf1 |>
+        mif2(params=guess,
+          rw.sd=rw_sd(
+          sigma_nu  = apple_rw.sd_rp,
+          mu_h      = apple_rw.sd_rp,
+          sigma_eta = apple_rw.sd_rp,
+          G_0       = ivp(apple_rw.sd_ivp),
+          H_0       = ivp(apple_rw.sd_ivp))) |>
+        mif2(Nmif=10,cooling.fraction.50=apple_cooling.fraction.50) -> mf
+      replicate(
+        10,
+        mf |> pfilter(Np=100) |> logLik()) |>
+        logmeanexp(se=TRUE) -> ll
+      mf |> coef() |> bind_rows() |>
+        bind_cols(loglik=ll[1],loglik.se=ll[2])
+    } -> results
+    attr(results,"ncpu") <- nbrOfWorkers()
+    results
+    
+    
+  }) -> results
+t_phi <- attr(results,"system.time")
+ncpu_phi <- attr(results,"ncpu")
+```
+
+
+```{r include=FALSE}
+results %>% 
+  filter(loglik>max(loglik,na.rm = TRUE)-100) -> all
+
+pairs(~loglik+log(sigma_nu)+mu_h+phi+sigma_eta+H_0,data=all,pch=16)
+```
+
+```{r echo=FALSE,fig.cap="Figure 6.7: Profile Likelihood Over $\\phi$",fig.align='center'}
+
+maxloglik <- max(results$loglik,na.rm=TRUE)
+ci.cutoff <- maxloglik-0.5*qchisq(df=1,p=0.95)
+
+results |>
+  filter(is.finite(loglik)) |>
+  group_by(round(H_0,2)) |>
+  filter(rank(-loglik)<200) |>
+  ungroup() |>
+  ggplot(aes(x=phi,y=loglik))+
+  geom_point()+
+  #geom_smooth(method="loess",span=0.25)+
+  geom_hline(color="red",yintercept=ci.cutoff)
+```
+```{r echo=FALSE,fig.cap="Figure 6.8: Profile Trace for $\\phi$ over $\\mu_h$",fig.align='center'}
+results |>
+  filter(is.finite(loglik)) |>
+  group_by(round(mu_h,2)) |>
+  filter(rank(-loglik)<3) |>
+  ungroup() |>
+  mutate(in_ci=loglik>max(loglik)-1.92) |>
+  ggplot(aes(x=mu_h,y=phi,color=in_ci))+
+  geom_point()+
+  labs(
+    color="inside 95% CI?",
+    x=expression(mu_h),
+    y=expression(phi),
+    title="profile trace"
+  )
+```
+```{r echo=FALSE}
+results |>
+  filter(is.finite(loglik)) |>
+  filter(loglik>max(loglik)-0.5*qchisq(df=1,p=0.95)) |>
+  summarize(min=min(phi),max=max(phi)) -> phi_ci
+```
+```{r,include=FALSE}
+print(phi_ci)
+```
+
+To further investigate the identifiability of the model, we performed a profile likelihood analysis over $\phi$. The results show that the confidence interval is (0.959, 0.99), with only a few points falling within this interval. This suggests that the model exhibits weak identifiability, indicating considerable room for improvement. Additionally, this result helps explain why parameter convergence issues occurred in both the local and global searches. The data points are not sufficient to accurately identify these parameters. More data or improvements in the model structure are needed to further refine the model.
+
+# Analysis and Comparison
+
+
+
+|   |sGARCH_norm| gjrGARCH | Discrete-time Stochastic Volatility Model(Pomp)|
+|--------|------|------|------|
+| Log-likelihood  |3289.09 | 3328.37  | 3288.55 |
+
+We selected the gjrGARCH model as our final choice from the ARMA + GARCH family, and used Global Search to select an optimal set of parameters for the Pomp model. Upon evaluation, the log-likelihood of the gjrGARCH model on the dataset was 3328.27, which is higher than that of the Pomp model at 3288.55. This result is reasonable, as the GARCH model is essentially a regression model relatively simple in nature,thus capable of achieving a better fit. In contrast, the stochastic volatility model offers better interpretability and dynamic structure.
+
+During the diagnostic process, we also found that the Pomp model may suffer from potential misspecification and weak identification issues, which require further improvement. At the same time, we observed that the performance of the standard GARCH model and the Pomp model was very similar. This may be because the gjrGARCH model accounts for fat tails, while we did not implement corresponding enhancements in the original Pomp model. This provides a direction for future improvements to the model.
+
+# Conclusion
+
+In this project, we used ARMA + GARCH models and discrete-time stochastic volatility model (Pomp) to fit the log return data of Apple stock. Through model construction, fitting, and diagnostics, we found that the gjrGARCH model demonstrated better fitting performance than Pomp model. On the other hand, the Pomp model showed potential issues with misspecification and weak identification, which require further investigation.
+
+Our work also has several limitations. Due to time constraints and limited computational resources, we were unable to use a sufficient number of guesses when computing the profile log-likelihood over $\phi$ in the Pomp Model. Additionally, we did not carry out further improvements to the Pomp model. We believe that with more time to refine the model, there is significant room for improvement.
+
+# Ackonwledgments
+
+For this assignment, we referred to previous coursework and peer comments. We primarily built upon the methodology from [@ionides2024f11], but addressed some of its limitations. Notably, we observed that Project 11 placed limited emphasis on ARMA modeling, which is crucial for capturing autocorrelation structures in financial time series. In our approach, we placed greater focus on residual diagnostics, ensuring that the standardized residuals from our GARCH models behaved like white noise. To this end, we employed the Box-Ljung test and ARCH-LM test to verify the absence of serial correlation and remaining ARCH effects. Furthermore, we incorporated EGARCH and GJR-GARCH models to account for asymmetries in volatility—an essential feature when modeling highly volatile assets such as Apple Inc. (AAPL). Unlike previous work that prioritized model selection solely based on AIC, we emphasized the explanatory power and interpretability of the ARMA-GARCH family in capturing key stylized facts of financial data. We also use the comparison idea from [@KentCounty2024], and we added analysis fro potential reasons why ARMA-GARCH models are better than Pomp models.
+
+We also noticed that [@apple2024] used basically the same dataset as we do. Compared to their work and the original POMP model, we added more extensive analysis and diagnostics regarding model performance. Although we did not have enough time to modify the model itself, we still conducted a thorough evaluation. Additionally, we identified certain limitations of the POMP model when applied to this particular dataset.
+
+ChatGPT [@GPT] was used to assist with debugging, formatting and consultation. However, all ideas and methods were independently developed by our team members.
+
+
+# References

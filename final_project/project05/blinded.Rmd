@@ -1,0 +1,835 @@
+---
+title: "Analysis of Malaria Cases in Florida"
+output:
+  html_document:
+    toc: yes
+    code_folding: hide
+---
+
+\newcommand\prob{\mathbb{P}}
+\newcommand\E{\mathbb{E}}
+\newcommand\var{\mathrm{Var}}
+\newcommand\cov{\mathrm{Cov}}
+
+\usepackage{amsmath, amssymb}
+
+-----------
+
+## Introduction
+
+Malaria is one of the most common and infectious diseases on the planet which is a cause of death in Africa and many parts of Asia. It is transmitted by the Anopheles mosquito and can quickly spread in areas that have stagnant water bodies since those are the sites of mosquito reproduction. We decided to analyze this disease using ARMA models and attempt to cater pre-existing POMP models to our dataset to check if they can be reused for malaria.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+library(data.table)
+library(kableExtra)
+library(forecast)
+library(pomp)
+library(tidyverse)
+library(foreach)
+library(doFuture)
+plan(multisession)
+```
+
+The data we have comprises of the monthly reported malaria cases in the state of Florida from 2006 - 2016. Florida is a coastal state with a lot of marshy land area and so presents a good candidate to analyze malaria within the US. The data was retrieved from Project Tycho which provides certain global health data to the public at no cost. It can retrieved at the following link^[Dataset Link: https://zenodo.org/records/11452506], which comes from the original website^[https://www.tycho.pitt.edu/dataset/US.61462000/]
+
+```{r load, include=T}
+malaria_data <- read.csv("./Malaria Counts USA 1951-2017/US.61462000.csv")
+
+# Parse dates
+malaria_data$PeriodStartDate <- as.Date(malaria_data$PeriodStartDate)
+malaria_data$PeriodEndDate <- as.Date(malaria_data$PeriodEndDate)
+
+# Filter for Florida for 2006-16
+malaria_fl <- malaria_data %>%
+  filter(Admin1ISO == "US-FL", !is.na(CountValue)) %>%
+  filter(PartOfCumulativeCountSeries == 0) %>%
+  filter(PeriodStartDate >= as.Date("2006-01-01") & PeriodStartDate <= as.Date("2016-12-31"))
+
+# Weekly Malaria Data
+
+weekly_malaria_full <- malaria_fl %>%
+  group_by(PeriodStartDate) %>%
+  summarise(total_cases = sum(CountValue), .groups = "drop")
+
+
+weekly_all <- tibble(week = seq(min(malaria_fl$PeriodStartDate),
+                                max(malaria_fl$PeriodStartDate),
+                                by = "1 week")) %>%
+  left_join(weekly_malaria_full, by = c("week" = "PeriodStartDate")) %>%
+  mutate(total_cases = replace_na(total_cases, 0))
+
+
+
+p_week_fixed <- ggplot(weekly_all, aes(x = week, y = total_cases)) +
+  geom_col(fill = "darkorange") +
+  labs(title = "Corrected Weekly Malaria Cases in Florida (2006–2016)",
+       x = "Week", y = "Number of Cases") +
+  theme_minimal()
+
+# Monthly Malaria Data
+
+monthly_malaria <- malaria_fl %>%
+  mutate(month = floor_date(PeriodStartDate, "month")) %>%
+  group_by(month) %>%
+  summarise(monthly_cases = sum(CountValue), .groups = "drop")
+
+
+monthly_all <- tibble(month = seq(as.Date("2006-01-01"),
+                                  as.Date("2016-12-01"), by = "month")) %>%
+  left_join(monthly_malaria, by = "month") %>%
+  mutate(monthly_cases = replace_na(monthly_cases, 0))
+
+p_month <- ggplot(monthly_all, aes(x = month, y = monthly_cases)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Monthly Malaria Cases in Florida (2006–2016)",
+       x = "Month", y = "Number of Cases") +
+  theme_minimal()
+
+# Weekly Data for 
+p_week_fixed / p_month
+
+monthly_all <- malaria_data %>%
+  filter(Admin1ISO == "US-FL", !is.na(CountValue),
+         PartOfCumulativeCountSeries == 0,
+         PeriodStartDate >= as.Date("2006-01-01"),
+         PeriodStartDate <= as.Date("2016-12-31")) %>%
+  mutate(month = lubridate::floor_date(PeriodStartDate, "month")) %>%
+  group_by(month) %>%
+  summarise(cases = sum(CountValue), .groups = "drop") %>%
+  mutate(time = 1:n())
+
+monthly_all <- monthly_all %>% mutate(Y = cases)
+```
+
+Looking at the above graph we can see a lot of variation in the monthly cases throughout the ten-year period. Next we will look at the STL decomposition of the data after we convert it into a time-series obejct.
+
+## STL Decomposition
+
+```{r stl, include=T}
+monthly_ts <- ts(monthly_all$Y, frequency = 12, start = c(2006, 1))
+decomposed <- decompose(monthly_ts)
+autoplot(decomposed)
+```
+
+We can clearly see that there is a seasonal component to the time series, so conventional models like SARIMA will be ideal. We also notice a clear non-zero trend in the series which means differencing the series will be advisable and possibly needed. We also notice that the randomness in the data seems to be changing a bit which points to the possibility that the variance might not be fixed. Thus, we will also use a log transformation as a precautionary measure before we do any modelling.
+
+## Periodogram Analysis
+
+We will now look at the smoothed periodogram for the data to find the dominant frequency of the data for seasonality detection purposes.
+
+```{r spec, include=T}
+spectrum <- spec.pgram(
+  monthly_ts,
+  spans = c(5, 5),
+  log = "yes",
+  plot = TRUE,
+  taper = 0.1,
+  main = "Smoothed Periodogram of Monthly Malaria Cases in Florida (2006–2016)",
+  xlab = "Frequency (cycles per year)",
+  ylab = "Log Spectrum",
+  sub = "Vertical red line = 1 cycle per dominant frequency"
+)
+
+# Data frame for analysis
+spec_df <- data.frame(
+  frequency = spectrum$freq,
+  spectrum = spectrum$spec
+)
+
+# Find dominant frequency
+dominant_freq <- spec_df$frequency[which.max(spec_df$spectrum)]
+
+# Vertical line at dominant frequency
+abline(v = dominant_freq, col = "red", lty = 2)
+```
+
+The plot above shows us that the dominant frequency is 0.0888 $month^{-1}$ which translates to a cycle period of 12 months. Thus the seasonality we see in the data is annual. We will also look at the ACF for the original data to see the pattern of correlation and dependence in the series.
+
+```{r}
+acf(monthly_all$Y, main="ACF of Original Series", lag.max=36)
+```
+
+We see that the ACF is quite significant for lags 1 and 12, which is expected due to the seasonality of the data. However, we also see a lot of significant ACF values for other lags up till 14.
+
+## SARIMA Model Selection
+
+Since we now know that a SARIMA model is the best conventional model to go off of, we will use AIC to find the best model for a range of parameter values. We will also perform the log transformation now.
+
+```{r model-selection, include=T}
+monthly_all$log_cases <- log1p(monthly_all$Y)
+
+aic_sarima_table <- function(data, P, Q, p_max = 5, q_max = 5, d = 1, D = 1, s = 12) {
+  results <- data.frame(Model = character(), AIC = numeric(), stringsAsFactors = FALSE)
+
+  for (p in 0:p_max) {
+    for (q in 0:q_max) {
+      for (P_ in 0:P) {
+        for (Q_ in 0:Q) {
+          model_label <- sprintf("SARIMA(%d,%d,%d)(%d,%d,%d)[%d]", p, d, q, P_, D, Q_, s)
+          try({
+            fit <- Arima(data,
+                         order = c(p, d, q),
+                         seasonal = list(order = c(P_, D, Q_), period = s))
+            results <- rbind(results, data.frame(Model = model_label, AIC = fit$aic))
+          }, silent = TRUE)
+        }
+      }
+    }
+  }
+
+  results <- results[order(results$AIC), ]
+  rownames(results) <- NULL
+  return(results)
+}
+
+aic_grid <- aic_sarima_table(monthly_all$log_cases, P = 1, Q = 1, p_max = 1, q_max = 1, d = 1, D = 1, s = 12)
+kable(aic_grid)
+```
+
+We can see from the table above that the best fitting model is the SARIMA(0,1,1)(0,1,1)[12] model. Recall that this model can be written as follows:
+
+$$(1-B)(1-B^{12})Y_t = (1+\theta_1)(1+\Theta_1B^{12})\epsilon_t$$
+
+where $\epsilon_t$ is a Gaussian white noise process with distribution $N(0,\sigma^2)$, B is the backshift operator, and $\theta_1,\Theta_1$ are the Non-Seasonal and Seasonal MA(1) polynomials respectively.
+
+## SARIMA Model Fitting
+
+Thus, we fit the above model and take a look at the residuals and their ACF
+
+```{r model-fit, include=T}
+sarima_011 <- Arima(monthly_all$log_cases, order = c(0,1,1), seasonal = list(order=c(0,1,1), period=12))
+sarima_011
+
+plot(sarima_011$residuals, main="Residuals of SARIMA(0,1,1)(0,1,1)[12]")
+
+acf(sarima_011$residuals, lag.max = 36, main = "ACF of SARIMA(0,1,1)(0,1,1)[12] Residuals")
+```
+
+It is evident from the above plots that the residuals seem to be stationary around 0 and there is no autocorrelation between them which is a promising sign. We will now check the model for invertability and/or causality.
+
+```{r invert, include=T}
+# Get MA(1) and seasonal MA(1) coefficients
+theta1  <- sarima_011$coef["ma1"]
+Theta1  <- sarima_011$coef["sma1"]
+
+# Invertibility check: all roots of MA polynomial must lie outside unit circle
+
+# Non-seasonal MA polynomial: 1 + θ1 * B
+ma_poly <- c(1, theta1)
+ma_roots <- polyroot(ma_poly)
+
+# Seasonal MA polynomial: 1 + Θ1 * B^12
+seasonal_ma_poly <- rep(0, 13)
+seasonal_ma_poly[1] <- 1
+seasonal_ma_poly[13] <- Theta1
+seasonal_ma_roots <- polyroot(seasonal_ma_poly)
+
+# Combine all roots
+all_ma_roots <- c(ma_roots, seasonal_ma_roots)
+
+# Check invertibility
+invertible <- all(Mod(all_ma_roots) > 1)
+cat("Model is", ifelse(invertible, "invertible", "not invertible"), "\n")
+```
+
+We also need to check for normality since our model assumes normality of errors and consequently, the residuals. Hence, we plot a Q-Q plot for the residuals.
+
+```{r plot, include=T}
+qqnorm(sarima_011$residuals, main = "Q-Q Plot of SARIMA Residuals")
+qqline(sarima_011$residuals, col = "red")
+```
+
+We see that the model fit is excellent since almost all of the residual quantiles on the Q-Q plot are close to the standard normal quantiles. This is in addition to the fact that our model is invertible which is again a desired property.
+
+However, it should be noted that since this is a conventional SARIMA model, there still can and most probably will be hidden factors that can describe the nature of the reported cases and the corresponding time series in a more detailed manner. For the same, our next step would be to fit a POMP model based on the existing literature to see if we can explain this data with any existing models for Malaria.
+
+## Initial POMP Model
+
+We select a previously built and verified model for a similar vector-borne disease, dengue, and attempt to use it for our analysis of malaria in Florida. The model selected is a suitable candidate to analyze since both malaria and dengue are diseases spread by mosquitos and often occur in the same place based on a variety of environmental factors. Another reason to work with this model is that it follows the already-learnt and simple procedure of the SEIR framework so interpretations, model fitting and likelihood calculations are easier to perform and make sense of.
+
+We choose the SEIR model with splines from this paper by Subramanian, R. et. al^[Subramanian, R., Romeo-Aznar, V., Ionides, E., Codeço, C. T., & Pascual, M. (2020). Predicting re-emergence times of dengue epidemics at low reproductive numbers: DENV1 in Rio de Janeiro, 1986–1990. Journal of the Royal Society Interface, 17(167), 20200273.] for modelling dengue cases in Rio de Janeiro. There are two primary reasons to choose the SEIR model with splines. The first is because malaria has a latent period where a person can be infected but not become infectious. The second is that due to the nature of the seasonality in the dataset which has a larger and a smaller peak, splines are a natural suitable candidate for modeling both parts and incorporating that seasonality in the mechanistic model.
+
+The model can be defined and described as below:
+
+### State Variables
+
+-   $S(t)$: Susceptible individuals
+-   $E(t)$: Exposed individuals (infected but not yet infectious)
+-   $I(t)$: Infectious individuals
+-   $R(t)$: Recovered individuals
+-   $C(t)$: Cumulative reported cases
+-   $N(t)$: Total human population
+
+### Model Equations
+
+Transitions between compartments are governed by the following
+stochastic processes:
+
+$$
+\begin{aligned}
+\Delta N_{SE} &\sim \text{Binomial}\left(S, 1 - \exp\left(-\lambda(t) \, \Delta t\right)\right) \\
+\Delta N_{EI} &\sim \text{Binomial}\left(E, 1 - \exp\left(-\mu_{EI} \, \Delta t\right)\right) \\
+\Delta N_{IR} &\sim \text{Binomial}\left(I, 1 - \exp\left(-\gamma \, \Delta t\right)\right) \\
+\Delta N_{birth} &\sim \text{Binomial}\left(N, 1 - \exp\left(-r \, \Delta t\right)\right) \\
+\Delta N_{death,X} &\sim \text{Binomial}\left(X, 1 - \exp\left(-\mu_H \, \Delta t\right)\right), \quad X \in \{S, E, I, R\}
+\end{aligned}
+$$
+
+where $\Delta t$ is a small time increment.
+
+\textbf{Population dynamics}:
+
+$$
+N(t+\Delta t) = N(t) + \Delta N_{birth} - (\Delta N_{death,S} + \Delta N_{death,E} + \Delta N_{death,I} + \Delta N_{death,R})
+$$
+
+\textbf{Cumulative cases}:
+
+$$
+C(t+\Delta t) = C(t) + \rho \, \Delta N_{EI}
+$$
+
+### Transmission Rate
+
+The force of infection $\lambda(t)$ is seasonally forced and
+environmentally noisy:
+
+$$
+\lambda(t) = \exp\left( b_1 s_1(t) + b_2 s_2(t) + b_3 s_3(t) + b_4 s_4(t) + b_5 s_5(t) + g \right) \, \frac{I(t) + \epsilon}{N(t)} \, dW(t)
+$$
+
+where:
+
+-   $s_1(t), \dots, s_5(t)$: Periodic B-spline basis functions evaluated
+    at time $t$.
+-   $dW(t)$: Gamma white noise process with mean 1 and variance proportional to
+    $\sigma_P^2$.
+-   $\epsilon$: Small background risk pressure.
+
+### Measurement Model
+
+Reported malaria cases $Y_t$ at time $t$ are modeled as:
+
+$$
+Y_t \sim \text{Poisson}(\rho \, I_t + \varepsilon)
+$$
+
+where $\varepsilon$ is a small positive constant for numerical stability.
+
+
+### Initial Parameter Settings & Description
+
+| Parameter | Value | Notes |
+|:-----------------------|:-----------------------|:-----------------------|
+| $\mu_H$ | $1/900$ | Natural death rate |
+| $\mu_{EI}$ | $1/25.2$ | Progression rate from exposed to infectious (1/latent period) |
+| $\gamma$ | $1/20.5$ | Recovery rate (1/infectious period) |
+| $r$ | $0.135$ | Birth rate |
+| $\rho$ | $0.161$ | Reporting rate |
+| $b_1, b_2, b_3, b_4, b_5$ | Random values $\in [-1,1]$ | Coefficients on spline basis functions controlling seasonal transmission |
+| $g$ | Random value $\in [-6,-3]$ | Baseline log-transmission level |
+| $\sigma_P$ | Random value $\in [0.1,0.3]$ | Environmental noise |
+| $\sigma_M$ | $0.3$ | Fixed measurement overdispersion |
+| $\epsilon$ | $1$ | background risk pressure |
+
+
+```{r spline-def, include=T}
+# Define periodic B-spline basis with 4 basis functions
+periodic.bspline.basis <- function(t, nbasis = 4, degree = 2, period = 12, name = "s") {
+  knots <- seq(0, period, length.out = nbasis + 1)
+  basis <- splines::bs(x = t %% period, knots = knots[-c(1, length(knots))],
+                       degree = degree, intercept = TRUE)
+  colnames(basis) <- sprintf(paste0(name, "_%d"), seq_len(ncol(basis)))
+  as.data.frame(basis)
+}
+```
+
+We first generate the time-varying covariates using a periodic B-spline with 5 degrees of freedom and 5 basis functions over a 12 month cycle. We then define the states and the parameters for the POMP model and also update the C-snippet for `rproc` which define the transition rules.
+
+```{r setup-1, include=T}
+# Generate covariate times and spline covariate table
+covar_times <- seq(from = 0, to = max(monthly_all$time) + 31, by = 1/24)
+basis <- periodic.bspline.basis(t = covar_times, nbasis = 5,
+                                degree = 5, period = 12, name = "s")
+covar_df <- cbind(t = covar_times, basis)
+covar <- covariate_table(covar_df, times = "t")
+
+# Update statenames and paramnames
+statenames <- c("S", "E", "I", "R", "C", "N")
+paramnames <- c("mu_H", "mu_EI", "gamma", "N_0", "rho", 
+                "b_1", "b_2", "b_3", "b_4", "b_5", "g", "sigma_P", "sigma_M",
+                "E_0", "I_0", "R_0", "C_0", "r", "epsilon")
+
+# Update rproc with 5 splines
+rproc <- Csnippet("  
+  double beta = exp(b_1*s_1 + b_2*s_2 + b_3*s_3 + b_4*s_4 + b_5*s_5 + g);
+  double dW = rgammawn(sigma_P, dt);
+  double lambda = beta * ((I + epsilon) / N) * dW;
+
+  double dSE = rbinom(S, 1 - exp(-lambda));
+  double dEI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dIR = rbinom(I, 1 - exp(-gamma * dt));
+  double dBS_N = rbinom(N, 1 - exp(-r * dt));
+
+  S += dBS_N - dSE;
+  E += dSE - dEI;
+  I += dEI - dIR;
+  R += dIR;
+  N += dBS_N;
+
+  double dSM = rbinom(S, 1 - exp(-mu_H * dt));
+  double dEM = rbinom(E, 1 - exp(-mu_H * dt));
+  double dIM = rbinom(I, 1 - exp(-mu_H * dt));
+  double dRM = rbinom(R, 1 - exp(-mu_H * dt));
+
+  S -= dSM; E -= dEM; I -= dIM; R -= dRM;
+  N -= dSM + dEM + dIM + dRM;
+
+  C += rho * dEI;
+")
+```
+
+We now update the C-snippets for the measurement model and the initialization. We also add parameter transformations, essentially making the POMP model ready for use.
+
+```{r setup-2, include=T}
+# Update init
+rinit <- Csnippet("  
+  double total_0 = round(E_0) + round(I_0) + round(R_0);
+  if (total_0 > round(N_0)) {
+    S = 0; E = 0; I = 0; R = round(N_0);
+  } else if (E_0 < 0 || I_0 < 0 || R_0 < 0 || N_0 < 0) {
+    S = 1; E = 0; I = 0; R = 0; N = 1;
+  } else {
+    E = round(E_0); I = round(I_0); R = round(R_0); N = round(N_0);
+    S = N - E - I - R;
+  }
+  C = C_0;
+")
+
+# Update measurement models
+rmeas <- Csnippet("Y = rpois(rho * I + 1e-6);")
+dmeas <- Csnippet("lik = dpois(Y, rho * I + 1e-6, give_log);")
+
+# Update parameter transformations
+par_trans <- parameter_trans(
+  log = c("mu_H", "mu_EI", "gamma", "sigma_P", "sigma_M", "r", "epsilon"),
+  logit = c("rho")
+)
+
+# Assemble pomp model
+seir_spline_model <- pomp(
+  data = monthly_all,  # assumes monthly_all$time and Y
+  times = "time",
+  t0 = 0,
+  rprocess = euler(rproc, delta.t = 1/24),
+  rmeasure = rmeas,
+  dmeasure = dmeas,
+  rinit = rinit,
+  statenames = statenames,
+  paramnames = paramnames,
+  accumvars = "C",
+  covar = covar,
+  obsnames = "Y",
+  partrans = par_trans
+)
+
+coef(seir_spline_model) <- c(
+  mu_H = 1 / 900,             # Mean duration of immunity loss ~900 days (~ 2.5 years)
+  mu_EI = 1 / 25.2,           # From infected to infectious: 25.2 days
+  gamma = 1 / 20.5,           # Recovery time from infection: ~20.5 days
+  N_0 = 100000,               # Initial population size
+  
+  rho = 0.161,                # Reporting rate (16.1%)
+  
+  # Spline + constant log-linear transmission model coefficients
+  b_1 = runif(1, -1, 1),
+  b_2 = runif(1, -1, 1),
+  b_3 = runif(1, -1, 1),
+  b_4 = runif(1, -1, 1),
+  b_5 = runif(1, -1, 1),
+  g   = runif(1, -6, -3),      # Baseline log-transmission rate (shifted to favor lower β)
+  
+  sigma_P = runif(1, 0.1, 0.3),  # Process noise variability
+  sigma_M = 0.3,                # Fixed measurement overdispersion
+  
+  E_0 = 5,                     # Initial Infected
+  I_0 = 1,                     # Initial Infectious
+  R_0 = 0,                     # Initial Recovered
+  C_0 = 0,                     # Initial cumulative cases
+  
+  r = 0.135,                 # Population growth rate
+  epsilon = 1                # background risk parameter
+)
+```
+
+## Local Search on Initial POMP Model
+
+We now perform a local search on our initial model to get likelihood estimates of how well the initial model fits with our data.
+
+```{r local-search-initial, include=T}
+set.seed(42)
+local_mifs <- foreach(i = 1:10, .combine = c,
+                      .options.future = list(seed = TRUE)) %dofuture% {
+  mif2(
+    seir_spline_model,
+    Np = 1000,
+    Nmif = 50,
+    cooling.fraction.50 = 0.5,
+    rw.sd = rw_sd(
+      b_1 = 0.03, b_2 = 0.03, b_3 = 0.03, b_4 = 0.03, b_5 = 0.03,
+      g = 0.03,
+      rho = 0.02,
+      sigma_P = 0.02,
+      epsilon = 0.01,
+      mu_EI = 0.03,
+      gamma = 0.03
+    )
+  )
+}
+
+local_logliks <- foreach(mf = local_mifs, .combine = rbind,
+                         .options.future = list(seed = TRUE)) %dofuture% {
+  ll_rep <- replicate(10, logLik(pfilter(mf, Np = 2000)))
+  ll_summary <- logmeanexp(ll_rep, se = TRUE)
+  as.data.frame(t(coef(mf))) %>%
+    mutate(loglik = ll_summary[1], loglik.se = ll_summary[2])
+}
+
+best_local <- local_logliks %>% arrange(-loglik) %>% slice(1)
+print(best_local)
+```
+
+```{r simulate, include=T}
+# Simulate model with best parameter set
+sim_list <- simulate(seir_spline_model,
+                     params = unlist(best_local[1, 1:length(coef(seir_spline_model))]),
+                     nsim = 100)
+
+sim_df <- bind_rows(lapply(sim_list, as.data.frame), .id = ".id") 
+
+ggplot() +
+  geom_line(data = sim_df, aes(x = time, y = Y, group = .id), alpha = 0.2) +
+  geom_line(data = monthly_all, aes(x = time, y = Y),
+            color = "blue", linewidth = 1.2) +
+  labs(title = "Simulated Trajectories vs Observed Malaria Data",
+       x = "Time (months)", y = "Reported Cases (Y)")
+```
+
+We see that the base model above performs relatively decently (loglik = -332.02) for our data however it is noticeable that the simulations aren't that close to the original data pattern. One way to address this issue and improve the model is to introduce an immigration parameter i.e. a parameter that models or allows for the force of infection to arrive into the SEIR framework from outside. The reason that this can and should be done is because malaria has been endemically eradicated in Florida. Thus, any reported cases of malaria have a high chance of being contracted due to a carrier arriving from outside into the state.
+
+## POMP Model with Immigration
+
+We now introduce the immigration parameter for the POMP model above and modify it to also use that for the force of infection. The modified equations are as follows:
+
+### Stochastic Transitions
+
+$$
+\begin{aligned}
+\Delta N_{SE} &\sim \text{Binomial}\left(S(t), 1 - \exp(-\lambda(t)\Delta t)\right) \\\\
+\Delta N_{EI} &\sim \text{Binomial}\left(E(t), 1 - \exp(-\mu_{EI} \Delta t)\right) \\\\
+\Delta N_{IR} &\sim \text{Binomial}\left(I(t), 1 - \exp(-\gamma \Delta t)\right) \\\\
+\Delta N_{\text{growth}} &\sim \text{Binomial}\left(N(t), 1 - \exp(-r \Delta t)\right) \\\\
+\Delta N_{\text{immigration}} &\sim \text{Poisson}\left(\text{immigration_rate} \cdot \Delta t\right) \\\\
+\Delta N_{\text{death},X} &\sim \text{Binomial}\left(X(t), 1 - \exp(-\mu_H \Delta t)\right), \quad X \in \{S, E, I, R\}
+\end{aligned}
+$$
+
+### Compartment Updates
+
+$$
+\begin{aligned}
+S(t + \Delta t) &= S(t) + \Delta N_{\text{growth}} - \Delta N_{SE} - \Delta N_{\text{death},S} \\\\
+E(t + \Delta t) &= E(t) + \Delta N_{SE} - \Delta N_{EI} - \Delta N_{\text{death},E} \\\\
+I(t + \Delta t) &= I(t) + \Delta N_{EI} + \Delta N_{\text{immigration}} - \Delta N_{IR} - \Delta N_{\text{death},I} \\\\
+R(t + \Delta t) &= R(t) + \Delta N_{IR} - \Delta N_{\text{death},R} \\\\
+N(t + \Delta t) &= N(t) + \Delta N_{\text{growth}} + \Delta N_{\text{immigration}} - \sum_X \Delta N_{\text{death},X}
+\end{aligned}
+$$
+
+### Cumulative Cases and Observation Model
+
+$$
+C(t + \Delta t) = C(t) + \rho \cdot \Delta N_{EI}
+$$
+
+$$
+Y_t \sim \text{Poisson}(\rho \cdot I_t + 10^{-6})
+$$
+
+```{r setup-immi, include=T}
+paramnames <- c(paramnames, "immigration_rate")
+rproc <- Csnippet("
+  double beta = exp(b_1*s_1 + b_2*s_2 + b_3*s_3 + b_4*s_4 + b_5*s_5 + g);
+  double dW = rgammawn(sigma_P, dt);
+  double lambda = beta * ((I + epsilon) / N) * dW;
+
+  double dSE = rbinom(S, 1 - exp(-lambda));
+  double dEI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dIR = rbinom(I, 1 - exp(-gamma * dt));
+  double dBS_N = rbinom(N, 1 - exp(-r * dt));
+
+  double dIMM = rpois(immigration_rate * dt); // New immigrants into I
+
+  S += dBS_N - dSE;
+  E += dSE - dEI;
+  I += dEI - dIR + dIMM;
+  R += dIR;
+  N += dBS_N + dIMM;
+
+  double dSM = rbinom(S, 1 - exp(-mu_H * dt));
+  double dEM = rbinom(E, 1 - exp(-mu_H * dt));
+  double dIM = rbinom(I, 1 - exp(-mu_H * dt));
+  double dRM = rbinom(R, 1 - exp(-mu_H * dt));
+
+  S -= dSM; E -= dEM; I -= dIM; R -= dRM;
+  N -= dSM + dEM + dIM + dRM;
+
+  C += rho * dEI;
+")
+
+coef(seir_spline_model) <- c(
+  mu_H = 1 / 900,             # Mean duration of immunity loss ~900 days (~ 2.5 years)
+  mu_EI = 1 / 25.2,           # From infected to infectious: 25.2 days
+  gamma = 1 / 20.5,           # Recovery time from infection: ~20.5 days
+  N_0 = 100000,               # Initial population size
+  
+  rho = 0.161,                # Reporting rate (16.1%)
+  
+  # Spline + constant log-linear transmission model coefficients
+  b_1 = runif(1, -1, 1),
+  b_2 = runif(1, -1, 1),
+  b_3 = runif(1, -1, 1),
+  b_4 = runif(1, -1, 1),
+  b_5 = runif(1, -1, 1),
+  g   = runif(1, -6, -3),      # Baseline log-transmission rate (shifted to favor lower β)
+  
+  sigma_P = runif(1, 0.1, 0.3),  # Process noise variability
+  sigma_M = 0.3,                # Fixed measurement overdispersion
+  
+  E_0 = 5,                     # Initial Infected
+  I_0 = 1,                     # Initial Infectious
+  R_0 = 0,                     # Initial Recovered
+  C_0 = 0,                     # Initial cumulative cases
+  
+  r = 0.135,                  # Population growth rate (assumed small but positive)
+  epsilon = 1,                # background risk parameter
+  
+  immigration_rate = 5        # immigration rate for infection pressure
+)
+```
+
+## Local Search: POMP Model with Immigration
+
+We now perform a local search of our extended POMP model to compare against the initial model.
+
+```{r local-search-immi, include=T}
+set.seed(42)
+
+# Run 10 mif2 iterations in parallel
+local_mifs <- foreach(i = 1:10, .combine = c,
+                      .options.future = list(seed = TRUE)) %dofuture% {
+  mif2(
+    seir_spline_model,
+    Np = 1000,
+    Nmif = 50,
+    cooling.fraction.50 = 0.5,
+    rw.sd = rw_sd(
+      b_1 = 0.03, b_2 = 0.03, b_3 = 0.03,
+      b_4 = 0.03, b_5 = 0.03,
+      g = 0.03,
+      rho = 0.02,
+      sigma_P = 0.02,
+      epsilon = 0.01,
+      mu_EI = 0.03,
+      gamma = 0.03,
+      immigration_rate = 0.02
+    )
+  )
+}
+
+# Filtered likelihoods using pfilter
+local_logliks <- foreach(mf = local_mifs, .combine = rbind,
+                         .options.future = list(seed = TRUE)) %dofuture% {
+  ll_rep <- replicate(10, logLik(pfilter(mf, Np = 2000)))
+  ll_summary <- logmeanexp(ll_rep, se = TRUE)
+  as.data.frame(t(coef(mf))) %>%
+    mutate(loglik = ll_summary[1], loglik.se = ll_summary[2])
+}
+
+# Pick best one
+best_local <- local_logliks %>% arrange(-loglik) %>% slice(1)
+print(best_local)
+```
+
+We see that the POMP model with immigration yields the same likelihood (-332.02). This points a possibility of the model being stuck in a local maxima/minima in the likelihood surface due to our initial parameter estimates. Thus, to test out this hypothesis, we will do a global search over the parameter space to rule out any bias due to the parameters.
+
+## Global Search: POMP Model with Immigration
+
+```{r global-search, include=T}
+set.seed(478)
+base_params <- coef(seir_spline_model)
+global_inits <- replicate(20, {
+  c(base_params, c(
+    b_1 = runif(1, -2, 2),
+    b_2 = runif(1, -2, 2),
+    b_3 = runif(1, -2, 2),
+    b_4 = runif(1, -2, 2),
+    b_5 = runif(1, -2, 2),
+    g   = runif(1, -10, 10),
+    rho = runif(1, 0.05, 0.5),
+    sigma_P = runif(1, 0.05, 0.3),
+    mu_EI = 1 / runif(1, 10, 25),
+    gamma = 1 / runif(1, 10, 25),
+    r = runif(1, 0, 0.001),
+    epsilon = runif(1, 0.5, 2),
+    mu_H = 1 / runif(1, 800, 1200),
+    immigration_rate = runif(1, 0, 10)
+  ))
+}, simplify = FALSE)
+
+# Global Search
+global_mifs <- foreach(init = global_inits, .combine = c,
+                       .options.future = list(seed = TRUE)) %dofuture% {
+  mif2(
+    seir_spline_model,
+    params = init,
+    Np = 2000,
+    Nmif = 100,
+    cooling.fraction.50 = 0.7,
+    rw.sd = rw_sd(
+      b_1 = 0.05, b_2 = 0.05, b_3 = 0.05, b_4 = 0.05, b_5 = 0.05,
+      g = 0.05,
+      rho = 0.02,
+      sigma_P = 0.02,
+      mu_EI = 0.01,
+      gamma = 0.01,
+      r = 0.01,
+      epsilon = 0.01,
+      mu_H = 0.01,
+      immigration_rate = 0.02
+    )
+  )
+}
+
+# Filtered loglikelihood using pfilter
+global_logliks <- foreach(mf = global_mifs, .combine = rbind,
+                          .options.future = list(seed = TRUE)) %dofuture% {
+  ll_rep <- replicate(10, logLik(pfilter(mf, Np = 4000)))
+  ll_summary <- logmeanexp(ll_rep, se = TRUE)
+
+  df <- as.data.frame(t(coef(mf)))
+  colnames(df) <- make.unique(colnames(df))
+  
+  df %>%
+    mutate(loglik = ll_summary[1], loglik.se = ll_summary[2])
+}
+
+# Pick best global config
+best_global <- global_logliks %>% arrange(-loglik) %>% slice(1)
+print(best_global)
+```
+
+We saw a marginal increase in the likelihood estimates but not enough to say that the hypothesis of being stuck in a part of the likelihood space is true. We will look at the simulations from our model as well and compare them to the data to assess model fit qualitatively. We will also look at the trace plots for the model parameters as diagnostics.
+
+```{r trace-plots, include=T}
+global_mifs |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x = iteration, y = value, group = .L1, color = factor(.L1))) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(~name, scales = "free_y") +
+  labs(title = "Global Search - Parameter Traces",
+       x = "Iteration", y = "Parameter Value") +
+  guides(color = "none")
+```
+
+```{r parameter-loglik-plots, include=T}
+global_logliks %>%
+  pivot_longer(cols = c(b_1, b_2, b_3, b_4, b_5, g, rho, sigma_P,
+                        immigration_rate),
+               names_to = "param", values_to = "value") %>%
+  ggplot(aes(x = value, y = loglik)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~param, scales = "free_x") +
+  labs(title = "Global Search: Log-Likelihood vs Parameters")
+```
+
+```{r simulate-global, include=T}
+# Simulate model with best parameter set
+sim_list <- simulate(seir_spline_model,
+                     params = unlist(
+                       best_global[1, 1:length(coef(seir_spline_model))]
+                       ),
+                     nsim = 100)
+
+# Combine results into one dataframe with .id
+sim <- bind_rows(lapply(sim_list, as.data.frame), .id = ".id")
+
+# Plot
+ggplot() +
+  geom_line(data = sim, aes(x = time, y = Y, group = .id), alpha = 0.2) +
+  geom_line(data = monthly_all, aes(x = time, y = Y),
+            color = "blue", linewidth = 1.2) +
+  labs(title = "Simulated Trajectories vs Observed Malaria Cases (Global Search)",
+       x = "Time (months)", y = "Reported Cases")
+```
+
+The final POMP model with immigration diagramatically is as follows:
+
+```{r, echo=FALSE, out.width="80%"}
+library(DiagrammeR)
+grViz("
+digraph SEIR {
+  graph [layout = dot, rankdir = LR]
+  node [shape = ellipse, fontname = Helvetica]
+
+  S [label = 'S (Susceptible)']
+  E [label = 'E (Exposed)']
+  I [label = 'I (Infectious)']
+  R [label = 'R (Recovered)']
+  C [label = 'Cumulative Cases']
+  Import [label = 'Imported Infections', shape=rectangle]
+  Birth [label = 'Births (r)', shape=rectangle]
+
+  # Main transitions
+  S -> E [label = 'Transmission (λ(t))']
+  E -> I [label = 'Latent Progression (μ_EI)']
+  I -> R [label = 'Recovery (γ)']
+  E -> C [label = <Reporting (ρ × ΔN<SUB>EI</SUB>)>]
+
+  # Imported infections go to I
+  Import -> I [label = 'Poisson(immigration_rate)']
+
+  # Births and deaths
+  Birth -> S [label = '', style=dashed]
+  S -> S [label = 'Deaths (μ_H)', style=dashed]
+  E -> E [label = 'Deaths (μ_H)', style=dashed]
+  I -> I [label = 'Deaths (μ_H)', style=dashed]
+  R -> R [label = 'Deaths (μ_H)', style=dashed]
+}
+")
+```
+
+## Comparison and Future Work
+
+After fitting both POMP models, we see that using immigration in our model explains the model fit better using loglikelihood estimation. This also supports the assumption that the force of infection (infection) is coming from outside Florida and that there are barely any people who contracted malaria in Florida endemically. This corresponds to people travelling outside Florida and coming back with the infection or infectious tourists visiting Florida. Thus, introducing an immigration parameter in the SEIR framework was the right call and will possibly be needed for our model to fit well to our dataset.
+
+From the POMP model, we also see that because of the trace plot diagnostics, our model is weakly identifiable for our parameters because the iterations don't converge in value even though the loglikelihood seems to be converging to -328. Overall, it seems that the SEIR POMP model formulated for dengue shows promise in explaining the prevalence of malaria in Florida from 2006 to 2016. However, as seen in the difference in likelihoods between the SARIMA model (-96) and the POMP models (-328), there is a significant scope for improvement in the mechanistic models — particularly in choosing initial parameter estimates and formulating the transition rules within the SEIR framework for vector-borne diseases.
+
+## Future Work and Acknowledgements
+
+Future work for this project would revolve around these issues and refining the model structure. This includes exploring alternative parameter estimation techniques, such as iterated filtering with improved initial conditions or Bayesian methods, as well as incorporating additional covariates like climate data and mosquito population dynamics to better capture transmission patterns. Enhancing the transition rules by explicitly modeling mosquito compartments may  significantly improve the model’s realism and predictive accuracy. These improvements would contribute to a more robust and informative model of malaria dynamics in Florida.
+
+Our project builds and differentiates itself from a similar project, the MERS Project^[https://ionides.github.io/531w24/final_project/project15/blinded.html] of 2024 in the sense that the project utilized the total population for their SEIRS model as the total population of camels rather than humans, effectively focusing on the cases spread by a camel to a human rather than human to human. Our project however focuses on human to human infection spread by considering an indirect latent force of infection via mosquitos. Another similar project is the 2020 project on Dengue in Peru^[https://ionides.github.io/531w20/final_project/Project10/final.html] which uses the taught SIR framework to model a very similar mosquito-borne disease, dengue. This framework doesn't take into account the latent force of infection via the transmission of mosquitos which we have attempted to account for in our model, thus effectively attempting to improve on it substantially. The project also didn't use any splines or seasonality related components which might be important for vector-borne diseases, which we have attempted to address in our project.
+
+## General References and Readings
+- Doolan, D. L., Dobaño, C., & Baird, J. K. (2009). Acquired immunity to malaria. Clinical microbiology reviews, 22(1), 13–36. https://doi.org/10.1128/CMR.00025-08
+- Laneri, K., Bhadra, A., Ionides, E. L., Bouma, M., Dhiman, R. C., Yadav, R. S., & Pascual, M. (2010). Forcing versus feedback: epidemic malaria and monsoon rains in northwest India. PLoS computational biology, 6(9), e1000898.
+- Beloconi, A., Nyawanda, B. O., Bigogo, G., Khagayi, S., Obor, D., Danquah, I., … & Vounatsou, P. (2023). Malaria, climate variability, and interventions: modelling transmission dynamics. Scientific Reports, 13(1), 7367.
+- AI tools such as ChatGPT were used for code cleaning, modfication, model understanding, equation writing and general editing and debugging.

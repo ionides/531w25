@@ -1,0 +1,1825 @@
+---
+title: "olatility analysis on Bitcoin returns: a Fear & Greed Index perspective"
+output:
+  html_document:
+    code_folding: hide  # Hides R code by default (click to show)
+    toc: true           # Enables Table of Contents (TOC)
+    toc_float: true     # Makes TOC float on the side
+    number_sections: true # Numbers sections (e.g., 1, 1.1)
+date: "2025-04-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Cryptocurrency markets have become a major topic in both technology and finance, gaining widespread attention over the past decade. A cryptocurrency (crypto) is a digital currency designed to work through a computer network that is not reliant on any central authority(government or bank) to uphold or maintain it. <a id="footnote-1-ref" href="#footnote-1"><sup>[1]</sup></a> While this decentralization is a step towards a unified global currency, it is often perceived differently depending on an individual's personal beliefs. Thus emotions and sentiment often drive significant fluctuations in the Cryptocurrency market. 
+
+The Fear & Greed (FG) Index (0-100, 0 signifies extreme fear, and 100 signifies extreme greed) is a widely used sentiment indicator that aggregates data from sources such as social media trends, derivatives activity, and market composition to provide a daily snapshot of prevailing market psychology. It was widely popularized by CNN for their use with the S&P 500, which allowed intelligent investors to make strategic decisions. This statement was bolstered by a research paper in the International Journal for Multidisciplinary Research <a id="footnote-2-ref" href="#footnote-2"><sup>[2]</sup></a> which claims "The Fear and Greed Index is commonly used to choose the right time of entry in the market, as it interprets investor sentiment in terms of greed and fear, with intelligent investors often waiting for the index to be low (indicating fear) before entering the market and considering exit when the index is high (indicating greed)"
+
+This motivated us to explore the influence of the fear and greed index on cryptocurrency market volatility, and assess whether integrating it into our existing volatility models could enhance their performance. For our research project, we have chosen to conduct a volatility analysis on Bitcoin returns. Our research revolves around identifying the best model to capture the volatility in the returns, and incorporate this Fear and Greed Index to our analysis. We have six models that we will analyze in this project:</br>
+i) GARCH model</br>
+ii) POMP model (Breto model- This model was incorporated for Final year projects in 2022 by groups 14 and 22)<a id="footnote-6-ref" href="#footnote-6"><sup>[6]</sup></a><a id="footnote-7-ref" href="#footnote-7"><sup>[7]</sup></a></br>
+iii) POMP Model incorporating FG Index</br>
+iv) POMP Model incorporating FG Index with t-Distribution </br>
+v) Simple Stochastic Volatility model 
+vi) Simple Stochastic Volatility model with t-Distribution
+
+
+## Exploratory Data Analysis
+We use Daily Bitcoin Data to perform Volatility Analysis, as project 6 from Midterm 2025 highlights that Bitcoin's monthly data exhibits no significant volatility. Moreover, We also extract the Fear and greed index for the same time period on a daily basis. 2020 marked a pivotal turning point for the Bitcoin market, as the year witnessed both an unprecedented global financial shock and a surge in institutional adoption, catalyzed by the March 2020 crash, the third Bitcoin halving, and a growing recognition of Bitcoin as a legitimate asset by major investors and corporations<a id="footnote-3-ref" href="#footnote-3"><sup>[3]</sup></a>. Therefore, our analysis covers the period from January 2020 through April 2025. 
+
+- Fear & Greed (FG) Index (source: https://api.alternative.me/fng/?limit=2000)
+- Bitcoin Close price (source: https://coincodex.com/crypto/bitcoin/)
+
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+# install.packages("httr")
+# install.packages("jsonlite")
+library(httr)
+library(jsonlite)
+
+# Call the API
+response <- GET("https://api.alternative.me/fng/?limit=2000")
+
+# Parse JSON content
+content_json <- content(response, as = "text", encoding = "UTF-8")
+fng_data <- fromJSON(content_json)
+
+# Convert the 'data' field to a data frame
+fng_df <- fng_data$data
+#head(fng_df)
+
+fng_df$date <- as.POSIXct(as.numeric(fng_df$timestamp), origin = "1970-01-01", tz = "UTC")
+fng_df$value <- as.numeric(fng_df$value)
+
+fng_final <- fng_df[, c("date", "value")]
+names(fng_final) <- c("time", "FG")  # Rename for consistency
+#head(fng_final)
+
+
+```
+ 
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+
+# Define the start and end dates as POSIXct objects
+start_date <- as.POSIXct("2020-01-01", tz = "UTC")
+end_date   <- as.POSIXct("2025-04-06", tz = "UTC")
+
+# Subset the data
+fng_subset <- fng_final[fng_final$time >= start_date & fng_final$time <= end_date, ]
+
+# Check the first few rows of the subset
+#head(fng_subset)
+
+
+```
+
+```{r echo=FALSE, warning=FALSE, results =FALSE}
+
+# Read the bitcoin dataset (ensure strings are not converted to factors)
+bitcoin_ts <- read.csv('bitcoin_2020-01-01_2025-04-06.csv', stringsAsFactors = FALSE)
+
+# Convert the 'Start' column to a POSIXct date object 
+bitcoin_ts$Start <- as.POSIXct(bitcoin_ts$Start, format = "%Y-%m-%d", tz = "UTC")
+
+# Merge the F&G index dataset (fng_final) with the bitcoin dataset on matching dates
+merged_df <- merge(fng_final, bitcoin_ts, by.x = "time", by.y = "Start")
+
+# Select only the required columns and rename them:
+# "date" for the matching date, "fg_index" for the Fear & Greed Index, and "bitcoin_close" for the Bitcoin closing price.
+merged_df <- merged_df[, c("time", "FG", "Close")]
+names(merged_df) <- c("date", "fg_index", "bitcoin_close")
+
+
+```
+ 
+```{r echo=FALSE, warning=FALSE}
+# --- Process Bitcoin Data ---
+library(ggplot2)
+bitcoin <- merged_df
+names(bitcoin) <- c("Date", "FG", "Price")
+bitcoin$Date <- as.Date(bitcoin$Date)
+bitcoin <- bitcoin[order(bitcoin$Date), ]
+log_returns <- diff(log(bitcoin$Price))
+logd <- log_returns - mean(log_returns)
+
+# Create a dataframe for log returns (for ggplot)
+log_df <- data.frame(
+  Date = bitcoin$Date[-1],
+  logd = logd
+)
+# Set margins for all plots
+par(mar = c(5, 4, 2, 5))
+
+# Plot 1: Bitcoin Price Over Time
+plot(bitcoin$Price ~ bitcoin$Date, type = "l", 
+     xlab = "Years", ylab = "Bitcoin ($)"
+     )
+title(main = "Daily Bitcoin Prices (2020-2025)", sub = "Figure 1. Daily Bitcoin Prices (2020-2025)")
+```
+
+From the above graph, we observe major bull runs in 2021 and 2024, reaching its highest peak in early 2025 around $100,000 . We also notice that after the 2021 peak around $60,000-$70,000, Bitcoin went through a prolonged bear market throughout 2022 before gradually recovering in 2023 and then surging dramatically in 2024.
+
+```{r echo=FALSE, warning=FALSE}
+par(mar = c(5, 4, 2, 5))
+# Plot 2: Log-Transformed Bitcoin Price
+plot(log(bitcoin$Price) ~ bitcoin$Date, type = "l", 
+     xlab = "Years", ylab = "Log(Bitcoin Price)"
+     )
+title(main = "Log-Transformed Bitcoin Prices (2020-2025)", sub = "Figure 2. Log-Transformed Bitcoin Prices (2020-2025)")
+```
+
+The logarithmic transformation helps stabilize the Bitcoin data, but looking at demeaned log returns gives us a clearer picture of the actual volatility. Though the log-transformed chart appears more consistent, analyzing how returns deviate from their mean reveals the true nature of its volatility during this period.
+
+The demeaned log returns for bitcoin are calculated as follows (notes from lecture 17 were used for this):</br>
+The log return $y^*_n$ is the continuously-compounded return from n-1 to n.
+$$
+y^*_n \;=\; \log(z_n)\;-\;\log(z_{n-1})
+$$
+Then we compute the average of these returns over n = 2,...,N:</br>
+$$
+\bar y^* \;=\; \frac{1}{N-1}\sum_{k=2}^N y^*_k
+$$
+We finally subtract the sample mean from each log return, to obtain the series $\{a^*_n\}$, which represents the demeaned log return.
+$$
+a^*_n \;=\; y^*_n \;-\;\bar y^*
+$$
+
+```{r echo=FALSE, warning=FALSE}
+par(mar = c(5, 4, 2, 5))
+# Plot 3: Demeaned Log Returns of Bitcoin
+plot(bitcoin$Date[-1], logd, type = "l", 
+     xlab = "Years", ylab = "Demeaned Log Return", 
+     main = "Demeaned Log Returns of Bitcoin")
+title(main = "Demeaned Log Returns of Bitcoin", sub = "Figure 3. Demeaned Log Returns of Bitcoin")
+```
+
+```{r echo=FALSE, warning=FALSE}
+par(mar = c(5, 4, 2, 5))
+# Plot 4: Fear and Greed Index
+plot(bitcoin$FG ~ bitcoin$Date, type = "l",
+     xlab = "Years", ylab = "Fear & Greed Index",
+     ylim = c(0,100)
+     )
+title(main = "Bitcoin Fear & Greed Index Over Time", sub = "Figure 4. Bitcoin Fear & Greed Index Over Time")
+```
+
+The above graph shows notable sentiment swings in the Bitcoin market from 2020 to 2025. A major peak in early 2021 aligns with Bitcoin’s price surge and heightened optimism, fueled by large institutional investments such as Tesla’s $1.5 billion Bitcoin purchase and MicroStrategy’s aggressive accumulation, which signaled growing corporate acceptance and drove the index toward extreme greed.<a id="footnote-9-ref" href="#footnote-9"><sup>[9]</sup></a>In contrast, a sharp trough appears in mid-2022, reflecting a period of extreme fear following the collapse of the Terra/Luna ecosystem, which erased billions in market value and triggered a wave of bankruptcies and distrust across the crypto sector.<a id="footnote-3-ref" href="#footnote-10"><sup>[10]</sup></a>. These peaks and troughs illustrate how external shocks, major corporate actions, and regulatory developments have repeatedly shaped investor sentiment in the Bitcoin market.
+
+
+```{r echo=FALSE, warning=FALSE}
+set.seed(1)
+
+bitcoin <- merged_df
+names(bitcoin) <- c("Date", "FG", "Price")
+
+# Convert the Date column to Date type (assuming it's in "YYYY-MM-DD" format)
+bitcoin$Date <- as.Date(bitcoin$Date)
+
+# Order the data by Date (if not already sorted)
+bitcoin <- bitcoin[order(bitcoin$Date), ]
+#head(bitcoin)
+#
+```
+
+
+# Modeling and Results
+
+## GARCH Analysis
+
+We perform the Engle's ARCH LM test and the box test, to statistically determine the presence of conditional heteroscedasticity.
+
+In an Engle ARCH LM test, a low p-value, typically considered to be less than 0.05, indicates the presence of ARCH effects (autoregressive conditional heteroscedasticity).
+
+The Engle's ARCH test examines the following hypothesis:<a id="footnote-4-ref" href="#footnote-4"><sup>[4]</sup></a>
+
+$$
+H_0: \text{There are no ARCH() effects (homoscedasticity)}
+$$
+
+$$
+H_1: \text{ARCH effects are present (heteroscedasticity)}
+$$
+
+
+```{r warning=FALSE, message=FALSE}
+library(quantmod)
+library(FinTS)
+library(rugarch)
+
+bitcoin_ret <- diff(log(bitcoin$Price))
+bitcoin_ret_demeaned <- bitcoin_ret - mean(bitcoin_ret)
+# 1. Fetch & prep
+# getSymbols("BTC-USD", from = "2020-01-01")
+# ret <- diff(log(Cl(`BTC-USD`)))[-1]
+ret <- bitcoin_ret
+
+# 2. Preliminary tests
+print( ArchTest(ret, lags = 12) )
+print( Box.test(ret^2, lag = 12, type = "Ljung-Box") )
+
+```
+
+The intial box test and ARCH lm test on the demanded return data have p-value smaller than the significance level, thus suggest it is likely to have conditional heteroskedasticity. Then we do GARCH model selecting by ranging both p and q from 1 to 3 and select the best one with the highest loglikelihood.  
+
+
+```{r warning=FALSE, message=FALSE}
+
+# 1. Set up the grid of (p,q)
+maxP <- 3
+maxQ <- 3
+grid <- expand.grid(p = 1:maxP, q = 1:maxQ)
+
+# prepare columns for fit statistics
+grid$aic    <- NA_real_
+grid$bic    <- NA_real_
+grid$logLik <- NA_real_
+
+# 2. Loop over each (p,q), fit garch, record stats
+for(i in seq_len(nrow(grid))) {
+  p <- grid$p[i]
+  q <- grid$q[i]
+  
+  fit <- try(
+    tseries::garch(ret, order = c(p, q), trace = FALSE),
+    silent = TRUE
+  )
+  
+  if (!inherits(fit, "try-error")) {
+    # extract log‐likelihood, AIC, BIC
+    ll       <- as.numeric(stats::logLik(fit))
+    grid$logLik[i] <- ll
+    grid$aic[i]    <- AIC(fit)     # = -2*ll + 2*k
+    grid$bic[i]    <- BIC(fit)     # = -2*ll + log(n)*k
+  }
+}
+
+# 3. Rank by AIC (or BIC)
+grid_ordered_aic <- grid[order(grid$aic), ]
+grid_ordered_bic <- grid[order(grid$bic), ]
+
+# 4. View the top 5 models by AIC
+print(head(grid_ordered_aic, 5), digits = 4)
+
+# 5. Refit & diagnose your chosen “best” model, say (p*, q*)
+best_garch <- grid_ordered_aic[1, ]
+cat("Best by AIC → p =", best_garch$p, " q =", best_garch$q, " loglik =", best_garch$logLik, "\n")
+
+best_fit <- tseries::garch(ret,
+                           order = c(best_garch$p, best_garch$q),
+                           trace = FALSE)
+
+# 6. Check residual diagnostics
+# pull out the standardized residuals (a plain vector/ts)
+stdresid <- residuals(best_fit)
+
+# Box test
+Box.test(stdresid^2, lag = 12, type = "Ljung-Box")
+
+# ARCH LM test (Engle’s test)
+print(FinTS::ArchTest(stdresid, lags = 12))
+```
+
+Among all the candidate specifications, the GARCH(3,1) model provided the best fit to the Bitcoin return series, it achieves the highest log‑likelihood of 3894.515. Even though we cannot directly compare loglikelihood from tseries::garch [5], we can still argue that GARCH(3,1) is the most promising one. To assess whether any volatility clustering remained mispecified, we conducted both the Ljung–Box test on the squared standardized residuals and Engle’s ARCH LM test on the standardized residuals. In both cases, the p‑values exceeded 0.8, thus they showed no evidence to reject the null hypothesis of no remaining ARCH effects. 
+
+
+```{r warning=FALSE, message=FALSE}
+acf(residuals(best_fit),
+    lag.max   = 30,
+    main      = "ACF of Std. Residuals",
+    sub = "Figure 5. QQ plot of Standardized Residuals using GARCH(3,1)",
+    na.action = na.omit)
+
+acf(residuals(best_fit)^2,
+    lag.max   = 30,
+    main      = "ACF of Squared Std. Residuals",
+    sub = "Figure 6. QQ plot of Standardized Residuals using GARCH(3,1)",
+    na.action = na.omit)
+
+qqnorm(stdresid, 
+       main = "QQ Plot of Standardized Residuals",
+       sub = "Figure 7. QQ plot of Standardized Residuals using GARCH(3,1)")
+
+qqline(stdresid, 
+       col  = "steelblue", 
+       lwd  = 2)
+```
+
+This statistical finding corresponds to the autocorrelation function plots: the ACF of the standardized residuals and of their squares each display only the trivial spike at lag 0, with all subsequent lags falling comfortably within the 95% confidence bands.
+A QQ plot of the standardized residuals further corroborates the adequacy of the GARCH(3,1) specification,  except for slight heavy‑tail deviations. 
+Putting all together, we conclude that GARCH(3,1) model can well capture the time‑varying volatility structure of Bitcoin returns.
+
+## Basic Breto Model
+
+### Model Formulation
+The basic Breto model is defined as below:
+$$
+Y_n = \epsilon_n \text{exp}(H_n/2) \\
+H_n = \mu_h(1-\phi) + \phi H_{n-1} + \beta_{n-1} R_n \text{exp}(-H_{n-1}/2)+\omega_n \\
+G_n = G_{n-1} + \nu_n \\
+\beta_n = Y_n \sigma_{\eta} \sqrt{1-\phi^2}\\
+R_n = \frac{\exp{(2G_n)}-1}{\exp{(2G_n)}+1}
+$$
+where $Y_n$ is the observed value, $H_n$ is the log volatility, $G_n$ is Gaussian random walk, $X_n = \{G_n$, $H_n\}$ is the latent state, $R_n$ is a random walk on transformed scale, $\epsilon_n \sim^{i.i.d} \mathcal{N}(0, 1)$,  $\nu_n \sim^{i.i.d} \mathcal{N}(0, \sigma_\nu^2)$,  $\omega_n \sim^{i.i.d} \mathcal{N}(0, \sigma_\eta^2(1-\phi^2)(1-R_n^2))$. The model captures leverage effects through $R_n$ and has time-varying volatility.
+
+
+
+```{r warning=FALSE, message=FALSE}
+set.seed(2050320976)
+### Define the Model Components for pomp
+
+# Set state names and parameter names
+bitcoin_statenames <- c("H", "G", "Y_state")
+bitcoin_rp_names   <- c("sigma_nu", "mu_h", "phi", "sigma_eta")
+bitcoin_ivp_names  <- c("G_0", "H_0")
+bitcoin_paramnames <- c(bitcoin_rp_names, bitcoin_ivp_names)
+
+rproc1 <- "
+  double beta, omega, nu;
+  omega = rnorm(0, sigma_eta * sqrt(1 - phi * phi) * sqrt(1 - tanh(G) * tanh(G)));
+  nu = rnorm(0, sigma_nu);
+  G += nu;
+  beta = Y_state * sigma_eta * sqrt(1 - phi * phi);
+  H = mu_h * (1 - phi) + phi * H + beta * tanh(G) * exp(-H/2) + omega;
+"
+
+rproc2.sim <- "
+  Y_state = rnorm(0, exp(H/2));
+"
+rproc2.filt <- "
+  Y_state = covaryt;
+"
+
+bitcoin_rproc_sim <- paste(rproc1, rproc2.sim)
+bitcoin_rproc_filt <- paste(rproc1, rproc2.filt)
+
+bitcoin_rinit <- "
+  G = G_0;
+  H = H_0;
+  Y_state = rnorm(0, exp(H/2));
+"
+
+bitcoin_rmeasure <- "
+  y = Y_state;
+"
+
+bitcoin_dmeasure <- "
+  lik = dnorm(y, 0, exp(H/2), give_log);
+"
+
+library(pomp)
+bitcoin_partrans <- parameter_trans(
+  log = c("sigma_eta", "sigma_nu"),
+  logit = "phi"
+)
+
+bitcoin.filt <- pomp(
+  data = data.frame(y = bitcoin_ret_demeaned,
+                    time = 1:length(bitcoin_ret_demeaned)),
+  statenames = bitcoin_statenames,
+  paramnames = bitcoin_paramnames,
+  times = "time",
+  t0 = 0,
+  covar = covariate_table(
+    time = 0:length(bitcoin_ret_demeaned),
+    covaryt = c(0, bitcoin_ret_demeaned),
+    times = "time"
+  ),
+  rmeasure = Csnippet(bitcoin_rmeasure),
+  dmeasure = Csnippet(bitcoin_dmeasure),
+  rprocess = discrete_time(step.fun = Csnippet(bitcoin_rproc_filt), delta.t = 1),
+  rinit = Csnippet(bitcoin_rinit),
+  partrans = bitcoin_partrans
+)
+
+params_test <- c(
+  sigma_nu = exp(-4.5),
+  mu_h = -0.25,
+  phi = expit(4),      # expit(x) = 1 / (1 + exp(-x)); ensure it's defined or use plogis(4)
+  sigma_eta = exp(-0.07),
+  G_0 = 0,
+  H_0 = 0
+)
+
+
+sim1.sim <- pomp(bitcoin.filt,
+                 statenames = bitcoin_statenames,
+                 paramnames = bitcoin_paramnames,
+                 rprocess = discrete_time(step.fun = Csnippet(bitcoin_rproc_sim), delta.t = 1)
+)
+
+sim1.sim <- simulate(sim1.sim, seed = 1, params = params_test)
+
+sim1.filt <- pomp(sim1.sim,
+                  covar = covariate_table(
+                    time = c(timezero(sim1.sim), time(sim1.sim)),
+                    covaryt = c(obs(sim1.sim), NA),
+                    times = "time"
+                  ),
+                  statenames = bitcoin_statenames,
+                  paramnames = bitcoin_paramnames,
+                  rprocess = discrete_time(step.fun = Csnippet(bitcoin_rproc_filt), delta.t = 1)
+)
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+
+run_level <- 3
+bitcoin_Np <-           switch(run_level,   50, 1e3, 2e3)
+bitcoin_Nmif <-         switch(run_level,    5, 100, 200)
+bitcoin_Nreps_eval <-   switch(run_level,    4,  10,  20)
+bitcoin_Nreps_local <-  switch(run_level,    5,  20,  20)
+bitcoin_Nreps_global <- switch(run_level,    5,  20, 100)
+
+library(doParallel)
+cores <- as.numeric(Sys.getenv("SLURM_NTASKS_PER_NODE", unset = NA))
+if (is.na(cores)) cores <- detectCores()
+registerDoParallel(cores)
+library(doRNG)
+registerDoRNG(34118892)
+
+## Particle Filtering and Log-likelihood Evaluation
+stew(file = paste0("pf1_bitcoin_", run_level, ".rda"), {
+  t.pf1 <- system.time(
+    pf1 <- foreach(i = 1:bitcoin_Nreps_eval,
+                   .packages = "pomp") %dopar% 
+      pfilter(sim1.filt, Np = bitcoin_Np)
+  )
+})
+L.pf1 <- logmeanexp(sapply(pf1, logLik), se = TRUE)
+print(L.pf1)
+
+```
+
+### Local Search
+```{r warning=FALSE, message=FALSE}
+library(foreach)
+library(doParallel)
+## Local Search using mif2
+
+bitcoin_rw.sd_rp  <- 0.02
+bitcoin_rw.sd_ivp <- 0.1
+bitcoin_cooling.fraction.50 <- 0.5
+bitcoin_rw.sd <- rw_sd(
+  sigma_nu  = bitcoin_rw.sd_rp,
+  mu_h      = bitcoin_rw.sd_rp,
+  phi       = bitcoin_rw.sd_rp,
+  sigma_eta = bitcoin_rw.sd_rp,
+  G_0       = ivp(bitcoin_rw.sd_ivp),
+  H_0       = ivp(bitcoin_rw.sd_ivp)
+)
+
+
+stew(file = paste0("mif1_bitcoin_", run_level, ".rda"), {
+  t.if1 <- system.time({
+    if1 <- foreach(i = 1:bitcoin_Nreps_local,
+                   .packages = "pomp", .combine = c) %dopar%
+      mif2(bitcoin.filt,
+           params = params_test,
+           Np = bitcoin_Np,
+           Nmif = bitcoin_Nmif,
+           cooling.fraction.50 = bitcoin_cooling.fraction.50,
+           rw.sd = bitcoin_rw.sd)
+    L.if1 <- foreach(i = 1:bitcoin_Nreps_local,
+                     .packages = "pomp", .combine = rbind) %dopar%
+      logmeanexp(
+        replicate(bitcoin_Nreps_eval, logLik(pfilter(bitcoin.filt,
+                                                     params = coef(if1[[i]]), Np = bitcoin_Np))), se = TRUE)
+  })
+})
+r.if1 <- data.frame(logLik = L.if1[, 1], logLik_se = L.if1[, 2],
+                    t(sapply(if1, coef)))
+if (run_level > 1)
+  write.table(r.if1, file = "bitcoin_params_model1_local.csv",
+              append = TRUE, col.names = FALSE, row.names = FALSE)
+
+print(summary(r.if1$logLik, digits = 5))
+
+pairs(~logLik + sigma_nu + mu_h + phi + sigma_eta,
+      data = r.if1,
+      cex.labels  = 1.3,     # axis label size
+      cex         = 0.8,     # point size
+      font.main   = 2        # bold title
+      )
+title(sub = "Figure 8. Local Search Pairwise Relationships: logLik vs. Model Parameters")
+plot(if1)
+title(sub = "Figure 9. Filter Diagnostics and MIF2 Convergence Diagnostics")
+
+```
+
+It is observed that the effective sample size almost exactly equals the total number of particles (Nₚ = 2000), which implies minimal weight degeneracy and essentially equal contribution from every particle in the filter, though it occasionally becomes far smaller than 2000. 
+
+The log‐likelihood trajectory clearly bifurcates into two distinct convergence paths, revealing a multimodal likelihood surface. The superior branch peaks at approximately 4070, roughly 100 log‐likelihood units above the inferior branch at 4010. From the pairwise scatter plots, it is evident that only $\mu_h$ and $\phi$ drive this bifurcation—none of the other parameters exhibit comparable clustering around the two modes. Around the better local maximum, $\phi$ fluctuates near 0.5 and $\mu_h$ stabilizes around -7. In contrast, near the lower maximum, $\phi$ converges toward to 1 while $\mu_h$ varies widely. This can be explained by their joint appearance in the term $(1-\phi) \mu_h$ in the above formula: when when $\phi$ around 1, $(1-\phi)$ approaches 0, and $\mu_h$ has little influence on the likelihood. This interaction highlights a potential identifiability issue between $\mu_h$ and $\phi$. A more exhaustive global search will be required to confirm and fully map out this multimodal structure.
+ 
+### Global Search
+```{r warning=FALSE, message=FALSE}
+
+bitcoin_box <- rbind(
+  sigma_nu  = c(0.005, 0.05),
+  mu_h      = c(-1, 0),
+  phi       = c(0.95, 0.99),
+  sigma_eta = c(0.5, 1),
+  G_0       = c(-2, 2),
+  H_0       = c(-1, 1)
+)
+
+stew(file = paste0("box_eval_bitcoin_", run_level, ".rda"), {
+  if.box <- foreach(i = 1:bitcoin_Nreps_global,
+                    .packages = "pomp", .combine = c) %dopar% 
+    mif2(if1[[1]],
+         params = apply(bitcoin_box, 1, function(x) runif(1, x)))
+  L.box <- foreach(i = 1:bitcoin_Nreps_global,
+                   .packages = "pomp", .combine = rbind) %dopar% {
+                     logmeanexp(replicate(bitcoin_Nreps_eval, logLik(pfilter(
+                       bitcoin.filt, params = coef(if.box[[i]]), Np = bitcoin_Np))),
+                       se = TRUE)
+                   }
+})
+
+timing.box <- .system.time["elapsed"]
+
+r.box <- data.frame(logLik = L.box[, 1], logLik_se = L.box[, 2],
+                    t(sapply(if.box, coef)))
+if (run_level > 1)
+  write.table(r.box, file = "bitcoin_params_model1_global.csv",
+              append = TRUE, col.names = FALSE, row.names = FALSE)
+print(summary(r.box$logLik, digits = 5))
+
+pairs(
+  ~ logLik + sigma_nu + mu_h + phi + sigma_eta + H_0,
+  data        = r.box,
+  cex.labels  = 1.3,     # axis label size
+  cex         = 0.8,     # point size
+  font.main   = 2        # bold title
+)
+title(sub = "Figure 10. Global Search Pairwise Relationships: logLik vs. Model Parameters")
+
+
+plot(if.box)
+title(sub = "Figure 11. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+
+Under the global search, the log‑likelihood still follows two distinct convergence trajectories, although the gap between them is now smaller. The maximum log‑likelihood concentrate more closely around approximately 4100. Moreover, $\phi$ and $\mu_h$ have similar patterns to those of local search. Around the better local maximum, $\phi$ fluctuates near 0.5 and $\mu_h$ stabilizes around -7. In contrast, near the lower maximum, $\phi$ converges toward to 1 while $\mu_h$ varies widely. The explanation is the same as shown above. The difference appears in the convergence plot of $\sigma_\eta$. The $\sigma_\eta$ converges around 1 when near the superior local maximum, whereas, some paths go wild with $\sigma_\eta$ being very large, this only happens near the worse local maximum. The rest parameters seem to have no particular issues. 
+
+We conclude that (1) the multimodality indeed exists and (2) $\phi$ and $\mu_h$ have major influence on the optimum of loglikelihood compared to the rest parameters. Thus, we are interested in exploring a new global search over a narrower box that results in higher loglikelihood value, and want to observe whether the loglikelihood can be further improved.  
+
+### New Global Search
+As discussed above, we use a smaller box of parameter values that leads to the superior local maximum to further analyze the superior local maximum. In particular, we only change the ranges of $\phi$ and $\mu_h$ aerbecause these two seem to drive the divergenece of the loglikelihood. We start the new global search starting points of $\phi$ ranging from 0.45 to 0.5 and $\mu_h$ ranging from -7.75 to -7.4. The values are selected based on the current value ranges near the superior local maximum. 
+
+```{r warning=FALSE, message=FALSE}
+
+bitcoin_box_new <- rbind(
+  sigma_nu  = c(0.005, 0.05),
+  mu_h      = c(-7.75, -7.4),
+  phi       = c(0.45, 0.5),
+  sigma_eta = c(0.5, 1),
+  G_0       = c(-2, 2),
+  H_0       = c(-1, 1)
+)
+
+stew(file = paste0("box_eval_bitcoin_", run_level, ".rda"), {
+  if.box.new <- foreach(i = 1:bitcoin_Nreps_global,
+                    .packages = "pomp", .combine = c) %dopar% 
+    mif2(if1[[1]],
+         params = apply(bitcoin_box_new, 1, function(x) runif(1, x)))
+  L.box.new <- foreach(i = 1:bitcoin_Nreps_global,
+                   .packages = "pomp", .combine = rbind) %dopar% {
+                     logmeanexp(replicate(bitcoin_Nreps_eval, logLik(pfilter(
+                       bitcoin.filt, params = coef(if.box.new[[i]]), Np = bitcoin_Np))),
+                       se = TRUE)
+                   }
+})
+
+timing.box.new <- .system.time["elapsed"]
+
+r.box.new <- data.frame(logLik = L.box.new[, 1], logLik_se = L.box.new[, 2],
+                    t(sapply(if.box.new, coef)))
+if (run_level > 1)
+  write.table(r.box.new, file = "bitcoin_params_model1_global_new.csv",
+              append = TRUE, col.names = FALSE, row.names = FALSE)
+print(summary(r.box.new$logLik, digits = 5))
+
+pairs(
+  ~ logLik + sigma_nu + mu_h + phi + sigma_eta + H_0,
+  data        = r.box.new,
+  cex.labels  = 1.3,     # axis label size
+  cex         = 0.8,     # point size
+  font.main   = 2        # bold title
+)
+title(sub = "Figure 12. Global Search Pairwise Relationships: logLik vs. Model Parameters")
+
+plot(if.box.new)
+title(sub = "Figure 13. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+
+Compared to the previous section, the log‑likelihood curve now exhibits a single, well‑defined peak whose value closely matches the global optimum identified in our earlier, broader search. This close agreement gives us strong confidence that we have indeed captured the true global maximum.
+
+## Modified Breto Model
+### Model Formulation
+This model propounds a novel approach to incorporate the FG index to the Breto model used above. This helps the pomp model capture the effects of the market sentiment, and enables us determine if it helps us to find a model that fits the data better than the existing Breto model.In the original model, the leverage is defined as
+
+$$
+R_n=\frac{\exp(2G_n)-1}{\exp(2G_n)+1},
+$$
+
+with
+$$
+G_n=G_{n-1}+v_n.
+$$
+
+The returns follow
+
+$$
+Y_n=\exp\Bigl(\frac{H_n}{2}\Bigr)\epsilon_n,
+$$
+
+and the log-volatility $H_n$ evolves as
+
+$$
+H_n=\mu_h(1-\phi)+\phi\,H_{n-1}+\beta_{n-1}R_n\exp\Bigl(-\frac{H_{n-1}}{2}\Bigr)+\omega_n,
+$$
+
+Now we incorporate the Fear and Greed Index into the Log Volatility term to capture the effects of the market sentiment. And we use a parameter gamma for it. However, this inclusion of fear and greed index should not disturb the stationarity in the log volatility. Thus we verify if the Fear and Greed index can be included without disturbing the stationarity, by plotting its ACF.
+
+```{r warning=FALSE, message=FALSE}
+# Generate the ACF plot for the FNG Index
+acf(fng_subset$FG, lag.max = 50, main = "ACF of the Fear and Greed Index", sub = "Figure 14 ACF of the Fear and Greed Index")
+```
+
+This plot reveals that the Fear and Greed Index is non-stationary, as evidenced by the slowly decaying autocorrelation function (ACF) values that remain significantly above the significance bounds even at high lag orders. Thus we transform the FNG index by first scaling the FnG index around its central value of 50, and then we difference it to obtain a stationary series.
+
+$$
+\mathrm{FNG}_{\mathrm{scaled}}=\frac{I_n-50}{50},
+$$
+$$
+\Delta \mathrm{FNG}_{\mathrm{scaled},\,n}=\mathrm{FNG}_{\mathrm{scaled},\,n}-\mathrm{FNG}_{\mathrm{scaled},\,n-1}.
+$$
+
+```{r warning=FALSE, message=FALSE}
+# Create the transformed variable FNG_scaled = (FG - 50) / 50
+fng_subset$FNG_scaled <- (fng_subset$FG - 50) / 50
+
+# Generate the ACF plot for the transformed variable FNG_scaled
+acf(fng_subset$FNG_scaled, lag.max = 50, main = "ACF of Transformed FNG_scaled", sub = "Figure 15 ACF of Transformed FNG_scaled")
+
+# Generate the ACF plot for the transformed variable FNG_scaled
+diff_FGT <- diff(fng_subset$FNG_scaled)
+acf(diff_FGT, lag.max = 50, main = "ACF of Differenced Transformed FNG_scaled", sub = "Figure 16 ACF of Differenced Transformed FNG_scaled")
+```
+
+Thus we can now include this differenced and transformed Fear and Greed Index to the lag volatility term, to preserve it's stationarity.
+
+
+The modified volatility process that incorporates market sentiment becomes:
+
+$$
+H_n=\mu_h(1-\phi)+\phi\,H_{n-1}+\beta_{n-1}R_n\exp\Bigl(-\frac{H_{n-1}}{2}\Bigr)+\gamma\,\Delta \mathrm{FNG}_{\mathrm{scaled},\,n-1}+\omega_n.
+$$
+
+The FNG index captures the prevailing market sentiment (fear versus greed) and may offer valuable insights for volatility modeling. We will evaluate the performance of this modified Breto model relative to the original specification.
+
+Moreover, this inclusion helps us analyze if the market volatility is signficantly driven by fear or greed. 
+$$\Delta \mathrm{FNG}{\mathrm{scaled},n-1} = \frac{I_{n-1}-50}{50} - \frac{I_{n-2}-50}{50}$$
+Since the FG index $I_n$ ranges from 0 (extreme fear) to 100 (extreme greed) with 50 as neutral:
+
+When $I_n < 50$: Fear dominates, resulting in negative $\mathrm{FNG}_{\mathrm{scaled}}$</br>
+When $I_n > 50$: Greed dominates, resulting in positive $\mathrm{FNG}_{\mathrm{scaled}}$
+
+Therefore:</br>
+If $\gamma < 0$: Negative changes in sentiment (increasing fear) increase volatility, while positive changes (increasing greed) decrease volatility</br>
+If $\gamma > 0$: Positive changes in sentiment (increasing greed) increase volatility, while negative changes (increasing fear) decrease volatility.
+
+This directly explains how the sign of $\gamma$ indicates whether fear or greed is the stronger driver of market volatility.
+
+```{r warning=FALSE, message=FALSE}
+# This code was adapted from the lecture notes, and Final project 22 from W22.
+# --- Load required libraries ---
+library(lubridate)
+library(knitr)
+library(fpp2)
+library(tseries)
+library(pomp)
+library(doParallel)
+library(doRNG)
+library(ggplot2)
+
+# --- Process FnG Data ---
+fng_subset$FNG_scaled <- (fng_subset$FG - 50) / 50
+
+diff_FGT <- diff(fng_subset$FNG_scaled)
+
+# --- Process Bitcoin Data ---
+bitcoin <- merged_df
+names(bitcoin) <- c("Date", "FG", "Price")
+bitcoin$Date <- as.Date(bitcoin$Date)
+bitcoin <- bitcoin[order(bitcoin$Date), ]
+log_returns <- diff(log(bitcoin$Price))
+logd <- log_returns - mean(log_returns)
+
+
+# --- Prepare the Covariate Data ---
+covar_df <- data.frame(
+  time = 0:length(logd),
+  covaryt = c(0, logd),           
+  dFNG    = c(0, diff(fng_subset$FNG_scaled))  
+)
+
+# --- Define the Modified Bretto Model in pomp ---
+statenames <- c("H", "G", "Y_state")
+rp_names   <- c("sigma_nu", "mu_h", "phi", "sigma_eta", "gamma_fng")
+ivp_names  <- c("G_0", "H_0")
+paramnames <- c(rp_names, ivp_names)
+
+rproc_modified <- "
+double beta, omega, nu;
+omega = rnorm(0, sigma_eta * sqrt(1 - phi*phi) * sqrt(1 - tanh(G)*tanh(G)));
+nu = rnorm(0, sigma_nu);
+G += nu;
+beta = Y_state * sigma_eta * sqrt(1 - phi*phi);
+H = mu_h*(1 - phi) + phi*H + beta * tanh(G) * exp(-H/2) + gamma_fng * dFNG + omega;
+"
+
+rproc2.sim <- "
+Y_state = rnorm(0, exp(H/2));
+"
+rproc2.filt <- "
+Y_state = covaryt;
+"
+rproc.sim  <- paste(rproc_modified, rproc2.sim)
+rproc.filt <- paste(rproc_modified, rproc2.filt)
+
+rinit <- "
+G = G_0;
+H = H_0;
+Y_state = rnorm(0, exp(H/2));
+"
+
+rmeasure <- "
+y = Y_state;
+"
+
+dmeasure <- "
+lik = dnorm(y, 0, exp(H/2), give_log);
+"
+
+partrans <- parameter_trans(
+  log = c("sigma_eta", "sigma_nu"),
+  logit = "phi"
+)
+
+filt_modified <- pomp(
+  data = data.frame(y = logd, time = 1:length(logd)),
+  statenames = statenames,
+  paramnames = paramnames,
+  times = "time",
+  t0 = 0,
+  covar = covariate_table(covar_df, times = "time"),
+  covarnames = c("covaryt", "dFNG"),
+  rmeasure = Csnippet(rmeasure),
+  dmeasure = Csnippet(dmeasure),
+  rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1),
+  rinit = Csnippet(rinit),
+  partrans = partrans
+)
+```
+
+### Initial Simulation
+We performed this step by modifying the parameters with random guesses to fit the data, and after conducting several simulations we  observed that the model fits the data reasonably well for these parameter values:</br>
+$\sigma_\nu = exp(-7.5)$</br>
+$\mu_h = -7.3$</br>
+$\phi = expit(1.7)$</br>
+$\sigma_\eta = exp(0.06)$</br>
+$\gamma = 0.3$</br>
+$G_0 = 0$</br>
+$H_0 = 0$</br>
+```{r warning=FALSE, message=FALSE}
+params_test <- c(
+sigma_nu = exp(-7.5),
+mu_h = -7.3,
+phi = expit(1.7),
+sigma_eta = exp(0.06),
+gamma_fng = 0.3,
+G_0 = 0,
+H_0=0
+)
+
+sim_modified.sim <- pomp(filt_modified,
+statenames=statenames,
+paramnames=paramnames,
+rprocess = discrete_time(step.fun = Csnippet(rproc.sim), delta.t = 1)
+)
+
+sim_modified.sim <- simulate(sim_modified.sim, seed = 1, params = params_test)
+
+plot(Y_state ~ time, data = sim_modified.sim, type = 'l', col = 'green',
+     main = "Figure 17. Observed vs. Simulated Bitcoin Returns", ylab = "Returns")
+
+lines(logd, col = 'black')
+legend('topright', c("Observed Returns", "Simulated Returns"),
+       col = c("black", "green"), lty = c(1, 1), cex = 0.8)
+
+```
+
+Before moving on to iterated filtering, we confirm that the basic particle filter executes without errors and produces a finite log‑likelihood, following the procedure in Chapte-15 of lecture notes. This ensures our filtering code is correctly set up prior to parameter fitting.
+
+```{r warning=FALSE, message=FALSE}
+sim_modified.filt_modified <- pomp(sim_modified.sim,
+covar = covariate_table(covar_df, times = "time"),
+statenames=statenames,
+paramnames=paramnames,
+rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1)
+)
+
+
+run_level <- 3
+Np <- switch(run_level, 100, 1e3, 2e3)
+Nmif <- switch(run_level, 10, 100, 200)
+Nreps_eval <- switch(run_level, 4, 10, 20)
+Nreps_local <- switch(run_level, 10, 20, 20)
+Nreps_global <- switch(run_level, 10, 20, 100)
+library(doParallel)
+library(doRNG)
+library(iterators)
+library(doFuture)
+plan(multisession)
+
+cores <- as.numeric(Sys.getenv("SLURM_NTASKS_PER_NODE", unset = NA))
+if (is.na(cores)) cores <- detectCores()
+registerDoParallel(cores)
+library(doRNG)
+registerDoRNG(34118892)
+
+pf1 <- foreach(i=1:Nreps_eval,
+.packages='pomp') %dopar% pfilter(sim_modified.filt_modified,Np=Np)
+
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+
+# Display results
+cat("Log-likelihood:", round(L.pf1[1], 2), "±", round(L.pf1[2], 2), "\n")
+
+```
+
+The above obtained log-likelihood, is a good place to start with. We'll now move forward with our investigation by first conducting a local search, followed by a global search.
+
+### Local Search
+
+We employed the Iterated Filtering (IF2) algorithm to systematically explore the parameter space surrounding our initial point. This approach allows us to conduct local searches with controlled random walk steps, revealing the likelihood landscape in the vicinity of our starting parameter values.
+
+```{r warning=FALSE, message=FALSE}
+# --- Local Search via IF2 (Iterated Filtering) ---
+rw.sd_rp <- 0.02   # Random-walk standard deviation for parameters
+rw.sd_ivp <- 0.1   # For initial latent values
+cooling.fraction.50 <- 0.5
+rw.sd_vals <- rw_sd(
+  sigma_nu  = rw.sd_rp,
+  mu_h      = rw.sd_rp,
+  phi       = rw.sd_rp,
+  sigma_eta = rw.sd_rp,
+  gamma_fng = rw.sd_rp,
+  G_0       = ivp(rw.sd_ivp),
+  H_0       = ivp(rw.sd_ivp)
+)
+
+if2_list <- foreach(i = 1:Nreps_local,
+  .packages = 'pomp', .combine = c) %dopar%
+  mif2(filt_modified,
+       params = params_test,
+       Np = Np,
+       Nmif = Nmif,
+       cooling.fraction.50 = cooling.fraction.50,
+       rw.sd = rw.sd_vals)
+
+# Evaluate each IF2 replicate using the particle filter.
+logLik_results <- foreach(i = 1:Nreps_local,
+  .packages = 'pomp', .combine = rbind) %dopar%
+  logmeanexp(
+    replicate(Nreps_eval,
+              logLik(pfilter(filt_modified, params = coef(if2_list[[i]]), Np = Np))),
+    se = TRUE
+  )
+
+results_df <- data.frame(logLik = logLik_results[, 1],
+                         logLik_se = logLik_results[, 2],
+                         do.call(rbind, lapply(if2_list, coef)))
+print(summary(results_df$logLik, digits = 5))
+```
+
+We obtain a maximum likelihood score of `r round(max(results_df$logLik),2)` which suggests that the modified model with the fear and greed index actually does a great job in capturing the volatility. Moreover, we can further examine whether fear or greed predominantly drives volatility by analyzing the gamma parameter. As established in the model formulation section, the positive gamma value we obtained by performing local search indicates that greed exerts a stronger influence on market volatility than fear. However this statement can be verified only if we observe the results of global search to align with that of local search. Thus we do not reach a conclusion about the effect of the Fear and Greed Index at this point.
+
+```{r warning=FALSE, message=FALSE}
+best_index <- which.max(results_df$logLik)
+best_params <- results_df[best_index, ]
+
+print(best_params)
+```
+
+```{r warning=FALSE, message=FALSE}
+pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta+gamma_fng,
+data=subset(results_df,logLik>max(logLik)-70))
+title(sub = "Figure 18. Local Search Pairwise Relationships: logLik vs. Model Parameters")
+```
+
+The pairplot reveals distinct parameter clustering patterns, particularly noticeable for logLik values around 4070-4075, indicating multiple local optima in the parameter space explored by the IF2 algorithm.
+```{r warning=FALSE, message=FALSE}
+plot(if2_list)
+title(sub = "Figure 19. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+
+### Global Search
+
+Now we conduct a global search to explore the broader parameter space and avoid getting trapped in local optima.Multiple random starting points within these bounds are generated to initiate independent IF2 searches across the parameter space. This global optimization approach allows us to compare results with our local search findings and establish greater confidence in parameter estimates. The consistency between global and local searches would provide stronger evidence regarding the true nature of parameter values, particularly the gamma parameter's sign.
+
+After analyzing our local search findings, we establish parameter boundaries for our global search as follows:
+$$
+\sigma_\nu \in [0.000002,\,0.001], \\
+\mu_h \in [-8.5,\,-6.5], \\
+\phi \in [0.45,\,0.75], \\
+\sigma_\eta \in [0.9,\,1.4], \\
+\gamma_{fng} \in [-2,\,2], \\
+G_0 \in [-2,\,2], \\
+H_0 \in [-1,\,1].
+$$
+
+```{r warning=FALSE, message=FALSE}
+registerDoRNG(34118892)
+
+box <- rbind(
+sigma_nu=c(0.000002,0.001),
+mu_h=c(-8.5,-6.5),
+phi = c(0.45,0.75),
+sigma_eta = c(0.9,1.4),
+gamma_fng = c(-2,2),
+G_0 = c(-2,2),
+H_0 = c(-1,1)
+)
+
+
+
+if.box <- foreach(i = 1:Nreps_global,
+  .packages = 'pomp', .combine = c) %dopar% {
+    # Generate random parameters between min and max bounds
+    start_params <- mapply(function(lo, hi) runif(1, lo, hi), 
+                          box[,1], box[,2])
+    names(start_params) <- rownames(box)
+    
+    # Run mif2 with the randomly generated starting parameters
+    mif2(if2_list[[1]], params = start_params)
+}
+L.box <- foreach(i=1:Nreps_global,
+.packages='pomp',.combine=rbind) %dopar% {
+logmeanexp(replicate(Nreps_eval, logLik(pfilter(filt_modified,params=coef(if.box[[i]]),Np=Np))),
+se=TRUE)}
+
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+t(sapply(if.box,coef)))
+
+print(summary(r.box$logLik,digits=5))
+# Identify the row with the highest log-likelihood
+best_index <- which.max(r.box$logLik)
+
+# Extract the best parameter set (including logLik and logLik_se)
+best_params <- r.box[best_index, ]
+
+# Print the best parameter set
+cat("Best log likelihood score:", best_params$logLik, "\n")
+
+print(best_params)
+```
+
+The obtained maximum log likelihood score of `r round(max(best_params$logLik),2)` shows promising results for the new model. Another interesting observation is that the gamma parameter associated with the highest log‑likelihood score is negative, which contrasts with our local‑search results. Thus, the global search leads us to conclude that fear drives market volatility more than greed.
+
+```{r warning=FALSE, message=FALSE}
+pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta+gamma_fng+H_0+G_0,
+data=subset(r.box,logLik>max(logLik)-50))
+title(sub = "Figure 20. Global Search Pairwise Relationships: logLik vs. Model Parameters")
+
+```
+
+
+
+The scatter‐plot matrix of all parameter draws within 50 log‐likelihood units of the maximum shows that the high‐likelihood region is quite tightly concentrated in each dimension. We see evident clusters concentrated around the MLE for all the parameters. Most strikingly, $\gamma_{fng}$ is uniformly negative among these top draws, reinforcing that fear, not greed, drives volatility. 
+
+```{r warning=FALSE, message=FALSE}
+best=subset(r.box,logLik==max(logLik))
+
+plot(if.box)
+title(sub = "Figure 21. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+
+The filter diagnostics show that the effective sample size (ESS) hovers near its upper bound most of the time,yet it still suffers sharp drops (occasionally below 50) at a few time points, and the corresponding conditional log‑likelihood plunges as well.This suggests that there are brief episodes in the data, that the current model struggles to explain.
+
+On the MIF2 convergence plots, the overall log‑likelihood climbs steeply early on and levels off by roughly 50–75 iterations, indicating that the global search has essentially converged. $\sigma_\nu$ converges to zero, $\sigma_\eta$ converges as well. However we observe some fluctuations with $\phi$ and $mu_h$. $\gamma_{fng}$ remains stably negative across most trajectories, reinforcing our conclusion that fear drives volatility, more than greed. We also observe that $H_0$ does not converge, however $G_0$ converges close to zero.
+
+## Modified Breto Model With Stuent's t-Distribution
+
+Financial returns often exhibit heavy tails, which is why t-distributions are popular for modeling them. Therefore, we delved deeper into investigating the performance of this modified Breto model by implementing a variation that uses a Student's t-distribution with 5 degrees of freedom, rather than a normal distribution. We experimented with different values for degrees of freedom ranging from 3-25, and found that the model captured the data best when the residuals were assumed to come from a t-distribution with 5 degrees of freedom.
+
+```{r warning=FALSE, message=FALSE}
+# This code was adapted from the lecture notes, and Final project 22 from W22.
+# --- Load required libraries ---
+library(lubridate)
+library(knitr)
+library(fpp2)
+library(tseries)
+library(pomp)
+library(doParallel)
+library(doRNG)
+library(ggplot2)
+
+# --- Process FnG Data ---
+fng_subset$FNG_scaled <- (fng_subset$FG - 50) / 50
+
+diff_FGT <- diff(fng_subset$FNG_scaled)
+
+# --- Process Bitcoin Data ---
+bitcoin <- merged_df
+names(bitcoin) <- c("Date", "FG", "Price")
+bitcoin$Date <- as.Date(bitcoin$Date)
+bitcoin <- bitcoin[order(bitcoin$Date), ]
+log_returns <- diff(log(bitcoin$Price))
+logd <- log_returns - mean(log_returns)
+
+
+# --- Prepare the Covariate Data ---
+covar_df <- data.frame(
+  time = 0:length(logd),
+  covaryt = c(0, logd),           
+  dFNG    = c(0, diff(fng_subset$FNG_scaled))  
+)
+
+# --- Define the Modified Bretto Model in pomp ---
+statenames <- c("H", "G", "Y_state")
+rp_names   <- c("sigma_nu", "mu_h", "phi", "sigma_eta", "gamma_fng")
+ivp_names  <- c("G_0", "H_0")
+paramnames <- c(rp_names, ivp_names)
+
+rproc_modified <- "
+double beta, omega, nu;
+omega = rnorm(0, sigma_eta * sqrt(1 - phi*phi) * sqrt(1 - tanh(G)*tanh(G)));
+nu = rnorm(0, sigma_nu);
+G += nu;
+beta = Y_state * sigma_eta * sqrt(1 - phi*phi);
+H = mu_h*(1 - phi) + phi*H + beta * tanh(G) * exp(-H/2) + gamma_fng * dFNG + omega;
+"
+
+rproc2.sim <- "
+Y_state = rt(5.0) * exp(H/2);
+"
+rproc2.filt <- "
+Y_state = covaryt;
+"
+rproc.sim  <- paste(rproc_modified, rproc2.sim)
+rproc.filt <- paste(rproc_modified, rproc2.filt)
+
+rinit <- "
+G = G_0;
+H = H_0;
+Y_state = rt(5.0) * exp(H/2);
+"
+
+rmeasure <- "
+y = Y_state;
+"
+
+dmeasure <- "
+lik = dt((y / exp(H/2)), 5.0, 1) - log(exp(H/2));
+"
+
+partrans <- parameter_trans(
+  log = c("sigma_eta", "sigma_nu"),
+  logit = "phi"
+)
+
+filt_modified <- pomp(
+  data = data.frame(y = logd, time = 1:length(logd)),
+  statenames = statenames,
+  paramnames = paramnames,
+  times = "time",
+  t0 = 0,
+  covar = covariate_table(covar_df, times = "time"),
+  covarnames = c("covaryt", "dFNG"),
+  rmeasure = Csnippet(rmeasure),
+  dmeasure = Csnippet(dmeasure),
+  rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1),
+  rinit = Csnippet(rinit),
+  partrans = partrans
+)
+```
+
+### Initial Simulation
+We performed this step by modifying the parameters with random guesses to fit the data, and after conducting several simulations we  observed that the new model fits the data reasonably well for these parameter values:</br>
+$\sigma_\nu = exp(-7.5)$</br>
+$\mu_h = -7.3$</br>
+$\phi = expit(1.7)$</br>
+$\sigma_\eta = exp(0.06)$</br>
+$\gamma = 0.3$</br>
+$G_0 = 0$</br>
+$H_0 = 0$</br>
+```{r warning=FALSE, message=FALSE}
+params_test <- c(
+sigma_nu = exp(-7.5),
+mu_h = -7.6,
+phi = expit(1.7),
+sigma_eta = exp(0.06),
+gamma_fng = 0.3,
+G_0 = 0,
+H_0=0
+)
+
+sim_modified.sim <- pomp(filt_modified,
+statenames=statenames,
+paramnames=paramnames,
+rprocess = discrete_time(step.fun = Csnippet(rproc.sim), delta.t = 1)
+)
+
+sim_modified.sim <- simulate(sim_modified.sim, seed = 1, params = params_test)
+
+plot(Y_state ~ time, data = sim_modified.sim, type = 'l', col = 'green',
+     main = "Figure 22. Observed vs. Simulated Bitcoin Returns", ylab = "Returns")
+lines(logd, col = 'black')
+legend('topright', c("Observed Returns", "Simulated Returns"),
+       col = c("black", "green"), lty = c(1, 1), cex = 0.8)
+
+```
+
+Before moving on to iterated filtering, we confirm that the basic particle filter executes without errors and produces a finite log‑likelihood, following the procedure in Chapter 15 of lecture notes<a id="footnote-13-ref" href="#footnote-13"><sup>[13]</sup></a>. This ensures our filtering code is correctly set up prior to parameter fitting.
+
+```{r warning=FALSE, message=FALSE}
+sim_modified.filt_modified <- pomp(sim_modified.sim,
+covar = covariate_table(covar_df, times = "time"),
+statenames=statenames,
+paramnames=paramnames,
+rprocess = discrete_time(step.fun = Csnippet(rproc.filt), delta.t = 1)
+)
+
+
+run_level <- 3
+Np <- switch(run_level, 100, 1e3, 2e3)
+Nmif <- switch(run_level, 10, 100, 200)
+Nreps_eval <- switch(run_level, 4, 10, 20)
+Nreps_local <- switch(run_level, 10, 20, 20)
+Nreps_global <- switch(run_level, 10, 20, 100)
+library(doParallel)
+library(doRNG)
+library(iterators)
+library(doFuture)
+plan(multisession)
+
+cores <- as.numeric(Sys.getenv("SLURM_NTASKS_PER_NODE", unset = NA))
+if (is.na(cores)) cores <- detectCores()
+registerDoParallel(cores)
+library(doRNG)
+registerDoRNG(34118892)
+
+pf1 <- foreach(i=1:Nreps_eval,
+.packages='pomp') %dopar% pfilter(sim_modified.filt_modified,Np=Np)
+
+(L.pf1 <- logmeanexp(sapply(pf1,logLik),se=TRUE))
+
+# Display results
+cat("Log-likelihood:", round(L.pf1[1], 2), "±", round(L.pf1[2], 2), "\n")
+
+```
+
+The above obtained log-likelihood, is a good place to start with. We'll now move forward with our investigation by first conducting a local search, followed by a global search.
+
+### Local Search
+
+We perform a local search similar to that done previously.
+
+```{r warning=FALSE, message=FALSE}
+# --- Local Search via IF2 (Iterated Filtering) ---
+rw.sd_rp <- 0.02   # Random-walk standard deviation for parameters
+rw.sd_ivp <- 0.1   # For initial latent values
+cooling.fraction.50 <- 0.5
+rw.sd_vals <- rw_sd(
+  sigma_nu  = rw.sd_rp,
+  mu_h      = rw.sd_rp,
+  phi       = rw.sd_rp,
+  sigma_eta = rw.sd_rp,
+  gamma_fng = rw.sd_rp,
+  G_0       = ivp(rw.sd_ivp),
+  H_0       = ivp(rw.sd_ivp)
+)
+
+if2_list <- foreach(i = 1:Nreps_local,
+  .packages = 'pomp', .combine = c) %dopar%
+  mif2(filt_modified,
+       params = params_test,
+       Np = Np,
+       Nmif = Nmif,
+       cooling.fraction.50 = cooling.fraction.50,
+       rw.sd = rw.sd_vals)
+
+# Evaluate each IF2 replicate using the particle filter.
+logLik_results <- foreach(i = 1:Nreps_local,
+  .packages = 'pomp', .combine = rbind) %dopar%
+  logmeanexp(
+    replicate(Nreps_eval,
+              logLik(pfilter(filt_modified, params = coef(if2_list[[i]]), Np = Np))),
+    se = TRUE
+  )
+
+results_df <- data.frame(logLik = logLik_results[, 1],
+                         logLik_se = logLik_results[, 2],
+                         do.call(rbind, lapply(if2_list, coef)))
+print(summary(results_df$logLik, digits = 5))
+```
+
+We obtain a maximum likelihood score of `r round(max(results_df$logLik),2)` which suggests that the use of a t-distribution actually made a meaningful impact. 
+
+```{r warning=FALSE, message=FALSE}
+best_index <- which.max(results_df$logLik)
+best_params <- results_df[best_index, ]
+
+print(best_params)
+```
+
+```{r warning=FALSE, message=FALSE}
+pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta+gamma_fng,
+data=subset(results_df,logLik>max(logLik)-70))
+title(sub = "Figure 23. Local Search Pairwise Relationships: logLik vs. Model Parameters")
+```
+
+The pairplot reveals distinct parameter clustering patterns, particularly noticeable for logLik values around 4084-4092, indicating multiple local optima in the parameter space explored by the IF2 algorithm.
+```{r warning=FALSE, message=FALSE}
+plot(if2_list)
+title(sub = "Figure 24. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+
+### Global Search
+
+Now we conduct a global search to explore the broader parameter space and avoid getting trapped in local optima.
+
+After analyzing our local search findings, we establish parameter boundaries for our global search as follows:
+$$
+\sigma_\nu \in [0.000002,\,0.001], \\
+\mu_h \in [-8.5,\,-6.5], \\
+\phi \in [0.45,\,0.75], \\
+\sigma_\eta \in [0.9,\,1.4], \\
+\gamma_{fng} \in [-2,\,2], \\
+G_0 \in [-2,\,2], \\
+H_0 \in [-1,\,1].
+$$
+
+```{r warning=FALSE, message=FALSE}
+registerDoRNG(34118892)
+
+box <- rbind(
+sigma_nu=c(0.000002,0.001),
+mu_h=c(-8.5,-6.5),
+phi = c(0.45,0.75),
+sigma_eta = c(0.9,1.4),
+gamma_fng = c(-2,2),
+G_0 = c(-2,2),
+H_0 = c(-1,1)
+)
+
+
+
+if.box <- foreach(i = 1:Nreps_global,
+  .packages = 'pomp', .combine = c) %dopar% {
+    # Generate random parameters between min and max bounds
+    start_params <- mapply(function(lo, hi) runif(1, lo, hi), 
+                          box[,1], box[,2])
+    names(start_params) <- rownames(box)
+    
+    # Run mif2 with the randomly generated starting parameters
+    mif2(if2_list[[1]], params = start_params)
+}
+L.box <- foreach(i=1:Nreps_global,
+.packages='pomp',.combine=rbind) %dopar% {
+logmeanexp(replicate(Nreps_eval, logLik(pfilter(filt_modified,params=coef(if.box[[i]]),Np=Np))),
+se=TRUE)}
+
+r.box <- data.frame(logLik=L.box[,1],logLik_se=L.box[,2],
+t(sapply(if.box,coef)))
+
+print(summary(r.box$logLik,digits=5))
+# Identify the row with the highest log-likelihood
+best_index <- which.max(r.box$logLik)
+
+# Extract the best parameter set (including logLik and logLik_se)
+best_params <- r.box[best_index, ]
+
+# Print the best parameter set
+cat("Best log likelihood score:", best_params$logLik, "\n")
+
+print(best_params)
+```
+
+The obtained maximum log likelihood score of `r round(max(best_params$logLik),2)` is the highest as compared to all the other models that were used for the project. The negative value associated with $\gamma_{fng}$, reiterates the fact that fear drives market volatility.
+
+```{r warning=FALSE, message=FALSE}
+pairs(~logLik+sigma_nu+mu_h+phi+sigma_eta+gamma_fng+H_0+G_0,
+data=subset(r.box,logLik>max(logLik)-50))
+title(sub = "Figure 25. Local Search Pairwise Relationships: logLik vs. Model Parameters")
+
+
+```
+
+The scatter‐plot matrix seems consistent for all the parameters, and we observe evident clusters concentrated around the MLE for all the parameters.
+
+```{r warning=FALSE, message=FALSE}
+best=subset(r.box,logLik==max(logLik))
+
+plot(if.box)
+title(sub = "Figure 26. Filter Diagnostics and MIF2 Convergence Diagnostics")
+```
+The filter diagnostics follow a similar pattern as observed previously for the Modified Breto model with Normal residuals.
+
+
+## Simple Stochastic Volatility Model
+### Model Formulation
+
+The Simple Stochastic Volatility model derived from the Heston model is:
+
+$$
+Y_n = \sqrt{V_n} \epsilon_n, \quad V_n = (1 - \phi)\theta + \phi V_{n-1} + \xi \sqrt{V_{n-1}}\omega_n
+$$
+
+Where:
+
+- \( Y_n \): the observed return  
+- \( V_n \): the volatility (variance) process  
+- \( \theta \): the long-run average volatility  
+- \( \phi \): the persistence parameter of volatility  
+- \( \xi \): the volatility of volatility (standard deviation of the innovation)  
+- \( \epsilon_n \sim N(0,1) \) and \( \omega_n \sim N(0,1) \) are independent i.i.d. noise terms
+
+This model captures mean-reverting behavior of volatility and supports volatility clustering. It is simpler than Breto’s model and serves well for modeling log returns in financial data. The code following was adapted from w22 project14 [6].
+
+### Simulation & Filtering
+We first performed a single simulation using the initial parameter values. The resulting time series visually resembled the observed Bitcoin return series, suggesting the model structure was adequate for further inference. This preliminary step confirmed the internal consistency of the model before optimization.
+
+```{r warning=FALSE, message=FALSE}
+bitcoin$log_price <- log(bitcoin$Price)
+log_returns <- diff(bitcoin$log_price)
+btc <- bitcoin[-1, ]
+btc$log_return <- log_returns
+btc$time <- 1:nrow(btc)
+```
+
+<!-- ### Define Heston-Style POMP Model -->
+```{r warning=FALSE, message=FALSE}
+btc_statenames <- c("V")
+btc_paramnames <- c("sigma_omega", "phi", "theta", "V_0")
+
+btc_rproc <- "
+  double omega;
+  omega = rnorm(0, sigma_omega);
+  V = theta * (1 - phi) + phi * sqrt(V) + sqrt(V) * omega;
+  if (V < 0) V = 0;
+"
+
+btc_rinit <- "V = V_0;"
+btc_rmeasure <- "y = rnorm(0, sqrt(V));"
+btc_dmeasure <- "lik = dnorm(y, 0, sqrt(V), give_log);"
+
+btc_partrans <- parameter_trans(
+  log = c("sigma_omega", "theta", "V_0"),
+  logit = "phi"
+)
+
+btc_params <- c(
+  sigma_omega = 0.001,
+  phi = 0.01,
+  theta = 0.0002,
+  V_0 = 0.002
+)
+
+btc.pomp <- pomp(
+  data = data.frame(time = btc$time, y = btc$log_return),
+  times = "time",
+  t0 = 0,
+  statenames = btc_statenames,
+  paramnames = btc_paramnames,
+  rprocess = discrete_time(step.fun = Csnippet(btc_rproc), delta.t = 1),
+  rinit = Csnippet(btc_rinit),
+  rmeasure = Csnippet(btc_rmeasure),
+  dmeasure = Csnippet(btc_dmeasure),
+  params = btc_params,
+  partrans = btc_partrans
+)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+btc_sim <- simulate(btc.pomp, seed = 1)
+
+# Extract simulated values
+data_sim <- as.data.frame(btc_sim)
+observed <- btc$log_return
+
+# Plot: Simulated vs. Observed Log Returns
+plot(data_sim$time, data_sim$y, type = "l", col = "blue",
+     main = "Figure 27 Simulated vs. Observed Bitcoin Log Returns",
+     xlab = "Time", ylab = "Log Returns")
+lines(btc$time, observed, col = "black")
+legend("topright", legend = c("Observed", "Simulated"),
+       col = c("black", "blue"), lty = 1, cex = 0.8)
+
+run_level <- 3
+Np <- switch(run_level, 100, 1000, 2000)
+Nreps_eval <- switch(run_level, 4, 10, 20)
+
+library(doParallel)
+cores <- as.numeric(Sys.getenv("SLURM_NTASKS_PER_NODE", unset = NA))
+if (is.na(cores)) cores <- detectCores()
+registerDoParallel(cores)
+library(doRNG)
+registerDoRNG(34118892)
+
+pf1 <- foreach(i = 1:Nreps_eval, .packages = 'pomp') %dopar% 
+  pfilter(btc.pomp, Np = Np)
+
+(L.pf1 <- logmeanexp(sapply(pf1, logLik), se = TRUE))
+```
+
+We applied particle filtering (pfilter()) to estimate the log-likelihood of the observed data under the model. The output provided a baseline estimate and standard error of the likelihood under the initial parameter setting. This step quantifies how well the model explains the data without any tuning.
+
+### Local Search
+We refined the model parameters using the mif2 algorithm (iterated filtering). This method allows for likelihood-based estimation in state-space models with unobserved latent variables.
+
+```{r warning=FALSE, message=FALSE}
+Nmif <- switch(run_level, 10, 100, 200)
+Nreps_local <- switch(run_level, 5, 10, 20)
+
+btc_rw_sd <- rw_sd(
+  sigma_omega = 0.01,
+  phi         = 0.01,
+  theta       = 0.01,
+  V_0         = ivp(0.01)
+)
+
+btc_mif <- foreach(i = 1:Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(btc.pomp,
+       params = btc_params,
+       Np = Np,
+       Nmif = Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd = btc_rw_sd)
+}
+
+btc_L <- foreach(i = 1:Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(Nreps_eval, logLik(pfilter(btc.pomp,
+                                                  params = coef(btc_mif[[i]]),
+                                                  Np = Np))),
+             se = TRUE)
+}
+
+btc_results <- data.frame(
+  logLik = btc_L[, 1],
+  logLik_se = btc_L[, 2],
+  t(sapply(btc_mif, coef))
+)
+
+summary(btc_results$logLik)
+plot(btc_mif)
+pairs(~logLik + sigma_omega + theta + phi, data = btc_results)
+title(sub = "Figure 28. Local Search Pairwise Relationships: logLik vs. Model Parameters")
+
+```
+
+Looking at the filter diagnostic plots, we observe that the effective sample size (ESS) occasionally drops sharply, indicating frequent particle degeneracy. This suggests that a large proportion of particles receive negligible weight during some filtering steps — a common issue when using a small particle size.
+
+In the MIF2 convergence plot, it shows how log-likelihood increases over iterations, indicating a better fit. V_0 remains stable through iteration. Sigma_omega, phi, and theta decline significantly at level one and remain close to zero thereafter. The plots indicate successful convergence for most parameters.
+
+
+
+### Global Search
+To confirm that the local optimum is near-global, we perform a global search, we specify a hyper-rectangle for each parameter based on domain knowledge:sigma_omega in [0.0001, 0.1],phi in [0.01, 0.99],theta in [0.0001, 0.02],V_0 in [0.0001, 0.02]. These ranges reflect prior uncertainty and are intentionally wide.
+```{r warning=FALSE, message=FALSE}
+btc_box <- rbind(
+  V_0 = c(0.0001, 0.02),
+  sigma_omega = c(0.0001, 0.1),
+  phi = c(0.01, 0.99),
+  theta = c(0.0001, 0.02)
+)
+Nreps_global <- switch(run_level, 10, 20, 100)
+
+btc_global_mif <- foreach(i = 1:Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  start_params <- apply(btc_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+  mif2(
+    btc_mif[[1]],
+    params = start_params,
+    Np = Np,
+    Nmif = Nmif,
+    cooling.fraction.50 = 0.5,
+    rw.sd = btc_rw_sd
+  )
+}
+
+btc_L_global <- foreach(i = 1:Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(
+    replicate(Nreps_eval, logLik(pfilter(
+      btc.pomp,
+      params = coef(btc_global_mif[[i]]),
+      Np = Np
+    ))),
+    se = TRUE
+  )
+}
+
+btc_results_global <- data.frame(
+  logLik = btc_L_global[, 1],
+  logLik_se = btc_L_global[, 2],
+  t(sapply(btc_global_mif, coef))
+)
+
+summary(btc_results_global$logLik)
+write.csv(btc_results_global, "btc_global_params.csv", row.names = FALSE)
+
+plot(btc_global_mif)
+title(sub = "Figure 29. Filter Diagnostics and MIF2 Convergence Diagnostics")
+pairs(~logLik + sigma_omega + theta + phi, data = btc_results_global)
+title(sub = "Figure 30. Global Search Pairwise Relationships: logLik vs. Model Parameters")
+
+```
+
+Global Search Filter Diagnostics:
+- Top panel: Effective sample size (ESS). Values close to Np imply low degeneracy.
+- Bottom panel: Conditional log-likelihood over time. Mostly stable, indicating a well-behaved filter.
+
+The MIF2 convergence diagnostics plot in global search is similar to that in the local search.
+
+Then we simulate from the model using the best global parameter estimate shown below, and plot simulated vs observed bitcoin log returns. The high log-likelihood value (~3899.52) and visual agreement between simulated and observed data support the adequacy of the fitted model in representing the dynamic behavior of Bitcoin returns.
+
+```{r warning=FALSE, message=FALSE}
+# Identify the row with the highest log-likelihood
+best_index <- which.max(btc_results_global$logLik)
+
+# Extract the best parameter set (including logLik and logLik_se)
+best_params <- btc_results_global[best_index, ]
+
+# Print the best parameter set
+cat("Best log likelihood score:", best_params$logLik, "\n")
+print(best_params)
+
+btc_sim_best <- simulate(btc.pomp, seed = 123, params = unlist(best_params[ , -c(1, 2)]))
+data_sim_best <- as.data.frame(btc_sim_best)
+
+plot(data_sim_best$time, data_sim_best$y, type = "l", col = "blue",
+     main = "Figure 31. Simulated vs. Observed Bitcoin Log Returns",
+     xlab = "Time", ylab = "Log Returns")
+lines(btc$time, btc$log_return, col = "black")
+legend("topright", legend = c("Observed", "Simulated"),
+       col = c("black", "blue"), lty = 1, cex = 0.8)
+```
+
+This plot compares the simulated log returns (under the globally best-fit parameters) with the actual observed Bitcoin log returns. The two series visually align quite well, with similar clustering of volatility and amplitude ranges. Although individual spikes differ due to the stochastic nature of the model, the overall volatility structure is realistically captured.
+
+
+## Simple Stochastic Volatility Model with T-Distribution
+### Simulation & Filtering
+This section defines the stochastic volatility model using a t-distribution for the observation noise. The latent volatility process is modeled similarly to a Heston-style formulation, and we use the `pomp` package to specify the state-space model.
+<!-- ### Define Heston-Style POMP Model -->
+```{r}
+btc_statenames <- c("V")
+btc_paramnames <- c("sigma_omega", "phi", "theta", "V_0")
+
+btc_rproc <- "
+  double omega;
+  omega = rnorm(0, sigma_omega);
+  V = theta * (1 - phi) + phi * sqrt(V) + sqrt(V) * omega;
+  if (V < 1e-6) V = 1e-6;
+"
+
+btc_rinit <- "V = V_0;"
+btc_rmeasure <- "y = rt(5) * sqrt(V);"
+btc_dmeasure <- "lik = dt(y / sqrt(V), 5, give_log) - log(sqrt(V));"
+
+btc_partrans <- parameter_trans(
+  log = c("sigma_omega", "theta", "V_0"),
+  logit = "phi"
+)
+
+btc_params <- c(
+  sigma_omega = 0.001,
+  phi = 0.01,
+  theta = 0.0002,
+  V_0 = 0.002
+)
+
+btc.pomp <- pomp(
+  data = data.frame(time = btc$time, y = btc$log_return),
+  times = "time",
+  t0 = 0,
+  statenames = btc_statenames,
+  paramnames = btc_paramnames,
+  rprocess = discrete_time(step.fun = Csnippet(btc_rproc), delta.t = 1),
+  rinit = Csnippet(btc_rinit),
+  rmeasure = Csnippet(btc_rmeasure),
+  dmeasure = Csnippet(btc_dmeasure),
+  params = btc_params,
+  partrans = btc_partrans
+)
+```
+
+
+```{r}
+btc_sim <- simulate(btc.pomp, seed = 1)
+
+# Extract simulated values
+data_sim <- as.data.frame(btc_sim)
+observed <- btc$log_return
+
+# Plot: Simulated vs. Observed Log Returns
+plot(data_sim$time, data_sim$y, type = "l", col = "blue",
+     main = "Figure 32. T-Distribution Simulated vs. Observed Bitcoin Log Returns",
+     xlab = "Time", ylab = "Log Returns")
+lines(btc$time, observed, col = "black")
+legend("topright", legend = c("Observed", "Simulated"),
+       col = c("black", "blue"), lty = 1, cex = 0.8)
+
+run_level <- 3
+Np <- switch(run_level, 100, 1000, 2000)
+Nreps_eval <- switch(run_level, 4, 10, 20)
+
+pf1 <- foreach(i = 1:Nreps_eval, .packages = 'pomp') %dopar% 
+  pfilter(btc.pomp, Np = Np)
+
+(L.pf1 <- logmeanexp(sapply(pf1, logLik), se = TRUE))
+```
+
+The t-distribution model produces a simulated return series that more closely mirrors the observed extreme values and volatility bursts seen in Bitcoin data. Visually, the t-based simulation displays higher peaks and heavier tails, aligning with the known fat-tailed nature of financial returns. This is further supported by the log-likelihood: the t-distribution model achieves a much higher value (~3985.43) compared to the normal model (~3040.33), indicating a significantly better fit. The normal distribution struggles to capture the rare but large deviations, resulting in underestimation of volatility and reduced realism in the simulated series.
+
+### Local Search
+
+```{r}
+Nmif <- switch(run_level, 10, 100, 200)
+Nreps_local <- switch(run_level, 5, 10, 20)
+
+btc_rw_sd <- rw_sd(
+  sigma_omega = 0.01,
+  phi         = 0.01,
+  theta       = 0.01,
+  V_0         = ivp(0.01)
+)
+
+btc_mif <- foreach(i = 1:Nreps_local, .packages = 'pomp', .combine = c) %dopar% {
+  mif2(btc.pomp,
+       params = btc_params,
+       Np = Np,
+       Nmif = Nmif,
+       cooling.fraction.50 = 0.5,
+       rw.sd = btc_rw_sd)
+}
+
+btc_L <- foreach(i = 1:Nreps_local, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(replicate(Nreps_eval, logLik(pfilter(btc.pomp,
+                                                  params = coef(btc_mif[[i]]),
+                                                  Np = Np))),
+             se = TRUE)
+}
+
+btc_results <- data.frame(
+  logLik = btc_L[, 1],
+  logLik_se = btc_L[, 2],
+  t(sapply(btc_mif, coef))
+)
+
+summary(btc_results$logLik)
+plot(btc_mif)
+pairs(~logLik + sigma_omega + theta + phi, data = btc_results)
+title(sub = "Figure 33. T-Distribution Local Search Pairwise Relationships: logLik vs. Model Parameters")
+```
+
+Compared to the local search results under the normal distribution, the t-distribution model demonstrates more stable log-likelihood improvement across MIF2 iterations. However, the effective sample size (ESS) is somewhat less consistent, with more frequent moderate dips. This reflects the heavier tails of the t-distribution, which allow the model to better accommodate outliers but at the cost of particle diversity in certain regions. Despite these dips, the final log-likelihood values under the t-distribution model are slightly higher, suggesting an improved overall fit when accounting for extreme return values in the Bitcoin data.
+
+### Global Search
+```{r}
+btc_box <- rbind(
+  V_0 = c(0.0001, 0.02),
+  sigma_omega = c(0.0001, 0.1),
+  phi = c(0.01, 0.99),
+  theta = c(0.0001, 0.02)
+)
+Nreps_global <- switch(run_level, 10, 20, 100)
+
+btc_global_mif <- foreach(i = 1:Nreps_global, .packages = 'pomp', .combine = c) %dopar% {
+  start_params <- apply(btc_box, 1, function(x) runif(1, min = x[1], max = x[2]))
+  mif2(
+    btc_mif[[1]],
+    params = start_params,
+    Np = Np,
+    Nmif = Nmif,
+    cooling.fraction.50 = 0.5,
+    rw.sd = btc_rw_sd
+  )
+}
+
+btc_L_global <- foreach(i = 1:Nreps_global, .packages = 'pomp', .combine = rbind) %dopar% {
+  logmeanexp(
+    replicate(Nreps_eval, logLik(pfilter(
+      btc.pomp,
+      params = coef(btc_global_mif[[i]]),
+      Np = Np
+    ))),
+    se = TRUE
+  )
+}
+
+btc_results_global <- data.frame(
+  logLik = btc_L_global[, 1],
+  logLik_se = btc_L_global[, 2],
+  t(sapply(btc_global_mif, coef))
+)
+
+summary(btc_results_global$logLik)
+write.csv(btc_results_global, "btc_global_params.csv", row.names = FALSE)
+
+plot(btc_global_mif)
+title(sub = "Figure 34. T-Distribution Filter Diagnostics and MIF2 Convergence Diagnostics")
+pairs(~logLik + sigma_omega + theta + phi, data = btc_results_global)
+title(sub = "Figure 35. T-Distribution Global Search Pairwise Relationships: logLik vs. Model Parameters")
+```
+
+In contrast to expectations, the t-distribution model exhibits more sharp dips in the filter diagnostics, particularly in the conditional log-likelihood. These dips indicate periods where the model struggled to explain the observed returns, potentially due to extreme values or overfitting.
+
+Moreover, effective sample size (ESS) under the t-distribution is less stable and generally lower than in the normal-distribution version. This suggests worse particle diversity and more frequent particle degeneracy, meaning the t-distribution model may be more sensitive to the heavier tails than anticipated in this implementation.
+
+Overall, while the t-distribution is theoretically better at capturing fat tails, these diagnostics reveal that it may lead to greater numerical instability during filtering, at least without careful tuning or further regularization.
+
+We simulate from the best-fit t-distributed model and compare the output to the actual data. This final comparison helps assess whether the learned dynamics successfully reproduce real-world volatility.
+
+```{r}
+# Identify the row with the highest log-likelihood
+best_index <- which.max(btc_results_global$logLik)
+
+# Extract the best parameter set (including logLik and logLik_se)
+best_params <- btc_results_global[best_index, ]
+
+# Print the best parameter set
+cat("Best log likelihood score:", best_params$logLik, "\n")
+print(best_params)
+
+btc_sim_best <- simulate(btc.pomp, seed = 123, params = unlist(best_params[ , -c(1, 2)]))
+data_sim_best <- as.data.frame(btc_sim_best)
+
+plot(data_sim_best$time, data_sim_best$y, type = "l", col = "blue",
+     main = "Figure 36. T-Distribution Simulated vs. Observed Bitcoin Log Returns",
+     xlab = "Time", ylab = "Log Returns")
+lines(btc$time, btc$log_return, col = "black")
+legend("topright", legend = c("Observed", "Simulated"),
+       col = c("black", "blue"), lty = 1, cex = 0.8)
+```
+
+Compared to the normal distribution model, the global search under t-distribution still achieves competitive or better log-likelihoods and shows greater stability under extreme returns.
+
+
+# Comparisons with Previous Projects
+## Comparison 1
+We compare our project with Project 14 in Winter 22 [6]. They also implemented the basic Breto model to analyze financial volatility (Ethereum), while we analyze Bitcoin price. In their local search and global search, I also observed multilmodel likelihood, but in a mild condition. Their $\phi$ almost converges to 1 unlike ours having two convergence paths, that is, $\phi$ is not important in current explored regions, so that their $\mu_h$ fluctuates a lot. Since these two parameters are important, I guess they could do better in identifying these two values using a different box value. 
+
+## Comparison 2
+Our project builds upon on previous years’ work by introducing two key enhancements. First, we augment the original model with the Fear and Greed Index. Second, whereas Projects 14 and 22 from Winter ’22 relied solely on Normal residuals, we go further by employing the Student’s t–distribution to benchmark the models, yielding novel insights. Additionally, Group 6’s midterm project <a id="footnote-11-ref" href="#footnote-11"><sup>[11]</sup></a> for this year, used monthly Bitcoin data and concluded that the series lacks significant volatility, this finding proved invaluable, guding us to adopt daily data from the outset.
+
+## Comparison 3
+Compared to the previous project in Winter 22 Project 14 [6], using Gaussian Heston-based model on Ethereum, our work extends the framework by incorporating a t-distributed measurement model to better capture Bitcoin’s heavy-tailed returns. While both use MIF2 and particle filtering via pomp, the Gaussian model underestimates extreme events, whereas our t-distributed model improves fit and replicates observed volatility spikes. However, this comes at a cost—filter diagnostics show lower effective sample sizes, reflecting challenges in sampling from a heavy-tailed distribution. Overall, our approach better captures Bitcoin's extreme return behavior at the expense of filtering stability.
+
+# Conclusions
+
+- The basic Breto model models the volatility well as it outperforms the benchmarks (GARCH and simple stochastic volatility model). It also shows an interesting phenomenon of multimodality and reveales the importance of $\phi$ and $\mu_h$ through the extensive local search and global search. This also corresponds to the model nature that $\phi$ and $\mu_h$ both shape the stationary distribution of $H_n$ (its mean and autocorrelation).
+- The modified Breto model, with the inclusion of the Fear and Greed Index, performed consistently well, and propounds a novel approach of analyzing the effects of market sentiment in volatility analysis. This was further bolstered by leveraging the student's t distribution for the residual terms, and this model performed the best among all the other models. Thus this insightful experience of conducting research about including a new parameter, seemed fruitful.  
+- In Simple Stochastic Volatility Model, it compared stochastic volatility models using normal and t-distributions for modeling Bitcoin log returns. While both models captured general volatility dynamics, the t-distribution consistently achieved higher log-likelihoods and produced simulations that better reflected the heavy tails and sharp spikes characteristic of Bitcoin data. However, diagnostics revealed that the t-distribution model exhibited more instability, including lower and more variable effective sample sizes and sharper dips in conditional log-likelihood. This suggests a trade-off between improved fit and computational stability. Overall, the t-distribution model provided a more realistic representation of return behavior, albeit with increased sensitivity to extreme values.
+
+
+
+# References
+
+[1] <span id="footnote-1">Wikipedia Cryptocurrency Definition
+https://en.wikipedia.org/wiki/Cryptocurrency/</span>
+
+[2] <span id="footnote-2">https://pdfs.semanticscholar.org/a6d6/d3f73d2ebd0dcaa191f5e8c8c4e42d1b127b.pdf/span>
+
+[3] <span id="footnote-3">https://www.coindesk.com/markets/2020/12/30/bitcoin-prices-in-2020-heres-what-happened>
+
+[4] <span id="footnote-4"> Mathworks - Engle's ARCH Test
+https://www.mathworks.com/help/econ/engles-arch-test.html
+
+[5] <span id="footnote-5">https://ionides.github.io/531w25/quiz/quiz2-sol.pdf
+
+[6] <span id="footnote-6">https://ionides.github.io/531w22/final_project/project14/Blinded.html
+
+[7] <span id="footnote-7">https://ionides.github.io/531w22/final_project/project22/blinded.html
+
+[8] <span id="footnote-8">UM ChatGPT was used to polish the sentences and correct grammars</span>
+
+[9] <span id="footnote-9">https://www.investopedia.com/tesla-tsla-discloses-usd1-5b-investment-in-bitcoin-5105078
+
+[10] <span id="footnote-10">https://www.bressler.com/publication-1310
+
+[11] <span id="footnote-11">https://ionides.github.io/531w25/midterm_project/project06/blinded.html
+
+[12] <span id="footnote-4">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 15.</span>
+
+[13] <span id="footnote-4">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 17.</span>
+
+[14] <span id="footnote-4">Ionides, E. Lecture Notes for University of Michigan, STATS 531 Winter 2025. Modelling and Analysis of Time Series Data. Chapter 14.</span>

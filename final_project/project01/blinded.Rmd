@@ -1,0 +1,2081 @@
+---
+title: "Unveiling the Dynamics of Influenza in the Great Lakes Region"
+date: "2025-04-22"
+output:
+  html_document:
+    code_folding: hide  
+    toc: true           
+    toc_float: true     
+    number_sections: true 
+  pdf_document:
+    toc: true           
+  word_document:
+    toc: true          
+---
+
+```{r, echo=FALSE, include = FALSE, warning = FALSE, message = FALSE }
+library(tidyverse)
+theme_update(plot.title = element_text(hjust = 0.5))
+library(forecast)
+library(tseries)
+library(zoo)
+library(lmtest)
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(tidyr)
+library(doParallel)
+library(foreach)
+require(knitr)
+library(lubridate)
+library(ISOweek)
+library(pomp)
+library(doFuture)
+library(future)
+library(dplyr)
+options(tibble.width = Inf)
+if (.Platform$OS.type == "windows") {
+  options(pomp_cdir="./tmp")
+} # Windows friendly :)
+```
+
+```{r, echo=FALSE, include = FALSE, warning = FALSE, message = FALSE }
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+packages <- c(
+  "tidyverse", "forecast", "tseries", "zoo", "lmtest", "knitr", "data.table",
+  "ggplot2", "tidyr", "doParallel", "foreach", "lubridate", "ISOweek", "pomp", "doFuture", "future"
+)
+
+# Install missing packages
+installed <- rownames(installed.packages())
+for (pkg in packages) {
+  if (!(pkg %in% installed)) install.packages(pkg)
+}
+
+# Load all packages
+lapply(packages, library, character.only = TRUE)
+```
+
+```{r aic_table_codes, include = FALSE, warning = FALSE, message = FALSE }
+#this code is from winter 2025 midterm project 9
+aic_table <- function(data,P,Q, D=1){
+  table <- matrix(NA,(P+1),(Q+1))
+  for(p in 0:P) {
+    for(q in 0:Q) {
+       table[p+1,q+1] <- arima(data,order=c(p,D,q))$aic
+    }
+  }
+  dimnames(table) <- list(paste("AR",0:P, sep=""),
+    paste("MA",0:Q,sep=""))
+  table
+}
+
+sar_aic_table <- function(data, P, Q, a_order = c(2, 1, 2), Ds=1) {
+  table <- matrix(NA, nrow = P + 1, ncol = Q + 1)
+
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      fit <- try(
+        arima(data,
+              order = a_order,
+              seasonal = list(order = c(p, Ds, q), period = 12)
+        ),
+        silent = TRUE
+      )
+
+      if (!inherits(fit, "try-error")) {
+        table[p + 1, q + 1] <- fit$aic
+      } else {
+        table[p + 1, q + 1] <- NA
+      }
+    }
+  }
+
+  dimnames(table) <- list(
+    paste("SAR", 0:P, sep = ""),
+    paste("SMA", 0:Q, sep = "")
+  )
+
+  return(table)
+}
+
+reg_aic_table <- function(data, P, Q, Dr=0){
+  time <- seq_along(data)
+  table <- matrix(NA,(P+1),(Q+1))
+  for(p in 0:P) {
+    for(q in 0:Q) {
+       table[p+1,q+1] <- arima(data, order = c(p, Dr, q), xreg = time)$aic
+    }
+  }
+  dimnames(table) <- list(paste("AR",0:P, sep=""),
+    paste("MA",0:Q,sep=""))
+  table
+}
+
+sarma_reg_aic_table <- function(data, P, Q, a_order = c(2, 0, 1), Ds=0) {
+  time <- seq_along(data)
+  table <- matrix(NA, nrow = P + 1, ncol = Q + 1)
+
+  for(p in 0:P) {
+    for(q in 0:Q) {
+      fit <- try(
+        arima(data,
+              order = a_order,
+              seasonal = list(order = c(p, Ds, q), period = 52),
+        xreg=time),
+        silent = TRUE
+      )
+
+      if (!inherits(fit, "try-error")) {
+        table[p + 1, q + 1] <- fit$aic
+      } else {
+        #cat("Failed for p =", p, "q =", q, "\n")
+        #cat("Error message:", fit, "\n")    
+        table[p + 1, q + 1] <- NA
+      }
+    }
+  }
+
+  dimnames(table) <- list(
+    paste("SAR", 0:P, sep = ""),
+    paste("SMA", 0:Q, sep = "")
+  )
+
+  return(table)
+}
+
+
+sarma_reg_aic_table_parallel <- function(data, P, Q, 
+                                          a_order = c(2, 0, 1), 
+                                          Ds = 0,
+                                          ncores = parallel::detectCores() - 1) {
+  # load required packages
+
+  
+  # set up cluster
+  cl <- makeCluster(ncores)
+  registerDoParallel(cl)
+  
+  combos <- expand.grid(p = 0:P, q = 0:Q)
+  aic_vals <- foreach(i = seq_len(nrow(combos)), .combine = "c", 
+                      .packages = "stats") %dopar% {
+    p <- combos$p[i]
+    q <- combos$q[i]
+    time <- seq_along(data)
+    
+    fit <- try(
+      arima(data,
+            order    = a_order,
+            seasonal = list(order = c(p, Ds, q), period = 52),
+            xreg     = time),
+      silent = TRUE
+    )
+    
+    if (!inherits(fit, "try-error")) {
+      fit$aic
+    } else {
+      NA_real_
+    }
+  }
+  
+
+  stopCluster(cl)
+  
+  table <- matrix(aic_vals, nrow = P + 1, ncol = Q + 1, byrow = FALSE)
+  dimnames(table) <- list(
+    paste0("SAR", 0:P),
+    paste0("SMA", 0:Q)
+  )
+  
+  return(table)
+}
+
+
+```
+
+# Introduction
+
+In this project, we analyze influenza data from the [Center for Disease Control and Prevention (CDC) in the Great Lakes Region](http://gis.cdc.gov/grasp/fluview/fluportaldashboard.html)$^{[1]}$. Region 5, comprising the states of Illinois, Indiana, Michigan, Minnesota, Ohio, and Wisconsin, exhibiting notable clustering trends ([CDC overview](https://www.cdc.gov/fluview/overview/index.html))$^{[2]}$, which is why we focus our analysis on this subset. FluView provides weekly influenza reports, and our goal is to infer the dynamics of influenza using partially observed Markov processes (POMP) with simulation-based inference. The dataset is weekly and spans from 1997 through 2025. However, for computational considerations, we restrict our analysis to the years 2015 through 2024. Additionally, CDC immunization data is only available through 2024, which we incorporate as a covariate in our POMP model, further justifying this cutoff.
+
+The main technical challenge in our project is the long time span of the data, which includes disruptive events such as the COVID-19 pandemic that significantly changed influenza patterns. Our primary goal is to determine whether a POMP model can effectively capture the dynamics of influenza over this extended period. Specifically, for the years 2015–2024, we address the following questions:
+
+1.  **Can a SEIRS based POMP model capture long-term influenza dynamics, including the effects of the COVID-19 pandemic?**\
+    The pandemic introduced public health measures such as masking and social distancing, which drastically reduced influenza cases during the early stages. However, once these measures were lifted, influenza cases surged. We examine whether a POMP model, augmented with relevant covariate information, can model these trends.
+
+2.  **In long term modeling, how does a mechanistic POMP model compare to a non-mechanistic model, such as a simple regression with SARMA errors?**\
+    We compare the two approaches from the perspectives of fit, interpretability, and ability to incorporate structural changes in disease dynamics over time.
+
+3.  **How do POMP estimated parameters, such as the infection rate for influenza in the Great Lakes Region, differ from global estimates reported in the literature?**\
+    We investigate how region specific modeling results compare to global consensus.
+
+4.  **What do POMP estimated parameters in the Great Lakes Region say about the disease dynamics?**
+
+Now, let's start by visualizing the total number of influenza cases from the year 1997 onwards.
+
+```{r read, echo=FALSE, warning = FALSE, message = FALSE }
+
+data <- fread("ILINet.csv")
+
+data[, ISOWeek := sprintf("%d-W%02d", YEAR, WEEK)]
+
+# Converting ISO week to Date (Monday of that week)
+data[, Date := ISOweek2date(paste0(ISOWeek, "-1"))]
+# Subset to include only necessary columns
+data <- data[, .(YEAR, WEEK, Date, ILITOTAL, `TOTAL PATIENTS`)]
+
+# Converting ILITOTAL and TOTAL_PATIENTS to numeric (if they are not already)
+data[, ILITOTAL := as.numeric(ILITOTAL)]
+data[, TOTAL_PATIENTS := as.numeric(`TOTAL PATIENTS`)]
+
+# Plotting the ILI Ratio over time
+ggplot(data, aes(x = Date, y = ILITOTAL)) +
+  geom_line() +
+  labs(title = "Number of Influenza Cases in the region 5",
+       x = "Date",
+       y = "Flu Cases")
+
+```
+
+Now that we have the total number of flu cases, we plot the ratio of influenza-like illness (ILI) cases to the total number of patients. Our goal is to understand how the number of influenza patients compare to the total number of patients for any disease in the Great Lakes Region.ILI refers to patients exhibiting symptoms consistent with influenza.
+
+```{r, echo=FALSE, warning = FALSE, message = FALSE }
+# Calculate the ratio of ILI cases to total patients
+data[, ILI_Ratio := ILITOTAL / `TOTAL PATIENTS`]
+ggplot(data, aes(x = Date, y = ILI_Ratio)) +
+  geom_line() +
+  labs(title = "Influenza Ratio Over Time",
+       x = "Date",
+       y = "Influenza Ratio (ILI/Total Patients)")
+```
+
+We observe that the influenza ratio exhibits strongly periodic dynamics, with little to no long-term increasing or decreasing trend over time. As seen in the plots above, the disease dynamics display a clear annual seasonal pattern with occasional peaks. Due to the extensive time span of the dataset, we restrict our analysis to data from 2015 onward, effectively narrowing the window to approximately the last 10 years. Furthermore, in our mechanistic POMP model, we use the immunization data from CDC as covariate, which is given up until 2024. Thus, our analysis from here on will be concerned with the data from 2015 to 2024.
+
+```{r, warning = FALSE, message = FALSE }
+#take the year after 2015. make it after 2010 if you want to but can be too time consuming. 
+data <- data[YEAR >= 2015]
+data |> filter(YEAR < 2024) -> data
+
+data[, TotalWeeks := (YEAR - min(data$YEAR)) * 52 + WEEK]
+
+ggplot(data, aes(x = Date, y = ILITOTAL)) +
+  geom_line() +
+  labs(title = "Number of Influenza Cases in the region 5",
+       x = "Date",
+       y = "Flu Cases")
+```
+
+# Exploratory Data Analysis
+
+Now that we have limited our analysis to data from 2015 onward, we will decompose the time series into trend, seasonal, and random components using the `decompose()` function in R$^{[3]}$. The reason we use `decompose()` over `stl()` is that `stl()` models seasonality as a variable factor$^{[4]}$, whereas `decompose()` treats it as constant over the entire horizon. As we are more concerned with the regular seasonal dynamics of the disease here, and since we are aware that the pandemic affected influenza cases, we prefer to use `decompose()` to understand the standard seasonal behavior of the disease. As the analysis here is classic, our analysis here and the construction of regression with SARMA model follows from the path of $^{[7]}$.
+
+## Decomposition of Time Series
+
+As shown below, up until 2019, the data exhibits a clear seasonal pattern with no major deviations. However, with the onset of the COVID-19 pandemic, public health measures such as lockdowns, social distancing, and mask usage had a significant impact on the number of influenza cases. Notably, from 2020 to 2022, influenza cases dropped to near zero. This decline can also be partially attributed to reduced healthcare visits for illnesses like influenza, as people were likely avoiding public health centers due to the heightened risk of COVID-19 exposure.
+
+Following the partial elimination of COVID-19 and the removal of strict preventive measures in an effort to return to normal life, we observe a significant increase in influenza cases—far surpassing pre-pandemic levels. This surge can be attributed to several factors. One simple explanation is the concept of immunity debt$^{[5]}$: during complete lockdowns, the reduced exposure to influenza may have weakened the population level immunity. People develop short-term immunity to circulating influenza strains, lasting from a few months up to a year. The drastic drop in influenza circulation may have prevented this immunity from forming, leaving a more susceptible population once restrictions were lifted. Another plausible explanation is that public attention was heavily focused on COVID-19 as an imminent threat, which may have led to reduced take of influenza vaccinations, again increasing the size of the susceptible population. In fact, the increasing number of susceptible population is also observable in our POMP model.
+
+```{r, echo=FALSE}
+ili_series <- ts(data$ILITOTAL, frequency = 52, start = c(2015, 1))
+decomposed <- decompose(ili_series)
+plot(decomposed, col = "blue")
+```
+
+Now, let's investigate the seasonal component in detail. There are 52 weeks in a year. Thus, we calculate the seasonal effect over these weeks. We see below that influenza cases peak in the months of December and January with also high cases in November and February. Also, we see a drastic reduction of the influenza cases in summer months. The season changes, the times of Spring and Fall provide influenza cases close to mean, aligning with our intuitive understanding of the influenza cases.
+
+```{r, echo=FALSE}
+seasonal <- decomposed$seasonal
+
+# Create a matrix for the seasonal pattern using 52 weeks (instead of 12 months)
+seasonal_pattern <- matrix(seasonal[1:52], ncol = 1)
+
+# Label each row as "Week 1", "Week 2", ..., "Week 52"
+rownames(seasonal_pattern) <- paste("Week", 1:52)
+colnames(seasonal_pattern) <- "Seasonal Effect"
+
+# Print the seasonal pattern
+print(seasonal_pattern)
+```
+
+Now, from the above analysis, we have established that the disease has a seasonality of 1 year period. Now, let's confirm this by a spectogram analysis. Below, we compute the smoothed periodogram using `spec.pgram()` function$^{[6]}$.
+
+```{r, echo=FALSE}
+spectrum <- spec.pgram(ili_series, spans = c(3,3), log = "yes", plot = TRUE, taper = 0.1, 
+                      main = "Smoothed Periodogram of Influenza", xlab = "Frequency", ylab = "Spectrum (in log scale)", sub = "Cycles per Year")
+spectogram <- data.frame(frequency = spectrum$freq,spectrum = spectrum$spec)
+abline(v = 1, col = "blue", lty = 2)
+```
+
+As shown above, we observe a dominant frequency of one cycle per year, which aligns with the expected yearly seasonal behavior of influenza. In addition to this, the influenza data exhibits a high variance and non-negative valued. Therefore, applying a log transformation would be appropriate for non-mechanistic modeling, which we will later use as a benchmark for comparison with the mechanistic model. However, since the likelihoods would be computed on different scales—one on the log-transformed data and the other on the raw data—they would not be directly comparable. For this reason, we refrain from applying the transformation for model fitting. However, we will still plot the log-transformed version of the data for visualization purposes.
+
+```{r log_scale, echo=FALSE, warning=FALSE}
+data$logILITOTAL <- log(data$ILITOTAL)
+ggplot(data, aes(x = Date, y = logILITOTAL)) +
+  geom_line() +
+  labs(
+    title = "ILI Total",
+    x = "Date",
+    y = "Total number of cases"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Hence, we see that the distribution of values becomes more constrained, and the log transformation makes the data more suitable for SARMA errored regression model. However, as noted above, we will fit the model on the raw data to ensure a fair comparison with the mechanistic model in likelihood terms.
+
+# Regression Model with SARMA Errors
+
+To identify the appropriate ARMA order for our regression with SARMA model, we will perform a two-stage analysis. In the first phase, we will determine the ARMA orders, and in the second phase, we will identify the seasonal components. However, we will not delve into the very details of the model development, as the primary purpose of this model is to serve as a baseline for evaluating the mechanistic model. However, we will follow the appropriate paths for model development so that our non-mechanistic model will be competent. Now, let's begin with the regression using an ARMA model.
+
+## Regression Model with ARMA Errors
+
+Below, we fit $ARMA(p,q)$ models with $p$ being maximum of 4 and $q$ being maximum of 5. In the below table, we plot the AIC values for those models. We use the code from Winter 2025 Midterm Project 9 codes$^{[7]}$ to derive the AIC tables for this part.
+
+```{r, warning = FALSE, message = FALSE }
+data_aic_table <- reg_aic_table(data$ILITOTAL,4,5)
+kable(data_aic_table,digits=2)
+```
+
+Realize that $ARMA(2,1)$ seem to be a good model by the AIC values. Although $ARMA(3,0)$ model has very slightly lower AIC value, we discard it as there is a mathematical inconsistency between $ARMA(3,0)$ and $ARMA(3,1)$. Note that the same inconsistency also happens between $ARMA(2,1)$ and $ARMA(3,1)$ but other AIC values around $ARMA(2,1)$ are consistent with our mathematical expectation and hence we are somewhat validated by it. Still, let's further investigate the regression with $ARMA(2,1)$ errored model.
+
+```{r}
+time <- seq_along(data$ILITOTAL)
+reg_arma_21 = arima(data$ILITOTAL,order=c(2,0,1), xreg=time)
+reg_arma_21
+```
+
+Note that we have the z-score of regression variable, we have $z = \frac{13.0326}{3.6820} = 3.539544$, showing that the regression variable as a time is statistically significant. Hence, time has statistically significant impact on influenza cases. When we investigate the other coefficients with given standard errors, we also see that they are statistically significant.
+
+Now, let's investigate if we have any non-invertibility issues.
+
+```{r}
+plot(reg_arma_21, type="both")
+```
+
+We see that both roots are outside the unit circle, demonstrating that we have no invertibility or causality issues. Now that we have a sufficient regression model with ARMA errors, let's also investigate a regression model with SARMA errors.
+
+## Regression Model with SARMA Errors
+
+From the plot of the data and periodogram, it is obvious that we have a yearly seasonality, corresponding to 52 weeks. Thus, we consider a regression model with SARMA$(2,1)(p,q)_{52}$ errors. Now, let's identify the $(p,q)$ orders. We do a search on $3\times 3$ grid. As the search on $3 \times 3$ grid already takes an hour to run locally, we refrain from developing the models of higher seasonal order. We parallelize the computations and the table preparation code is taken from Winter 2025, Midterm Project 9$^{[7]}$.
+
+```{r, warning = FALSE, message = FALSE }
+if (file.exists("data_sarma_reg_aic_table.rds")) {
+  data_sarma_reg_aic_table <- readRDS("data_sarma_reg_aic_table.rds")
+} else {
+  data_sarma_reg_aic_table <- sarma_reg_aic_table_parallel(data$ILITOTAL, 3, 3)
+  saveRDS(data_sarma_reg_aic_table, "data_sarma_reg_aic_table.rds")
+}
+kable(data_sarma_reg_aic_table, digits = 2)
+```
+
+From the table above, we identify two candidate models with low AIC values: SARMA$(2,1)(2,0)_{52}$ and SARMA$(2,1)(0,2)_{52}$. Notably, the $SAR(3)$ coefficient contains only $NaN$ values across its row. The presence of missing values in the neighboring SARMA$(2,1)(2,0)_{52}$ model led us to favor the SARMA$(2,1)(0,2)_{52}$ model instead. Moreover, the SARMA$(2,1)(0,2)_{52}$ model already has a lower AIC value. Therefore, we proceed with the SARMA$(2,1)(0,2)_{52}$ model for further diagnostics.
+
+```{r}
+if (file.exists("reg_sarma201_002.rds")) {
+  reg_sarma201_002 <- readRDS("reg_sarma201_002.rds")
+} else {
+  reg_sarma201_002 <- arima(
+  data$ILITOTA,
+  order    = c(2, 0, 1),
+  seasonal = list(order = c(0, 0, 2), period = 52),
+  xreg     = time
+)
+  saveRDS(reg_sarma201_002, "reg_sarma201_002.rds")
+}
+
+reg_sarma201_002
+```
+
+Now, we observe that all coefficients have very high $z$-values, except for the $sma1$ coefficient, which yields a $z$-value of $\frac{0.0533}{0.0469} = 1.136$, corresponding to a $p$-value of $0.25578$. Hence, we cannot reject the null hypothesis that the $sma1$ coefficient is zero. Since this may indicate a potential issue, we have also fitted SARMA$(2,1)(2,0)_{52}$, SARMA$(2,1)(2,1)_{52}$, and SARMA$(2,1)(1,2)_{52}$ models, and observed that this issue persists across those alternatives as well. We omit the detailed diagnostics of these models here, but the fitted model's weights are provided in the submission for readers interested in additional examination. As all other models have the same issue, we continue with our current SARMA$(2,1)(0,2)_{52}$ model.
+
+Let's visualize the ACF of the residuals.
+
+```{r}
+acf(reg_sarma201_002$residuals, lag.max = 100, main = "Regression with SARMA(2,1)x(0,2) Errors")
+```
+
+We observe that up to lag 100, there are 7 spikes indicating significant autocorrelations. While we would typically expect around 5 spikes under the assumption of fully uncorrelated residuals, this is not a substantial deviation. This slight excess may be attributed to the use of unlogged data and the presence of disruptive events—such as the COVID-19 pandemic—which complicate non-mechanistic modeling in such scenarios.
+
+Now, let's also visualize the Q-Q plot of the residuals.
+
+```{r}
+qqnorm(reg_sarma201_002$resid, main = "Normal Q-Q Plot for Regression with SARMA(2,1)x(0,2) Errors")
+qqline(reg_sarma201_002$resid, col = "red")
+```
+
+The Q-Q plot below shows heavy tailed behavior, which is expected as we did not log transform for fair comparison with the mechanistic model, which operates on the raw data.
+
+Now, as a final sanity check, lets see if the roots are outside the unit circle.
+
+```{r}
+coefs <- reg_sarma201_002$coef
+cn   <- names(coefs)
+ar_coefs  <- coefs[grep("^ar",  cn)]      
+ma_coefs  <- coefs[grep("^ma[0-9]", cn)] 
+sma_coefs <- coefs[grep("^sma", cn)]      
+ar_roots  <- polyroot( c(1, -ar_coefs) )
+ma_roots  <- polyroot( c(1,  ma_coefs) )
+sma_roots <- if(length(sma_coefs)>0) polyroot(c(1,  sma_coefs)) else NA
+cat("Non‐seasonal AR roots:   ", round(ar_roots,4), "\n",
+    "Non‐seasonal MA roots:   ", round(ma_roots,4), "\n",
+    "Seasonal MA roots:       ", round(sma_roots,4), "\n")
+```
+
+We see that all roots lie well outside the unit circle. So, we have no invertibility or causality issues. Now, let's also visualize the fit.
+
+```{r}
+fitted_values <- fitted(reg_sarma201_002)
+
+plot(time, data$ILITOTAL, type = "o", main = "ILI with Fitted Values", xlab = "Year", ylab = "ILI")
+
+lines(time, fitted_values, col = "red")
+```
+
+We have a very good fit with as being a baseline non-mechanistic model. Overall, we have the $\text{log likelihood} = -3620.72$ and $\text{aic} = 7257.44$. We will use this model for a baseline to compare against the mechanistic SEIRS model.
+
+# SEIRS Modelling
+
+In this chapter and in all the subsequent parts involving POMP, we modified the code snippets provided by the lecture notes of STATS531$^{[26, 27, 28, 29, 30]}$. As not to confuse the readers with repeating or multiple citations, we do not cite them again in the next chapters but reader should assume that these are modified codes based on the lecture notes.
+
+## Motivation
+
+Looking at the data, we find strong seasonality, and the pandemic is not a single outbreak but various outbreaks over the time horizon. Based on biological researches and common sense, the influenza viruses have different types and they evolve quickly. Unlike smallpox or measles, influenza can infect people even though people get vaccinated at a regular basis, and most importantly, people who are infected once are still exposed to the risk of infection. Thus, a person who went through S -\> E -\> I -\> R will return to state S after some immunity period (during which the antibody remains active and/or the immune system is armed). This creates a feedback loop which can represent recurring infections in the data: S -\> E -\> I -\> R -\> S.
+
+## Model Construction
+
+The below codes for the construction of the model are hidden. We still provide them for interested readers.For details, please check the code below. As we ran the code on the cluster, we used pure `R` file to run this code rather than `RMarkdown` to cache our results. Interested readers can use `seirs_global.R` file to reproduce our results on the cluster.
+
+```{r}
+data = read.csv("ilitotal2015.csv")
+
+seirs_step <- Csnippet("
+  double dN_SE = rbinom(S,1-exp(-Beta*I/N*dt));
+  double dN_EI = rbinom(E, 1 - exp(-mu_EI * dt));
+  double dN_IR = rbinom(I,1-exp(-mu_IR*dt));
+  double dN_RS = rbinom(R, 1 - exp(-mu_RS * dt));
+  S += dN_RS - dN_SE;
+  E += dN_SE - dN_EI;
+  I += dN_EI - dN_IR;
+  R += dN_IR - dN_RS;
+  H += dN_EI;" 
+) # H tracks incident symptomatic cases, consistent with ILI report definitions
+
+seirs_init <- Csnippet("
+  S = nearbyint((1-eta)*N);
+  E = 0;
+  I = nearbyint(eta*N);
+  R = 0;
+  H = 0;
+")
+
+dmeas <- Csnippet("
+  double mean = (rho * H < 1) ? 1 : rho * H; // Prevent log(0) or too dramatic values
+  lik = dnbinom_mu(reports,k,mean,give_log);"
+)
+
+rmeas <- Csnippet("
+  reports = rnbinom_mu(k,rho*H);"
+)
+
+data |> select(reports = ILITOTAL) |> 
+  pomp(
+    times=row_number(data), t0 = 0,
+    rprocess=euler(seirs_step,delta.t=1/7),
+    rinit=seirs_init,
+    rmeasure=rmeas,
+    dmeasure=dmeas,
+    accumvars="H",
+    partrans=parameter_trans(log=c("Beta", "mu_EI", "mu_IR", "mu_RS"), logit=c("rho","eta")),
+    paramnames=c("Beta","mu_EI","mu_IR", "mu_RS", "rho","eta", "k", "N"),
+    statenames=c("S","E","I","R","H"), 
+    params=c(Beta = 5, mu_EI = 1/2*7, mu_IR = 1/5*7, mu_RS = 1/18, rho = 0.945, eta = 0.033,  k = 10, N = 52900000) # N = total population of region 5
+  ) -> flu_seirs
+```
+
+## Parameter Initialization
+
+Initialization is crucial in any simulation. We pick initial values from a reasonable range, and since we are using the dynamics of influenza infection, our initial values are picked based on the transmission rate, incubation period, infection period, and immunity period of influenza viruses. Thus, we make the following assumptions:
+
+-   We start with the incubation period: According to CDC, influenza "symptoms typically begin about two days (but can range from one to four days) after influenza viruses infect a person's respiratory tract", and "influenza viruses can be detected in most infected persons beginning one day before symptoms develop"$^{[11]}$. $\mu_{EI}$ is the rate of progression from exposed (E) to infectious (I), so we define $\mu_{EI} = \frac{1}{incubation period in weeks} = \frac{1}{incubation period in days/7}$. The lower bound is 1 day = 1/7 weeks -\> $\mu_{EI} = 7.0$, and the upper bound is 4 days = 4/7 weeks -\> $\mu_{EI} = 1.75$. A 1 day incubation period is short enough, so we leave no further space on the shorter end. We give 0.25 (0.67 extra days) on the longer end.
+
+-   According to the same source above$^{[11]}$, most people infected with influenza are contagious from approximately 1 day before symptom onset to 5-7 days after, with the first 3 days being most contagious. This implies a typical infectious duration of approximately 2 to 7 days. Therefore, we define a plausible range for $\mu_{IR}$ as $\mu_{IR} \in [1, 4]$, corresponding to average infectious periods ranging from 7 to 1.75 days.
+
+-   $\mu_{RS}$ is affected by the immunity period after natural infection and the immune period from vaccines. According to CDC's influenza vaccine schedule, persons age 9 years or older should take 1 dose each influenza season$^{[12]}$. The immunity period after natural infection might be shorter because of antibody waning and antigenic drift of influenza viruses$^{[12]}$. It is hard to model immunity with a single parameter because vaccines, virus mutations, and effect of natural infection can vary depending on the situation, so we safely assume immunity after infection can last from 3 months to 2 years. This leads $\mu_{RS} = 0.1$ (2.3 months) on the shorter end and $\mu_{RS} = 0.01$ (2 years) on the longer end.
+
+-   We estimate $\rho$ based on the limitations of ILINet data. According to CDC, "ILINet does not include every health provider in the United States"$^{[2]}$. It "monitors flu-like illness symptoms, not laboratory-confirmed flu cases". In addition, "seasonal flu illness is not a reportable disease, and not everyone who gets sick with flu seeks medical care or gets tested for flu". Using N = 52.9 million (the total population in U.S. region 5), we do not expect a high reporting rate.
+
+-   From the EDA part, we notice that flu season typically begins with a very small number of infections. By our model specification, $\eta$ is the initial proportion of the population that is infectious. By our calculation, a value between 1e-4 and 0.01 is small and enough to start an outbreak, since 0.0001 will give us 5290 infections already.
+
+-   Finally, $\beta$ represents the transmission rate, which is the most important parameter. We want to introduce the following definitions:
+
+$$
+p_{\text{infection}} = 1 - \exp\left(-\beta \cdot \frac{I}{N} \cdot dt\right)
+$$
+
+This is from our model dynamics, which means $\beta$ has units of per person per time and it represents exactly the per capita transmission rate per unit time (per week), $\frac{I}{N}$ is the probability of contact with an infectious person (mass action), and $dt$ is the time increment. Then the number of new infections from S to E is a binomial draw. We further define $R_0$ of an infection as "the expected number of cases directly generated by one case in a population where all individuals are susceptible to infection"$^{[13]}$. This leads to the following equation:
+
+$$
+R_{0} = \beta \times D_{I}
+$$
+
+where $D_{I}$ is the average period during which the virus is able to transmit from the carrying person to an exposed person (infectious period). Thus, we have $D_{I} = \frac{1}{\mu_{IR}}$, and so
+
+$$
+\beta = R_{0} \times \mu_{IR}
+$$
+
+Now we can estimate $\beta$ from $R_{0}$, which is widely studied. According to Matthew Biggerstaff et.al, "The median point estimate of R in the community setting for seasonal influenza was 1.27 (IQR: 1.19–1.37)", and "R values for seasons where H3N2 (R=1.25; IQR: 1.18–1.27) or H1N1 (R=1.25; IQR: 1.18–1.35) predominated were equivalent". A newer CDC research article qualifies the source: "The estimates of reproduction numbers for seasonal influenza viruses are ≈1.28 (interquartile range 1.19–1.37)". Using the IQR of $R_{0}$ and our range of $\mu_{IR}$, we get $\beta \in [1.19, 5.48]$$^{[14, 15]}$.
+
+## Local Searches
+
+The justification of parameter ranges above provides great suggestions and reference to local and global searches. If a global or local search finds optimal parameter settings way outside these reasonable ranges, it is likely that our model does not suit this data and so we need to do necessary improvements. We conducted 3 local searches in total, with all 3 local searches start within the reasonable range at different values. We fixed N to the approximated total population of HHS Region 5 and k (dispersion) to 4 or 5. All 3 local searches return similar results (see appendix). We will discuss only one of them here.
+
+The plot below shows the result from the first local search with k = 4.
+
+```{r, echo=FALSE, message=FALSE}
+seirs_mifs_local <- readRDS("./gl/seirs_local_search.rds")
+
+seirs_mifs_local |>
+  traces() |>
+  melt() |>
+  ggplot(aes(x=iteration,y=value,group=.L1,color=factor(.L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+```
+
+We conclude the following points from the plot:
+
+-   $\beta$ has a clear upward trend across most particles, suggesting that the initial guess was too low. Most $\beta$ are in the reasonable range.
+
+-   $\eta$ is not identifiable, which is not an issue but shows uncertainty the model cannot capture.
+
+-   The log-likelihood increases and levels-off at -4415, with fluctuation within 10 units. This shows that the filtering algorithm is improving the model fit during early iterations and reaches a plateau, meaning convergence may be near.
+
+-   $\mu_{EI}$ paths are steadily increasing, with one or two outliers shoot upward dramatically. This pattern is not problematic, but $\mu_{EI}$ is alarmingly large from the reasonable scale.
+
+-   $\mu_{IR}$ paths are steady but steadily increasing. This indicates that infectious periods are shorter than originally anticipated.
+
+-   $\mu_{RS}$ paths are steadily increasing, but the convergence is not very significant, as the range is very wide. This indicates that the model is moderately sensitive to the rate of immunity loss. This is not very problematic and can be explained with uncertainty.
+
+-   $\rho$ paths drops initially and stabilizes after 5 iterations to roughly 0.0125, indicating a clear signal from the data about the reporting rate.
+
+In general, we found no significant problems what would prevent us from a more thorough search of maximum log likelihood. The summary of log-likelihoods and simulations with the highest log-likelihood so far are displayed below.
+
+```{r, echo=FALSE}
+seirs_local_result <- readRDS("./gl/seirs_local_loglik.rds") 
+
+summary(seirs_local_result$loglik)
+
+# seirs_local_result |> filter(is.finite(loglik), loglik >= max(loglik)) -> params
+
+# flu_seirs |>
+#   simulate(
+#     params=c(Beta=params$Beta, mu_EI=params$mu_EI, mu_IR=params$mu_IR, mu_RS=params$mu_RS, rho=params$rho, eta=params$eta, k=params$k, N=params$N),
+#     nsim=5,format="data.frame",include.data=TRUE
+#   ) -> sims
+# 
+# sims |>
+#   ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+#   geom_line()+
+#   guides(color="none")
+```
+
+The maximum log-likelihood is -6149.208, which is much lower than our SARMA based regression benchmark. We need to search for optimal parameters on a broader scale with global searches.
+
+## Global Search
+
+This global search is initialized with the reasonable parameter values we previously theorized and nseq = 200. It uses 2 layers of mif2 and reasonable random-walk settings. However, the result is terrible. The maximum log-likelihood improves by 500 units than local searches, but it is still much lower than that of our regression based SARMA benchmark. In the context of likelihood ratios, this difference is statistically significant. The pair-plots have not enough points to identify the patterns of most parameters, especially against log-likelihood, even with a big 2000 difference from the maximum. This strongly suggests that identifiability is poor for most parameters in this model, which means there are major patterns which this model cannot explain. The simulation plot also shows a highly volatile pattern without clear seasonality. In addition, the parameters given by the maximum log-likelihood are problematic. For example, $\mu_{IR} = 23.9$ is utterly ridiculous. This means an infectious individual recovers in only 7 hours! This strongly suggests that the model cannot represent some important underlying dynamics and thus compensating for log-likelihood by pushing some parameters to crazy.
+
+```{r}
+seirs_global_search1 = readRDS("./gl/seirs_global_search1.rds")
+
+seirs_global_search1 |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 2000) -> global_loglik1
+
+summary(global_loglik1$loglik)
+
+pairs(~loglik+Beta+eta+rho+mu_EI+mu_IR+mu_RS, data=global_loglik1, pch=16, cex=0.5)
+```
+
+```{r}
+seirs_global_search1 |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params1
+
+global_params1
+
+flu_seirs |>
+  simulate(
+    params=c(Beta=global_params1$Beta, mu_EI=global_params1$mu_EI, mu_IR=global_params1$mu_IR, mu_RS=global_params1$mu_RS, rho=global_params1$rho, eta=global_params1$eta, k=global_params1$k, N=global_params1$N),
+    nsim=5,format="data.frame",include.data=TRUE
+  ) -> global_sims1
+
+global_sims1 |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+## Thoughts and Findings
+
+Combining all discoveries from this search, we notice that our model cannot fit the data well, and it most crucially cannot represent some key underlying dynamics of seasonal influenza infection. We definitely need to invest more time and computational power to carefully construct and fit a more complicated model. One major characteristic of inference-based models is the ability to put ODEs' representing different types of dynamics into the model, fit the parameters through estimation, and provide unprecedented interpretability. In addition, researchers can also model structural breaks or save computational power through covariate matrices. These make it possible for us to carefully study the underlying forces of influenza infection, make necessary assumptions and solid definitions, and insert these forces into the model so that they can hopefully explain the data in a more comprehensive and interactive way. Most importantly, we have the freedom to balance model interpretability and complexity. It is necessary for us to go back to the drawing board and really map out the intertwined underlying factors. In the next section, we will construct a more real-worldly consistent and biologically coherent model.
+
+# Modeling with Seasonal $\beta$, Vaccine Effects, Covid Suppression, and Antigenic Drifts
+
+## Model Dynamics
+
+We start with a broad description of influenza viruses. Influenza viruses are characterized with "antigenic characterization", which refers to "the analysis of antigenic properties of viruses to examine their relatedness". The CDC antigenically characterizes viruses to "monitor for changes in circulating viruses and to compare how similar these viruses are to those included in flu vaccines"$^{[16]}$. Influenza viruses can change in 2 ways: antigenic "drift" and antigenic "shift". Antigenic drift consists of "small changes (or mutations) in the genes of influenza virus that can lead to changes in the surface proteins of the virus". It occurs frequently but the scale of change is small. However, the small changes in HA and NA that accumulate over time "may result in viruses that are antigenically different", resulting in "a loss or reduction in protection against that particular flu virus". Antigenic shift is "an abrupt, major change in an influenza A virus, resulting in new HA and/or new HA and NA proteins in influenza viruses that infect humans". It occurs irregularly and much less frequently, but it is likely to cause a major pandemic each time an antigenic shift occurs. According to CDC, antigenic drift is the "primary reason people can get influenza more than once". Researches show that the drift rate (in units per year) are approximately 1.01/year for H3N2 and 0.62/year for H1N1. Based on the following references$^{[16,17,18]}$, we model these antigenic changes into our model by introducing the following mechanics:
+
+Let x denote the antigenic drift of flu viruses, and x is a continuous-time Brownian motion
+
+$$
+dx = \sigma_{\text{mut}} \cdot dW_t
+$$
+
+where :
+
+-   $\sigma_{\text{mut}}$ is the standard deviation of the antigenic drift process,
+
+-   $dW_t$ represents a standard Wiener process increment,
+
+-   in discrete-time simulation, this becomes:
+
+$$
+x_{t + \Delta t} = x_t + \text{Normal}(0, \sigma_{\text{mut}} \cdot \sqrt{\Delta t})
+$$
+
+Once per year, at approximately week 52, the current antigenic location $x$ is recorded as the reference strain:
+
+$$
+x_{\text{ref}} = x \quad \text{if} \quad t \mod 52 \approx 0
+$$
+
+The **antigenic distance** from the reference strain is computed as:
+
+$$
+d_{\text{antigenic}} = |x - x_{\text{ref}}|
+$$
+
+To incorporate this into transmission, we model the **antigenic effect** as an exponential function of this distance:
+
+$$
+\text{antigenic_effect} = \exp\left( \alpha \cdot \min(10, d_{\text{antigenic}}) \right)
+$$
+
+This term is then included as a multiplicative factor in the transmission rate $\beta(t)$, amplifying transmission when the antigenic distance is large to approximate the increase in susceptibility and loss of protection. The antigenic distance is applied to $\mu_{RS}$ to approximate the impact of antigenic drifts on the waning rate of natural immunity.
+
+The equation of $mu_{RS}$ is given by:
+
+$$
+\mu_{RS}(t) = \mu_{RS} \cdot \left(1 + \gamma \cdot d_{\text{antigenic}}(t) \right)
+$$
+
+where:
+
+-   $\mu_{RS}$ is the baseline waning rate of immunity (i.e., from $R \rightarrow S$),
+
+-   $\gamma$ is a parameter that controls how strongly antigenic drift accelerates waning,
+
+-   $d_{\text{antigenic}}(t) = |x(t) - x_{\text{ref}}|$ is the absolute antigenic distance between the current circulating strain $x(t)$ and the annually reset reference strain $x_{\text{ref}}$.
+
+According to CDC, influenza viruses spread "mainly by droplets made when people with flu cough, sneeze, or talk"$^{[11]}$. Social distancing and masks can help lowering the risk of spreading a respiratory virus. Our data range from 2015 to 2025, and one of the major impact that we have ot take good care of is the suppression (masks, closure of public spaces, and social distancing) during the Covid-19 pandemic. We introduce the following mechanic to model this effect:
+
+Let:
+
+-   $t$ denote time in weeks,
+
+-   $t_{\text{start}} = 271$ represent the onset of COVID interventions,
+
+-   $t_{\text{end}} = 333$ represent their tapering end,
+
+-   $r_1$ and $r_2$ be steepness parameters for onset and offset transitions,
+
+-   $A \in [0, 1]$ represent the maximum suppression amplitude.
+
+Here 271 corresponds to the week of 2020-03-09. The Unites States declared a national emergency on 03-13-2020, and states began to implement shutdowns on 03-15-2020. 333 corresponds to the week of 05-17-2021, when most states in HHS region 5 lifted mask mandates (except for Illinois, most states lifted their mask mandates in March-July, 2021)$^{[20]}$.
+
+We define the suppression onset and offset using logistic ramp functions:
+
+$$
+\text{onset}(t) = \frac{1}{1 + \exp(-r_1 \cdot (t - t_{\text{start}}))}
+$$
+
+$$
+\text{offset}(t) = \frac{1}{1 + \exp(-r_2 \cdot (t - t_{\text{end}}))}
+$$
+
+The combined suppression effect is:
+
+$$
+\text{covid_effect}(t) = 1 - A \cdot (\text{onset}(t) - \text{offset}(t))
+$$
+
+This formulation allows a **smooth transition into and out of suppression**, with different rates for the rise and fall, capturing the asymmetric nature of COVID control policies and adaptivity nature of the general public. We will fix these rates for simplicity.
+
+```{r}
+data |> filter(YEAR < 2024) -> data
+t = data$X
+covid_start <- 271
+covid_end <- 333
+A <- 0.9
+onset = 1.0 / (1.0 + exp(-0.15 * (t - covid_start)))
+offset = 1.0 / (1.0 + exp(-0.25 * (t - covid_end)))
+covid_effect = 1 - A * (onset - offset)
+plot(t, covid_effect, type = "l", col = "blue", lwd = 2,
+     xlab = "Week", ylab = "COVID Suppression Effect",
+     main = "Dynamic COVID Suppression Curve")
+abline(v = c(covid_start, covid_end), col = "red", lty = 2)
+```
+
+We multiply this `covid_effect(t)` into the time-varying transmission rate $\beta(t)$ to simulate reduced influenza spread during the pandemic.
+
+Our EDA shows that the data has a 12-month seasonality. In addition, "flu season usually occurs in the fall and winter", and "most of the time flu activity peaks between December and February" in the United States, according to CDC$^{[22]}$. These cyclical surge in the number of infectious cases are most likely related to seasonal increase in the transmission rate, apart from antigenic drifts and covid suppression. We will borrow the inspiration of previous projects to use a cosine function to model the pure seasonal effect of transmission rate$^{[8]}$.
+
+$$
+\beta_{\text{seasonal}}(t) = \beta_0 \cdot \left(1 + \beta_1 \cdot \cos\left( \frac{2\pi t}{52} - \phi \right)\right)
+$$
+
+where:
+
+-   $t$ is time in **weeks**,
+
+-   $\beta_0$ is the baseline transmission rate,
+
+-   $\beta_1 \in [0, 1)$ controls the **amplitude** of seasonal variation,
+
+-   $\phi$ is the **phase shift** aligning the seasonal peak with observed flu seasonality.
+
+This formulation produces an annual cycle where transmission is highest around $t = \frac{52}{2\pi} \cdot \phi$, mimicking wintertime influenza peaks.
+
+Combining this with the antigenic drift effects and the Covid-19 effects, the modified transmission rate is thus:
+
+$$
+\beta(t) = \beta_{\text{seasonal}}(t) \cdot \exp\left( \alpha \cdot \min(10, |x(t) - x_{\text{ref}}|) \right) \cdot \left[ 1 - A \cdot \left( \text{onset}(t) - \text{offset}(t) \right) \right]
+$$
+
+where:
+
+-   $x(t)$ is the current antigenic position of the virus,
+
+-   $x_{\text{ref}}$ is the reference strain (reset annually),
+
+-   $\alpha$ controls the strength of immune escape amplification,
+
+-   $A$ is the maximum suppression amplitude during COVID,
+
+-   $\text{onset}(t), \text{offset}(t)$ are logistic ramp functions modeling NPIs.
+
+We proceed to the vaccine effects. Flu vaccines are regularly distributed for years. Vaccine coverage and effectiveness are well documented and studied. Thus, we will borrow data from CDC and other studies for simplicity$^{[22-23]}$. We are primarily concerned with 2 factors, vaccine coverage and vaccine effectiveness. We define the coverage of flu vaccines as the proportion of populations that take flu vaccines, and the effectiveness of vaccines is defined as how effective the vaccine is in providing protection from infection. We load the data:
+
+```{r}
+vax_data <- read.csv("Flu_vac_region_5_monthly.csv")
+ve_annual <- read.csv("vaccine-effectiveness.csv")
+summary(vax_data)
+summary(ve_annual)
+```
+
+The vaccine coverage data is collected from CDC's FluVaxView$^{[22]}$, a dataset on seasonal influenza vaccine coverage from NIS-Flu and BRFSS designed on "the general population at the national, regional, and state level by age group and race/ethnicity, and country-level vaccination coverage estimates among adults". The data loaded here is the monthly vaccine coverage data of HHS region 5 for population aging \>= 6 months from 2015 to the end of 2024. The vaccine effectiveness data comes from the U.S. flu vaccine effectiveness networks led by CDC, which is a collaborative network to "estimate how well flu vaccines work through observational studies using laboratory-confirmed flu as the outcome". The data is on annual basis, and we filtered the range we want.
+
+The quality of the vaccine coverage data is better, as described by CDC, all data we are interested are assumed to be in sound quality (there are no footnotes (\*) associated with any of them). The sample sizes are statistically sound, and the half widths of the 95% CIs' are less than 2% for all the months. The June coverage data is missing from the data for all these seasons because the vaccine coverage in June is too low to be significant. We will fill June data as 0%, and interpolate the monthly data into weekly data to construct the covariate matrix.
+
+However, the quality of the vaccine effectiveness data is poorer. The annual effectiveness is studied scientifically, but the 95% CI's are too wide. Nonetheless, this is the most trustworthy data we can get from the Internet. Future studies may choose to model the vaccine effectiveness in a more rigorous way, or define it as a parameter to estimate, but with all these elements in the model, we have to use the data to construct a covariate matrix for simplicity. With these in mind, we construct the covariate matrix. As stated in $^{[23]}$, "2020-2021 flu vaccine effectiveness was not estimated due to low influenza virus circulation during the 2020-2021 flu season". We set it to a moderate value.
+
+```{r}
+# Time setup
+
+weeks <- row_number(data)
+n_weeks <- length(weeks)
+
+# Covariates
+
+# Vaccine data
+
+# Load vaccine coverage data (monthly, interpolate to weekly from CDC)
+
+# For all years in the full report, from CDC, there are no June data. This is not an occasional missing value error, but intentionally CDC sees no interest in June vaccine coverage. 
+# No one take flu shots that far off infectious season. Thus, we manually add June and set the estimate to 0. 
+
+all_months <- expand.grid(
+  Year=unique(vax_data$Year), 
+  Month=1:12
+)
+
+all_months |> 
+  left_join(vax_data, by=c("Year", "Month")) |> 
+  mutate(
+    Estimate = ifelse(is.na(Estimate), 0, Estimate),
+    coverage = Estimate / 100
+    ) |>
+  arrange(Year, Month) |> 
+  mutate(month_index = row_number())-> vax_data
+
+week_index = tibble(t=1:nrow(data))
+
+week_index |> 
+  mutate(
+    month_position = t/4.348, 
+    coverage_interp = approx(x = vax_data$month_index, y = vax_data$coverage, 
+                             xout = month_position, rule=2)$y
+  ) -> coverage_weekly
+
+# coverage_weekly
+
+write.csv(coverage_weekly, "flu_vac_coverage_region_5_weekly.csv")
+
+# Another important factor that drives the dynamics of vaccination effect is how effective the vaccines are against influenza. The virus change every season, and because different types of flu viruses 
+# dominate different years (for example H3(A) circa 2017-2019, and recently H1N1). Although CDC recommend different types of vaccines in different years, the observed vaccine effectiveness (from reports)
+# differs greatly among different demographic backgrounds (age groups, especially). This made vaccine effectiveness measurement complicated and unreliable. CDC estimates seasonal flu vaccine effectiveness
+# every season, but looking at the CI's, we find that these values are not good enough. Future studies can try to find more reliable sources of vaccine effectiveness. Here we will use these values. 
+# Although it is not ideal, but the nature of vaccine - virus battle and the data both indicate that vaccine effectiveness is not constant over the years. Future studies can try to model effectiveness, 
+# but this is not our focus. 
+
+# "2020-2021 flu vaccine effectiveness was not estimated due to low influenza virus circulation during the 2020-2021 flu season". We set it to a moderate value (doesn't matter because there was COVID): 
+
+ve_annual |> 
+  mutate(ve = VE / 100, season_index = row_number()) -> ve_annual
+
+weeks_per_season <- floor(n_weeks / nrow(ve_annual))
+ve_weekly <- rep(ve_annual$ve, each = weeks_per_season)
+remainder <- n_weeks - length(ve_weekly)
+if (remainder > 0) {
+  ve_weekly <- c(ve_weekly, rep(tail(ve_weekly, 1), remainder))
+}
+
+write.csv(ve_weekly, "ve_weekly.csv")
+
+# Covariate table
+
+covar_df <- tibble(
+  time = weeks,
+  nu0 = as.numeric(coverage_weekly$coverage_interp),
+  VE = as.numeric(ve_weekly)
+)
+
+# Pad t=0 explicitly and make sure values are numeric and not NA
+if (min(covar_df$time) > 0 || covar_df$time[1] != 0) {
+  covar_df <- bind_rows(
+    tibble(
+      time = 0,
+      nu0 = covar_df$nu0[1],
+      VE = covar_df$VE[1]
+    ),
+    covar_df
+  )
+}
+
+covar <- covariate_table(covar_df, times = "time")
+```
+
+Because CDC has not published the vaccine coverage data of season 2024-2025, we have to curtail the data. From now on we are using 2015-2024 seasons.
+
+We model the vaccine effect as the following:
+
+Let:
+
+-   $\nu(t)$ = vaccine coverage at time $t$,
+
+-   $\text{VE}(t)$ = vaccine effectiveness at time $t$,
+
+-   $S(t)$ = number of susceptibles at time $t$,
+
+-   $S_{\text{eff}}(t)$ = effective number of susceptibles after accounting for vaccination.
+
+The effective susceptibility is:
+
+$$
+S_{\text{eff}}(t) = \max\left(0,\; S(t) \cdot \left(1 - \nu(t) \cdot \text{VE}(t)\right)\right)
+$$
+
+This formulation assumes a **leaky vaccine model**, where vaccinated individuals have reduced (but nonzero) susceptibility to infection. The use of the `max` function ensures the susceptible population remains non-negative. This is again a simple but not very standard model specification, but we are not interested in how effective vaccines are, and vaccination programs have been well established in the U.S.. Most importantly, flu vaccines may reduce the probability of infection, but unlike smallpox vaccines, they do not provide full prevention nor insurance.
+
+## State Initialization
+
+Initialization of the proportion of the population in each state is important for better fit at the start. Our data is symptom-based, so we accumulate H based on infectious rate rather (dN_EI) to better match the data. We initialize the population of each state in a more complicated yet consistent way. First note that we start in the middle of a flu season (January), so we assume eta proportion of the population is infectious or in incubation. We note that the data, ilitotal, is a symptom-based data, which our design of H (accumulates with dN_EI) reflects this point. As an accumulator, H will be initialized to 0 and reset every season. However, we cannot initialize E to 0 of we want a better fit at the beginning, and it is consistent with the situation at the start. We have to initialize E as a nonzero value, reflecting the fact that we start in the middle of a season, and allowing H to be accumulated right at the start for better fit. We define $\eta$ as the initial proportion of the population who carry the viruses (either in incubation or being infectious), and weight the proportion of E and I based on basic probability theories:
+
+-   $\eta \cdot N = \eta_{\text{total}}$: the total initially carrying individuals,
+
+-   $\text{prop}_E$: proportion of initial infections in the exposed compartment,
+
+-   $\text{prop}_I$: proportion of initial infections in the infectious compartment.
+
+Then the compartments are initialized as:
+
+$$
+E(0) = \text{round}\left( \eta_{\text{total}} \cdot \text{prop}_E \right)
+$$ $$
+I(0) = \text{round}\left( \eta_{\text{total}} \cdot \text{prop}_I \right)
+$$ $$
+R(0) = 0
+$$
+
+Immunity is modeled implicitly through the transmission rate $\beta(t)$ and the immunity waning rate $\mu_{RS}$, so we set the initial recovered population to zero to avoid introducing additional parameters.
+
+The remaining susceptible population is:
+
+$$
+S(0) = N - E(0) - I(0)
+$$
+
+Finally, the incidence accumulator is initialized to:
+
+$$
+H(0) = 0
+$$
+
+This setup ensures that the model starts from a consistent, biologically plausible state without over-parameterizing early conditions.
+
+## Restarter and Sanity Keepers
+
+We also introduce a Poisson restarter to restart the infections if the Covid suppression effect pushes the virus into "extinction" because of the **nonlinear compounding effect**. The restarter will trigger only if the infectious cases is lower than 10, and the Poisson process, defined as the following equations, is relatively mild. It serves as an insurance to prevent wild estimations of parameters, and it also makes sense because HHS Region 5 is not a closed region and transmission of influenza viruses is not a closed system.
+
+$$
+\text{imported} \sim \text{Poisson}(0.2) \\
+I(t) = I(t) + \text{imported} \\
+H(t) = H(t) + \text{imported}
+$$
+
+Other sanity keepers serve as prevention against extreme values that could cause instability of the model during estimations. These are necessary to keep intermediate values well-defined. For details, please check the code below. We ran the code on the cluster, and running pure `R` files is much easier than running `RMarkdown` notebooks. Thus, we provide the `seirs_beta.R` file if you want to reproduce our results on the cluster.
+
+```{r}
+registerDoFuture()
+
+cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK"))
+if(is.na(cores) || cores < 1) cores <- parallel::detectCores(logical=FALSE)
+
+plan(multisession, workers=cores)
+
+set.seed(1280094583)
+
+# SEIRS model with seasonal transmission rate, covid suppression, vaccine effects, and antigenic drifts
+
+seirs_step <- Csnippet("
+  double covid_start = 271; // from COVID above
+  double covid_end = 333;
+  double onset = 1.0 / (1.0 + exp(-r1 * (t - covid_start)));
+  double offset = 1.0 / (1.0 + exp(-r2 * (t - covid_end)));
+  double covid_effect = 1 - A * (onset - offset); // dynamic suppression
+  
+  double seasonal_phase = 2 * M_PI * t / 52 - phase;
+  double Beta_seasonal = Beta0 * (1 + Beta1 * cos(seasonal_phase)); //seasonal beta with cos function
+  
+  x += rnorm(0, sigma_mut * sqrt(dt)); // antigenic drift H1N1 0.5-1 units per year; H3N2 1-3 units per year; modeled as BM
+  
+  if (fabs(fmod(t, 52.0)) < 1e-2) {
+  x_ref = x;
+  } // annual reset of reference strain 
+  
+  double antigenic_distance = fabs(x - x_ref);
+  double antigenic_effect = exp(alpha * fmin(10.0, antigenic_distance)); 
+  // This means as antigenic distance grows, Beta_t increases exponentially (approximating the increase in susceptibility and loss of protection). 
+  
+  double nu = nu0; //from covariate
+  double VE_eff = VE; //from covariate
+  double S_eff = fmax(0, S * (1 - nu * VE_eff)); //VE from covariate
+  
+  double Beta_t = Beta_seasonal * antigenic_effect * covid_effect; // models how transmission rate is affected by immune escape due to antigenic drifts and Covid
+  double mu_RS_t = mu_RS * (1 + gamma * antigenic_distance); // linear changes the waning rate of immunity depending on how far the drift is away from the original exposure (loss of natural immunity)
+  
+  double p_inf = fmax(0.0, fmin(1 - exp(-Beta_t * I / N * dt), 1.0));
+  double p_EI  = 1 - exp(-mu_EI * dt);
+  double p_IR  = 1 - exp(-mu_IR * dt);
+  double p_RS  = 1 - exp(-mu_RS_t * dt);
+  
+  double dN_SE = rbinom(nearbyint(S_eff), p_inf); // stuck here for 3 hours... S_eff is double and that blowed rbinom up... 
+  double dN_EI = rbinom(E, p_EI);
+  double dN_IR = rbinom(I, p_IR);
+  double dN_RS = rbinom(R, p_RS);
+  
+  S += dN_RS - dN_SE;
+  E += dN_SE - dN_EI;
+  I += dN_EI - dN_IR;
+  if (I < 10) {
+    double imported = rpois(0.2); 
+    I += imported;
+    H += imported;
+  } // (really) mild imported infectious cases (add stochasticity, especially to restart the pandemic!)
+  R += dN_IR - dN_RS;
+  H += dN_EI;
+  
+  
+  
+  if (fabs(fmod(t, 1.0)) < 1e-8) {
+  H = 0;
+  } // resets H = 0 
+
+") # H tracks incident symptomatic cases, consistent with ILI report definitions
+
+# Intialization: We initialize the population of each state in a more complicated yet consistent way. First note that we start in the middle of a flu season (January), 
+# so we assume eta proportion of the population is infectious or in incubation. We note that the data, ilitotal, is a symptom-based data, which our design of H (accumulates with dN_EI) reflects this point. 
+# As an accumulator, H will be initialized to 0 and reset every season. However, we cannot initialize E to 0 of we want a better fit at the beginning, and it is consistent with the situation at the start. 
+# We have to initialize E as a nonzero value, reflecting the fact that we start in the middle of a season, and allowing H to be accumulated right at the start for better fit. 
+# Question: N is the total population, and N = S + E + I + R unless someone landed from Mars. How do we define the initial proportion of incubation and infectious? 
+# Solution: We still set eta * N of people in E and I, and weight the proportion of E and I based on basic probability theories: 
+
+seirs_init <- Csnippet("
+  double dur_E = 1.0 / mu_EI;
+  double dur_I = 1.0 / mu_IR; // Consistency! 
+  
+  double prop_E = dur_E / (dur_E + dur_I); // in the middle of a flu season, the proportion of incubation virus-carrying pop
+  double prop_I = 1.0 - prop_E; // in the middle of a flu season, the proportion of infectious virus-carrying people
+  
+  double eta_total = eta * N; // Now eta is the proportion of people who carry the virus
+  
+  E = nearbyint(eta_total*prop_E); 
+  I = nearbyint(eta_total*prop_I);
+  R = 0; // Immunity is implicitly modeled by beta and mu_RS, so this is 0 (fine), and don't want any more parameters (limits)
+  S = N - E - I;
+  H = 0;
+  x = 0;
+  x_ref = 0;
+")
+
+dmeas <- Csnippet("
+  double mean = (rho * H < 1) ? 1 : rho * H;
+  lik = dnbinom_mu(reports,k,mean,give_log);
+")
+
+rmeas <- Csnippet("
+  reports = rnbinom_mu(k,rho*H);
+")
+
+data |> select(reports = ILITOTAL) |> 
+  pomp(
+    times=row_number(data), t0 = 0,
+    rprocess=euler(seirs_step,delta.t=1/7),
+    rinit=seirs_init,
+    rmeasure=rmeas,
+    dmeasure=dmeas,
+    accumvars="H",
+    covar = covar,
+    covarnames = c("nu0", "VE"),
+    statenames = c("S", "E", "I", "R", "H", "x", "x_ref"), 
+    paramnames = c(
+      "Beta0", "Beta1", "phase",
+      "mu_EI", "mu_IR", "mu_RS",
+      "rho", "eta", "k", "N",
+      "alpha", "gamma", "sigma_mut", "A", "r1", "r2"
+    ),
+    partrans=parameter_trans(
+      log=c("Beta0", "Beta1", "mu_EI", "mu_IR", "mu_RS", "k", "sigma_mut", "alpha", "gamma"), 
+      logit=c("rho", "eta", "A")
+    ),
+    params = c(
+      N = 52900000,      # population of HHS region 5 (fixed)
+      Beta0 = 1.5,       # baseline transmission rate
+      Beta1 = 0.2,       # seasonal forcing amplitude
+      phase = 1.2,         # seasonal peak (e.g. week 0 = January) fixed to week 10, clear trend
+      mu_EI = 3.5,       # exposed → infectious (1/7 week = 1 day) CDC: 1-4 days, fixed to 2 days (CDC estimated average)
+      mu_IR = 1.4,       # infectious → recovered (default = 5 days, CDC estimated typical)
+      mu_RS = 0.05,      # waning immunity (1/0.05 = 20 weeks)
+      rho = 0.05,        # reporting rate
+      eta = 0.0001,      # initial carrying %
+      alpha = 1.5,       # antigenic impact on Beta
+      gamma = 0.5,       # antigenic impact on immunity waning
+      sigma_mut = 0.01,  # antigenic drift (volatility), fixed (not enough data and not doing deep evolutionary analysis)
+      A = 0.3,           # Covid suppression coefs, this matters! 
+      r1 = 0.15,         # fixed, not enough data
+      r2 = 0.25,         # fixed, not enough data
+      k = 10             # overdispersion (fixed)
+    )
+  ) -> flu_seirs_bvgc # Beta, vaccine, genetic mutation, covid
+```
+
+## Local Search
+
+We do a couple local searches. We fix $\sigma_{mut}$, r1, r2, k, N for simplicity, and we will initialize each searches with initial values within the reasonable ranges we discussed before.
+
+```{r, warning=FALSE, message = FALSE}
+library(reshape2)
+bvgcseirs_mifs_local <- readRDS("./gl/bvgcseirs_local_search.rds")
+bvgcseirs_mifs_local |>
+  traces() |>
+  reshape2::melt() |>
+  ggplot(aes(x=iteration,y=value,group=L1,color=factor(L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+```
+
+```{r}
+bvgcseirs_local_result <- readRDS("./gl/bvgcseirs_local_loglik.rds") 
+
+summary(bvgcseirs_local_result$loglik)
+
+bvgcseirs_local_result |> filter(is.finite(loglik), loglik >= max(loglik)) -> params
+
+params
+```
+
+The first local search shows good convergence for most of the parameters except for $\mu_{EI}, \mu_{IR}, \mu_{RS}, \eta, \gamma$. The log-likelihood is converging but it starts from a low level. Even so, the log-likelihood is much higher than the basic SEIRS model, and it is increasing closer to that of our regression based SARMA benchmark. We notice that $mu_{EI}$ is mostly very low except for 1 path. We will fix some parameters to reasonable ranges discussed previously, among which $\mu_{EI}$ is the most stable one and may have to be fixed to prevent it going crazy (982.7 is way too high). We play with our model with a similar logic: fixing different parameters and diagnose the search results.
+
+```{r}
+bvgcseirs_mifs_local <- readRDS("./gl/bvgcseirs_local_search2.rds")
+bvgcseirs_mifs_local |>
+  traces() |>
+  reshape2::melt() |>
+  ggplot(aes(x=iteration,y=value,group=L1,color=factor(L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+```
+
+```{r}
+bvgcseirs_local_result <- readRDS("./gl/bvgcseirs_local_loglik2.rds") 
+
+summary(bvgcseirs_local_result$loglik)
+
+bvgcseirs_local_result |> filter(is.finite(loglik), loglik >= max(loglik)) -> params
+
+params
+```
+
+The second search returns better convergence for most parameters. The log-likelihood is increasing steadily. Another local search shows a similar result (see appendix). We fixed $\mu_{EI}$ this time, and the results are better:
+
+-   The log-likelihood is slowly but steadily climbing with a much better initial start. There are potential and maximum has not been reached. It shows that fixing $\mu_{EI}$ to a reasonable value does not sacrifice too much in terms of log-likelihood.
+
+-   Convergence of $\beta_{0}$ and $\beta_{1}$ is better than the previous run, $\beta_{1}$ is slightly increasing and might be higher at maximum log-likelihood.
+
+-   phase is converging to -0.5, which is not too distant to the reasonable range (November - February).
+
+-   $\mu_{IR}$ converges to 1, which corresponds to a 7-day infectious period. This is pretty consistent with the reasonable range.
+
+-   $\mu_{RS}$ is less identifiable, which is understandable because immunity period has a wide reasonable range from various studies.
+
+-   $\rho$ and $\eta$ are less identifiable as well. $\eta$ shows its uncertainty nature as usual, but $\rho$ is slightly increasing and fluctuating within 0.1-0.5.
+
+-   $\alpha$ is converging to a range around 7 and $\gamma$ is low across iterations with sign of increase at the end. It should be taken care of if $\gamma$ increases to an unreasonable value in global searches.
+
+-   $A$ is surprisingly low considering Covid suppression had major impacts on influenza infection. However, we need to keep in mind that the number of reports is very sensitive to the transmission rate ($\beta$). A small decrease in $\beta$ can lead to significant decrease in reports if it stays at a low level for a long time because of the chained effect of transmission (not 1 to 1 but 1 to $R_{0}$). This is the **nonlinear compounding effect** - not just preventing 1 case, but all the future cases they would have caused.
+
+The local searches shows that the model is converging in a stable manner. The log-likelihood paths indicates that a global search is necessary to find the maximum log-likelihood. We can proceed to global searches.
+
+## Global Search
+
+We start with some brave explorations, keeping most parameters flexible and iterate with larger random-walk standard deviations.
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search.rds")
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 2000) -> global_loglik
+
+pairs(~loglik+Beta0+Beta1+phase+eta+rho+alpha+gamma+mu_IR+mu_RS+A, data=global_loglik, pch=16, cex=0.5)
+```
+
+```{r}
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=5,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+The maximum log-likelihood slightly increases. A 5-time simulation shows clear seasonal spikes matching the data, although simulation is relatively unstable because of random antigenic drifts. The pair plot indicates that $\mu_{RS}$ does not have significant correlation with all other parameters and log-likelihood, but we are hesitant to fix this parameter because we are not confident on any specific value. Phase can probably be fixed to 0.0 because most points are clustering near 0.0 or $\pm 2\pi$. The most problematic parameter is $\gamma$, which is way too large $\gamma = 447.67$. This indicates that the model is choosing biologically implausible drift parameters to fit the noises of the data, compensating for the poor ability of seasonal factors in capturing the patterns of the data, especially off-season fluctuations. We tried one more global search trying to solve this issue by decreasing the random-walk standard error (see appendix), which resulted in minimal improvement. We then tried another global search with flexible $\mu_{EI}$ to look for any possibility (see appendix). We found that $\mu_{EI}$ is indeed not strongly correlated with other parameters from the pair plot and it can go crazy in its value. Without better alternatives, we decided to fix $\mu_{EI}$ and phase to 3.5 (2 days) and 0.0 (peak in January), respectively.
+
+The pair plot of phase and $\mu_{EI}$ supports fixing these parameters. A plot showing exploration coverage of each parameter indicates clustering of $\mu_{EI}$ and phase further supports our decision.
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search2.rds")
+
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 500) -> global_loglik
+
+pairs(~loglik+phase, data=global_loglik, pch=16, cex=0.5)
+
+pairs(~loglik+mu_EI, data=global_loglik, pch=16, cex=0.5)
+
+seirs_global_search |> 
+  pivot_longer(-c(loglik, loglik.se)) |> 
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~name, scales = "free_x") +
+  labs(title = "Parameter Exploration Coverage")
+```
+
+The antigenic drift of 2 most dominant influenza viruses in this period is given by: H3N2: 1-3 units/year, H1N1: 0.5-1 units/year$^{[18]}$. A simple calculation will reveal the core of our problem with $\gamma$:
+
+$$
+\text{Var}[x(t)] = \sigma_{\text{mut}}^2 \cdot t
+\quad \Rightarrow \quad
+\text{SD}[x(t)] = \sigma_{\text{mut}} \cdot \sqrt{t}
+$$
+
+$$
+\text{To match } \text{SD}[x(t)] \approx 1 \text{ unit/year:} \quad
+\sigma_{\text{mut}} \cdot \sqrt{52} \approx 1
+\quad \Rightarrow \quad
+\sigma_{\text{mut}} \approx \frac{1}{\sqrt{52}} \approx 0.14
+$$
+
+Thus, we change $\sigma_{mut}$ to 0.14 (still fixed) in order to handle the $\gamma$ issue.
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search3.rds")
+
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 500) -> global_loglik
+
+pairs(~loglik+Beta0+Beta1+eta+rho+alpha+gamma+mu_IR+mu_RS+A, data=global_loglik, pch=16, cex=0.5)
+
+seirs_global_search |> 
+  pivot_longer(-c(loglik, loglik.se)) |> 
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~name, scales = "free_x") +
+  labs(title = "Parameter Exploration Coverage")
+```
+
+```{r}
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=5,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+The first row of the pair plot shows that most parameters have nice curved likelihood surfaces, and all parameters are in their optimal ranges. It is note-worthy that $\gamma$ has a really wide optimal range from 0 to 30. The parameter exploration coverage plot shows that the designated ranges are well explored. These indicate that the parameters are at global maximum. The log-likelihood is very close to our previous trials, which means fixing phase, $mu_{EI}$ and changing $\sigma_{mut}$ does not sacrifice the log-likelihood of our estimation. Compare our result with the regression based SARMA model, the log-likelihood matches the best regression based SARMA model, which is a comforting sign. The fit is not very good, but this is understandable because symptom-based data has a lot of noise relative to lab-based reports. We only modeled in the dynamics of flu virus transmission, and these noises brings uncertainty that we cannot capture with this model. We will check the interpretability of our model by discussing the reasonableness of our estimated parameters:
+
+### Reasonableness of Estimated Parameters
+
+We summarize the reasonableness of estimated parameters. We used ChatGPT$^{[19]}$ to create the following table.
+
+| Parameter | Value | Interpretation | Reasonable? | Justification |
+|-----------|-----------|----------------------------|-----------|-----------|
+| **Beta0** | 1.5758 | Baseline transmission rate | ✅ Yes | Implies $R_0 \approx 1.04$; slightly lower than flu estimates. |
+| **Beta1** | 0.1356 | Seasonal forcing amplitude | ✅ Yes | Typical moderate seasonal variation. |
+| **mu_IR** | 1.5210 | Recovery rate: avg infectious period ≈ 4.6 days | ✅ Yes | Matches CDC’s 5–7 day range. |
+| **mu_RS** | 0.0833 | Waning immunity: avg ≈ 12 weeks | ✅ Yes | Falls within 3–24 month range from literature. |
+| **rho** | 0.0042 | Reporting rate (\~0.4%) | ✅ Yes | Low reporting is expected from syndromic ILINet data. |
+| **eta** | 0.0090 | Initial infected+exposed fraction | ✅ Yes | Starting in-season: 0.9% is plausible. |
+| **alpha** | 0.2491 | Drift impact on transmission | ✅ Yes | Moderate exponential amplification with drift. |
+| **gamma** | 6.9526 | Drift impact on immunity loss | ⚠️ Borderline | Very strong: 7× at unit drift — may overcompensate. |
+| **A** | 0.0881 | Max COVID suppression effect | ✅ Yes | \~9% suppression; matches observed social behavior. |
+
+Recall our previous discussion on how the transmission rate can be related to $\mu_{IR}$ and the reproduction number $R_0$. Using the same definitions, we can roughly visualize how reasonable our $\beta$ is.
+
+$$
+\mu_{IR} \in \left[ \frac{1}{7}, \frac{1}{2/7} \right] = [1.0,\; 3.5]
+$$
+
+$$
+R_0 \in [1.19,\; 1.37]
+$$
+
+Using this, the plausible range for the transmission rate $\beta$ is$^{[11, 14]}$:
+
+$$
+\beta = R_0 \cdot \mu_{IR} \Rightarrow \beta \in [1.19,\; 4.795]
+$$
+
+```{r}
+# Estimated model parameters
+Beta0 <- 1.5758
+Beta1 <- 0.1356
+phase <- 0
+
+# Time in weeks
+t <- seq(0, 51, by = 1)
+
+# Compute seasonal β(t)
+beta_t <- Beta0 * (1 + Beta1 * cos(2 * pi * t / 52 - phase))
+
+# Literature range using R0 ∈ [1.19, 1.37], mu_IR ∈ [1.0, 3.5]
+beta_min <- 1.19
+beta_max <- 1.37 * 3.5  # 4.795
+
+# Plot β(t)
+plot(t, beta_t, type = "l", col = "orange", lwd = 2,
+     ylim = c(min(beta_t, beta_min) - 0.1, beta_max + 0.5),
+     xlab = "Week", ylab = expression(beta(t)),
+     main = expression("Seasonal Transmission Rate " * beta(t) * " with Literature-Based Range"),
+     cex.main = 1.2, cex.lab = 1, cex.axis = 0.9)
+
+# Shaded literature range
+polygon(c(t, rev(t)), c(rep(beta_min, length(t)), rev(rep(beta_max, length(t)))), 
+        col = rgb(0.5, 0.5, 0.5, 0.2), border = NA)
+
+# Horizontal lines
+abline(h = beta_min, col = "red", lty = 2)
+abline(h = beta_max, col = "darkgreen", lty = 2)
+
+# Add smaller legend above plot area
+legend("topright",
+       legend = c("Model Seasonal β(t)", 
+                  bquote(beta[min] == .(round(beta_min, 2))), 
+                  bquote(beta[max] == .(round(beta_max, 1)))), 
+       col = c("orange", "red", "darkgreen"), 
+       lty = c(1, 2, 2), lwd = c(2, 1, 1),
+       bty = "n", cex = 0.8)
+
+```
+
+We used ChatGPT$^{[19]}$ to help preparing the above plot.
+
+We can conclude that our estimation of $\beta_{t}$ is biologically plausible, though slightly conservative (the estimated reproduction number is slightly lower than studies reveal). The fit is acceptable given the added complexity of vaccine effects, antigenic drift, and Covid suppression.
+
+### The $\gamma$ Issue
+
+Recall that the antigenic drift modifies the immunity waning rate $\mu_{RS}(t)$ through the equation:
+
+$$
+\mu_{RS}(t) = \mu_{RS} \cdot \left(1 + \gamma \cdot d_{\text{antigenic}}(t)\right)
+$$
+
+In this model, we fix $\sigma_{mut}$ to match literature-reported yearly antigenic distances. The **estimated baseline** is $\mu_{RS} = 0.0833$, and the **fitted** value of $\gamma$ is approximately 6.95. For moderate antigenic distances like $d = 0.5$, which are **expected annually** based on known drift rates (of H1N1), this leads to:
+
+$$
+\mu_{RS}(t) = 0.0833 \cdot (1 + 6.95 \cdot 0.5) = 0.0833 \cdot 4.475 \approx 0.373
+$$
+
+This implies an effective immunity duration of:
+
+$$
+\frac{1}{\mu_{RS}(t)} \approx \frac{1}{0.373} \approx 2.68 \text{ weeks}
+$$
+
+Such rapid waning (about 19 days) is **biologically unrealistic**, especially since immunity from influenza is typically thought to last several months.
+
+For stronger antigenic shifts, say $d = 1$, the adjusted rate becomes:
+
+$$
+\mu_{RS}(t) = 0.0833 \cdot (1 + 6.95) \approx 0.0833 \cdot 7.95 \approx 0.662
+$$
+
+$$
+\frac{1}{\mu_{RS}(t)} \approx 1.51 \text{ weeks}
+$$
+
+This would imply that natural immunity vanishes in just 10–11 days, which contradicts empirical knowledge. Therefore, such a large $\gamma$ is **alarming**, as it creates implausibly fast immune decay under realistic levels of antigenic change. Our explanation is that the model is likely compensating the overall low estimation $\beta_{t}$. If the transmission rate is low, then transmission per contact is low even with large $S$ and $I$, and the overall force of infection is suppressed. To compensate this phenomenon, the model can increase $\mu_{RS}$ (make people return from Recovered to Susceptible faster), increase $\gamma$ (let antigenic drift inflate $\mu_{RS}(t)$ in drift-heavy seasons), or boost susceptibility via antigenic drifts or vaccine factors. We model vaccine factors as covariates, so the model cannot compensate it with this aspect. In addition, we estimate $\alpha = 0.2491$, which at $d(t) = 1$ gives an approximately 28.3% amplification on the transmission rate, which is not as explosive as $\gamma$. This leaves with one explanation: Our model does not rely on drift to boost transmission much. Instead, it is leaning heavily on a fast baseline waning rate and a very strong effect of antigenic drift on immunity loss via $\gamma$. Thus, the immunity waning side is being inflated. This indicates overfitting to noise in the context of pomp, where the filtering process finds that random fluctuations in $x(t)$ are better at mimicking the real data rather then seasonal $\beta$. We can also observe this effect partially from the pair plot:
+
+```{r}
+pairs(~Beta0+Beta1+alpha+gamma+mu_RS, data=global_loglik, pch=16, cex=0.5)
+```
+
+We observe strong nonlinear negative correlations between $\beta_{0}$ versus $\beta_{1}$ and $\alpha$, weak negative correlations between $\gamma$ versus the rest of them (same for $\mu_{RS}$), and a strong positive correlation between $\beta_{1}$ and $\alpha$ (likely because if the seasonal variation is high, $\alpha$ must rise to allow immune escape to "rescue" transmission in low seasons).
+
+To further understand and identify the impacts of these parameters, we will construct poor man's profiles on $\alpha$ and $\gamma$.
+
+```{r}
+alpha_profile_results <- readRDS("./gl/poor_profile_alpha.rds")
+
+alpha_profile_results |>
+  pivot_longer(cols = c(Beta0, Beta1, gamma, mu_RS), names_to = "param", values_to = "value") |>
+  ggplot(aes(x = alpha, y = value)) +
+  geom_line() +
+  facet_wrap(~param, scales = "free_y") +
+  labs(
+    title = "Parameter Adjustments Across Profile of Alpha",
+    x = expression(alpha),
+    y = "Estimated Value"
+  ) +
+  theme_minimal()
+
+ggplot(alpha_profile_results, aes(x = alpha, y = loglik)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = loglik - loglik.se, ymax = loglik + loglik.se), width = 0.01) +
+  labs(
+    title = "Poor Man's Profile Likelihood for Alpha",
+    x = expression(alpha),
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+```
+
+The poor man's profile likelihood plot suggests that a moderate antigenic effects (0.25) best explains the data, which supports our global search result. The log-likelihood quickly increases as $\alpha$ incerases, then drops off after $\alpha > 0.4$. The compensation behavior is significant, indicating the model is reallocating explanation of transmission from seasonality to drift. The plot versus $\gamma$ shows that when drift barely affects transmission, the model relies more on waning immunity to create seasonal dynamics, while immunity loss is more stable when transmission variability is better captured. This confirms our earlier hypothesis.
+
+```{r}
+gamma_profile_results <- readRDS("./gl/poor_profile_gamma.rds")
+
+gamma_profile_results |>
+  pivot_longer(cols = c(Beta0, Beta1, alpha, mu_RS), names_to = "param", values_to = "value") |>
+  ggplot(aes(x = gamma, y = value)) +
+  geom_line() +
+  facet_wrap(~param, scales = "free_y") +
+  labs(
+    title = "Parameter Adjustments Across Profile of Gamma",
+    x = expression(gamma),
+    y = "Estimated Value"
+  ) +
+  theme_minimal()
+
+ggplot(gamma_profile_results, aes(x = gamma, y = loglik)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = loglik - loglik.se, ymax = loglik + loglik.se), width = 0.01) +
+  labs(
+    title = "Poor Man's Profile Likelihood for Gamma",
+    x = expression(gamma),
+    y = "Log-Likelihood"
+  ) +
+  theme_minimal()
+```
+
+The log-likelihood increases very rapidly between $\gamma = 0$ and $\gamma \approx 3$. This suggests the model greatly benefits from any sensitivity to antigenic drift in immunity waning. Without high $\beta_{t}$, the model compensates by making people become susceptible again faster via inflated $\gamma$. After $\gamma$ exceeds 5, the likelihood barely improves, indicating diminishing returns, but it also does not penalize implausibly high $\gamma$ values. This allows high $\gamma$ even if it makes no biological sense, which is evidence of overfitting - the model is tracking noise with flexibility in $\mu_{RS}(t)$. The trace plot shows that as $\gamma$ increases, $\mu_{RS}$ decreases steeply, at a declining rate. This compensatory mechanism ensures that the effective waning rate stays in a desirable range for fitting the data. This shows that the model uses the product of $\gamma$ and $\mu_{RS}$ to optimize fit, even if that product arises from biologically implausible values. $\beta_{0}$, $\beta_{1}$, and $\alpha$ weakly responds to changes in $\gamma$.
+
+The conclusion from these profiles confirms our hypothesis that the model's strong $\gamma$ arises most likely because the particle filter exploits $\gamma \times drift$ to match residuals, especially when seasonality and $\beta$ are underpowered. This compensation shows classic signs of identifiability entanglement between transmission and immunity loss. A possible way to handle this situation is recalibrating the model by allowing more flexibility in $\beta_{t}$ or using a state-space model on $x(t)$ to regularize how much information drift is allowed to carry. We will leave these options to future studies.
+
+### The $\rho$ Question
+
+Previously, we anticipated that the reporting rate is unlikely to be very high. Our model says $\rho = 0.004213444$, which seems extremely low at the first glance. However, evidence indicates that our estimation might be reasonable. According to CDC influenza burden reports, it is estimated that "flu has resulted in 9.3 million - 41 million illnesses ... annually between 2010 and 2024"$^{[2]}$. The yearly totals of illnesses in HHS Region 5 is:
+
+```{r}
+yearly_totals <- data |>
+  group_by(YEAR) |>
+  summarise(yearly_total = sum(ILITOTAL, na.rm = TRUE)) |>
+  arrange(YEAR)
+
+print(yearly_totals)
+```
+
+The population of U.S. is approximately 330 million, which means on average Region 5 accounts for$\frac{52.9}{330} \approx 0.16$ of the total population. Thus, the expected true cases in Region 5 is 1.49 million \~ 6.56 million annually. By some simple calculations, the expected reporting rate can be as low as 0.01 and as high as 0.23. These estimates are based on estimated data from CDC, which is estimated from hospitalization rate (not reliable itself)$^{[24, 25]}$. In addition, we have not take asymptomatic but infectious individuals (pooled mean of 16% with 95% CI: 13%-19%) and the noise from symptom-based data (cases are not rigorously filtered through biological testing) into account. As mentioned before, estimating $\rho$ is hard. Thus, we say a 0.4% is reasonable from a conservative perspective. We might investigate more about this in the following section.
+
+## Profile Likelihood Evaluation - Poor Man's Profile over $\rho$
+
+To quantify uncertainty in the influenza reporting rate $\rho$, we first constructed a Poor Man’s Profile Likelihood, fixing $\rho$ across a grid and computing the log-likelihood at each point using a fixed parameter set derived from the global maximum likelihood estimate.
+
+```{r}
+best_est <- readRDS("./gl/bvgcseirs_global_params.rds") |> 
+  slice(1) |> 
+  select(-loglik, -loglik.se) |> 
+  unlist()
+
+# Grid of rho values to evaluate
+rho_grid <- tibble(rho = seq(0.02, 0.08, length.out = 25))
+
+registerDoFuture(); plan(multisession, workers=cores)
+
+#bake(file = "./gl/bvgcseirs_global_params.rds", dependson = flu_seirs_bvgc, {
+#  foreach(p = iter(rho_grid, "row"), .combine = rbind,
+#          .packages = "pomp") %dopar% {
+#    
+#    test_params <- best_est
+#    test_params["rho"] <- p$rho
+#    
+#    replicate(10, logLik(pfilter(flu_seirs_bvgc, params = test_params, Np = 4000))) |>
+#      logmeanexp(se = TRUE) -> ll
+#     tibble(rho = p$rho, loglik = ll[1], loglik.se = ll[2])
+#   } -> poor_profile
+# 
+#   attr(poor_profile, "ncpu") <- nbrOfWorkers()
+#   poor_profile
+# }) -> poor_profile
+
+poor_profile <- readRDS("./gl/poor_profile_rho.rds")
+
+```
+
+### Profile Likelihood Coverage
+
+As shown in the figure below, this profile was smooth and unimodal, with a clear maximum at the lower bound of the evaluated range ($\rho \approx 0.02$). However, this approach does not re-optimize other parameters at each $\rho$, and therefore may misrepresent the true likelihood surface.
+
+```{r}
+poor_profile |> 
+  ggplot(aes(x = rho, y = loglik)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = max(poor_profile$loglik, na.rm = TRUE) - 1.92, linetype = "dashed") +
+  labs(title = "Poor Man's Likelihood Profile for rho",
+       x = expression(rho), y = "Log-Likelihood") +
+  theme_minimal()
+
+```
+
+```{r}
+best_rho_poor <- poor_profile |> 
+  filter(loglik == max(loglik, na.rm = TRUE)) |> 
+  pull(rho)
+
+# Update best parameters with best_rho
+best_rho_params_poor <- best_est
+best_rho_params_poor["rho"] <- best_rho_poor
+```
+
+### Posterior Predictive Check
+
+To assess model fit, we simulate 100 trajectories under the MLE obtained from the profile likelihood over $\rho$ and overlay them with the observed data. The code for this is adapted from the lecture notes$^{[30]}$.
+
+```{r}
+# Simulate 100 trajectories at best rho (from poor man's profile)
+sims_poor <- simulate(flu_seirs_bvgc,
+                      params = best_rho_params_poor,
+                      nsim = 100,
+                      format = "data.frame",
+                      include.data = TRUE)
+
+# Plot
+ggplot(sims_poor, aes(x = time, y = reports, group = .id, color = (.id == "data"))) +
+  geom_line(alpha = 0.5) +
+  scale_color_manual(values = c("black", "#3AB6E9")) +
+  guides(color = "none") +
+  labs(title = "Posterior Predictive Check (Poor Man's Best rho)",
+       x = "Time", y = "Reported Cases") +
+  theme_minimal()
+
+  sims_summary_poor <- sims_poor |>
+  group_by(time) |>
+  summarize(
+    lower = quantile(reports, 0.025),
+    upper = quantile(reports, 0.975),
+    median = median(reports)
+  )
+```
+
+The posterior predictive check based on this poor man's best $\rho$ revealed a substantial mismatch: simulated epidemic curves were an order of magnitude larger than observed data. This is a direct consequence of fixing $\rho$ to a low value without adjusting other parameters like the transmission rate $\beta_0$ or initial exposure $\eta$. Since $reports = \rho \times H$, a low $\rho$ forces the model to simulate unrealistically large hidden infections $H$ to match observed cases, leading to highly inflated seasonal peaks.
+
+```{r, warning=FALSE}
+ggplot() +
+  geom_ribbon(data = sims_summary_poor, aes(x = time, ymin = lower, ymax = upper), fill = "#3AB6E9", alpha = 0.3, inherit.aes = FALSE) +
+  
+  geom_line(data = sims_summary_poor, aes(x = time, y = median, color = "Median Simulated"), size = 0.8) +
+  
+  geom_line(data = filter(sims_poor, .id == "data"), aes(x = time, y = reports, color = "Observed Data"), size = 0.8) +
+  
+  scale_color_manual(values = c("Median Simulated" = "black", "Observed Data" = "red")) +
+  
+  labs(title = "Posterior Predictive Check (Credible Interval)",
+       y = "Reported Cases", x = "Time",
+       color = "Legend") +
+  
+  theme_minimal()
+
+```
+
+To better characterize predictive uncertainty, we computed the 95% credible interval of the simulated trajectories (see figure above). This revealed a wide interval far exceeding the observed data, further highlighting the scale mismatch. The median simulated trajectory still overshot observed cases, particularly during epidemic peaks. This motivated us to move beyond the poor man's approach and adopt a full profile likelihood with re-optimization at each $\rho$.
+
+## True Profile Likelihood Evaluation
+
+We next constructed a true profile likelihood by fixing $\rho$ across a grid and re-optimizing the remaining parameters using mif2() adapting the code from the lecture note$^{[30]}$.
+
+```{r, eval=FALSE}
+# prof_rho  <- readRDS("./gl/profile_rho.rds")
+
+global_params <- readRDS("./gl/bvgcseirs_global_search3.rds")
+
+# Use top ~20 loglik values to get bounding box
+box <- global_params |> 
+  filter(loglik >= max(loglik, na.rm = TRUE) - 20) |> 
+  select(-loglik, -loglik.se) |> 
+  pivot_longer(everything()) |> 
+  group_by(name) |> 
+  summarize(lower = min(value), upper = max(value)) |> 
+  column_to_rownames("name") |> 
+  t()
+
+profile_pts <- 30      # number of fixed rho values
+profile_Nreps <- 5     # number of MIF runs per rho
+
+idx <- which(colnames(box) != "rho")
+
+starts <- profile_design(
+  rho = seq(0.02, 0.04, length.out = profile_pts),
+  lower = box["lower", idx],
+  upper = box["upper", idx],
+  nprof = profile_Nreps
+)
+
+rw_sd_profile <- rw_sd(
+  rho = 0,                 # fixed
+  mu_RS = 0.005,
+  gamma = 0.01,
+  Beta0 = 0.01, Beta1 = 0.01,
+  mu_EI = 0.01, mu_IR = 0.01,
+  eta = 0.00005,
+  alpha = 0.01, gamma = 0.01,
+  phase = 0.05,
+  sigma_mut = 0.005,
+  r1 = 0.01, r2 = 0.01
+)
+
+registerDoFuture(); plan(multisession, workers=cores)
+bake(file = "./gl/profile_rho.rds", dependson = flu_seirs_bvgc, {
+  foreach(start = iter(starts, "row"), .combine = rbind,
+          .packages = "pomp") %dopar% {
+
+    mf <- flu_seirs_bvgc |>
+      mif2(params = unlist(start),
+           Np = 2000, Nmif = 100,
+           cooling.fraction.50 = 0.5,
+           rw.sd = rw_sd_profile) |>
+      mif2(Nmif = 100, cooling.fraction.50 = 0.2)
+
+    replicate(20, logLik(pfilter(mf, Np = 5000))) |>
+      logmeanexp(se = TRUE) -> ll
+
+    coef(mf) |> bind_rows() |>
+      mutate(profiled_rho = start$rho) |>
+      bind_cols(loglik = ll[1], loglik.se = ll[2])
+  } -> prof_rho
+
+  attr(prof_rho, "ncpu") <- nbrOfWorkers()
+  prof_rho
+}) -> prof_rho
+
+```
+
+### Profile Likelihood Coverage
+
+As shown below, the true profile likelihood yielded a considerably noisier likelihood surface, but one that better captured local structure. Despite Monte Carlo variation, the profile had a well-defined maximum around $\rho \approx 0.0386$.
+
+```{r}
+global_params <- readRDS("./gl/bvgcseirs_global_search3.rds")
+prof_rho <- readRDS("./gl/profile_rho.rds")
+
+prof_rho |> 
+  ggplot(aes(x = profiled_rho, y = loglik)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = max(prof_rho$loglik, na.rm = TRUE) - 1.92, linetype = "dashed") +
+  labs(title = "Profile Likelihood for rho",
+       x = expression(rho),
+       y = "Log-Likelihood") +
+  theme_minimal()
+```
+
+```{r}
+# Compute 95% CI
+ci_cutoff <- max(prof_rho$loglik, na.rm = TRUE) - 1.92
+
+rho_CI <- prof_rho |> 
+  filter(loglik >= ci_cutoff) |> 
+  summarize(lower = min(profiled_rho), upper = max(profiled_rho))
+
+cat("CI for rho:", paste(unlist(rho_CI), collapse = ", "), "\n")
+```
+
+```{r}
+best_rho_params <- prof_rho |> 
+  filter(loglik == max(loglik, na.rm = TRUE)) |>
+  slice(1) |>     # in case of ties
+  select(-loglik, -loglik.se)
+
+best_rho_params <- as.numeric(best_rho_params)
+names(best_rho_params) <- colnames(prof_rho)[!(colnames(prof_rho) %in% c("loglik", "loglik.se"))]
+
+best_rho <- prof_rho |>
+  filter(loglik == max(loglik, na.rm = TRUE)) |>
+  pull(profiled_rho)
+
+cat("Value of rho at the maximum likelihood: ", best_rho, "\n")
+```
+
+### Posterior Predictive Check
+
+Using the best parameter set from the full profile, we performed another posterior predictive check. While the simulated epidemic curves still overshot the observed data, the magnitude was now more consistent with the data range. The still existing overshoot may be related to the high number of parameters we estimate during the simulations, and the high noise inherent to a symptom based data we work on.
+
+```{r}
+#Posterior Predictive Check
+sims <- simulate(flu_seirs_bvgc,
+                 params = best_rho_params,
+                 nsim = 100,
+                 format = "data.frame",
+                 include.data = TRUE)
+
+ggplot(sims, aes(x = time, y = reports, group = .id, color = (.id == "data"))) +
+  geom_line(alpha = 0.5) +
+  scale_color_manual(values = c("black", "#3AB6E9")) +
+  guides(color = "none") +
+  labs(title = "Posterior Predictive Trajectories at Best rho") +
+  theme_minimal()
+
+```
+
+Credible intervals narrowed modestly compared to the poor man’s fit, and the median simulated trajectory aligned better with seasonal trends and timing. However, overprediction in the peak heights suggests that further tuning of other parameters—notably $\eta$ (initial exposure), phase (seasonal forcing), or $\mu_{IR}$ (recovery rate) may still be needed to align the model with the observed burden.
+
+```{r}
+sims_summary <- sims |>
+  group_by(time) |>
+  summarize(
+    lower = quantile(reports, 0.025),
+    upper = quantile(reports, 0.975),
+    median = median(reports)
+  )
+
+ggplot() +
+  geom_ribbon(data = sims_summary, aes(x = time, ymin = lower, ymax = upper), fill = "#3AB6E9", alpha = 0.3) +
+  geom_line(data = sims_summary, aes(x = time, y = median), color = "black") +
+  geom_line(data = filter(sims, .id == "data"), aes(x = time, y = reports), color = "red") +
+  labs(title = "Posterior Predictive Check (True Profile Best rho)",
+       y = "Reported Cases", x = "Time") +
+  theme_minimal()
+
+```
+
+To further refine model fit, we fix $\rho$ at a reasonable value such as 0.035 and reoptimize the remaining parameters.
+
+## Global Searches with Updated $\rho$
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search_frho.rds")
+
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 500) -> global_loglik
+
+pairs(~loglik+Beta0+Beta1+eta+alpha+gamma+mu_IR+mu_RS+A, data=global_loglik, pch=16, cex=0.5)
+
+seirs_global_search |> 
+  pivot_longer(-c(loglik, loglik.se)) |> 
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~name, scales = "free_x") +
+  labs(title = "Parameter Exploration Coverage")
+```
+
+```{r}
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=10,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+For simplicity, we fix $\rho = 0.036$. The pair plot of the new global search shows that the likelihood surfaces with respect to $\beta_{0}$, $\beta_{1}$, $\gamma$, $\mu_{IR}$, $\mu_{RS}$ and $A$ are identifiable with clean curves. We can confirm that the parameters are in the optimal ranges. The parameter exploration coverage plot shows that the designated rages are sufficiently covered. These indicate that the parameters are most likely at global maximum. The maximal log-likelihood is -3622.881, which is similar to that of our regression based SARMA benchmark. A quick calculation shows that all parameters are biologically plausible (see appendix). However, the simulation results are worse than before.
+
+# Conclusion
+
+In this study, we model influenza dynamics in the Great Lakes Region from 2015 to 2024 using both non-mechanistic and mechanistic techniques, with a particular emphasis on capturing disruptions caused by the COVID-19 pandemic. By incorporating seasonality, vaccination effects, pandemic-related suppression measures, and antigenic drift into a SEIRS-based POMP framework, we created a model that captures the transitions between pre-, during-pandemic, and post-pandemic flu activity. While non-mechanistic regression with SARMA errored model offers strong predictive baseline, it lacks the interpretability and flexibility to accommodate the covariates, which are crucial to model pandemic related disruptions. In contrast, our mechanistic model, though more sensitive to parameter tuning, provides insights into latent disease dynamics, including shifts in susceptibility and transmission linked to external interventions. Ultimately, our results demonstrate that while mechanistic modeling may not always outperform statistical baselines in likelihood terms, it offers a more interpretable and richer framework for understanding infectious disease dynamics in changing public health dynamics.
+
+If our goal is for simulation and maximize log likelihood, the best model above all (even including regression with SARMA errorred model $log-likelihood = -3620.72$) is the model we introduced below. We achieved a log likelihood of more than $-3600$ and the simulations are the most stable ones among all models. However, the interpretability of this model was undermined by the very high $\mu_{EI}$ and $\gamma$ values, and a unrealistic $\sigma_{mut}$. If our focus is understanding the underlying dynamics and making inference about how changes in these dynamics would affect influenza infections, such as change in vaccine effectiveness, new vaccination programs, or Covid suppression, this model generates little value. This indicates that our model structure and dynamics can still be improved. We acknowledge the limitations and potential drawbacks of this model and leave improvements to future studies.
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search2.rds")
+
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=10,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+## Limitations and Acknowledgements
+
+-   The data itself is noisy. Symptom-based data are representative, but it includes false infections and cannot represent asymptomatic infections. Thus, we do not anticipate a high accuracy similar to some previous projects. A comforting sign of matching our regression based SARMA benchmark is sufficient for our purpose.
+
+-   The interpretability of this model is limited by its construction. Without a separate V (vaccination) state, it is hard to estimate the effect of vaccine programs, new vaccines, or reduced risk of infection from vaccines. The vaccine effect is embedded in the effective susceptible population (S_eff) under the realistic assumption that influenza vaccines cannot provide full prevention and vaccine programs are conducted on a regular basis. As mentioned before, the vaccine coverage data and the effectiveness data are collected from the best sources available to us, and are passed into the model as covariates for simplicity.
+
+-   The model simulation results might be inaccurate, especially with such a high $\gamma$. We modeled the antigenic drift with Brownian motion. Previous discussions show that our model compensate the underfitting of seasonal transmission rates with waning immunity defined by these variables. Thus, the extreme spikes seen in the simulation plots might relate to extreme antigenic drifts. Besides, other dynamics such as the Covid suppression effect, are modeled with simplicity as priority, while keeping as truthful and as accurate as possible. With a limited amount of data, we want to keep as few parameters as possible. Alternative definitions and modeling of these effects might improve the model, but we leave this to future studies.
+
+-   We can continue profile likelihood diagnosis. Due to time limits of compute and time in this project, we keep it as future studies.
+
+## Differentiation from Prior Work
+
+Although some previous projects in this course have studied influenza cases$^{[8, 9, 10]}$, our analysis differs in several key ways. First, we focus on influenza cases in the Great Lakes Region, i.e. a dataset that has not been explored in this course before. Additionally, we choose a particularly challenging time frame, spanning from 2015 to 2024, which includes the COVID-19 pandemic, a period that significantly altered influenza dynamics. Preventative measures during the early stages of the pandemic nearly eliminated influenza cases. However, once these measures were lifted, case numbers rose significanly, surpassing pre-pandemic levels. This surge is likely due to an increase in the susceptible population, a phenomenon linked to the concept of immunity debt. In our analysis, we examine whether COVID-19-related covariates can be integrated into an SEIRS model, and whether the model is capable of capturing such complex dynamics. Overall, our model operates on three distinct phases of disease behavior—pre-pandemic, during-pandemic, and post-pandemic, presenting a challenging situation for the comprehensive modeling of influenza. In line with the above point, we investigate a particularly long time horizon, differing from works investigating a few years of time period. In below, we compare our work with 2 related projects from the previous years as a case study.
+
+### Winter 2022 - Final Project 20
+
+This project presents both non-mechanistic and mechanistic analyses of influenza data in the United States from 2010 to 2022, with a particular focus on the sharp decline in flu cases during the 2020–2021 season due to COVID-19-related interventions$^{[8]}$. The authors use two modeling approaches: a regression based SARMA model to capture and forecast pre-pandemic flu patterns, and a SIRS model that includes the pandemic period. They attribute the drop in flu cases to a reduced mean transmission rate during the early stages of the pandemic.
+
+Our analysis differs in several key ways. First, we focus on a specific region, i.e. the Great Lakes Region, which may exhibit more noise due to its smaller population and potentially different flu dynamics compared to national trends. Additionally, while the original study uses a SIRS model, we employ a SEIRS model, introducing an additional compartment into the dynamics. More importantly, our study covers a more extended and challenging timeline, from 2015 to 2024. This includes not only the suppression of flu during the pandemic but also the dramatic surge of cases afterward. Modeling this requires a more involved approach, involving factors such as vaccination effects, COVID-19 suppression policies, and antigenic drift, all of which are considered in our analysis.
+
+### Winter 2024 - Final Project 5
+
+This project does a time series analysis of influenza cases in Oklahoma using both non-mechanistic and mechanistic modeling$^{[9]}$. They analyze the 2011–2015 data due to irregularities caused by the pandemic and the compute problem. After doing exploratory analysis, including decomposition and frequency domain analysis, the authors fit ARMA and SARIMA models, finding that $SARIMA(1,1,1)×(0,1,1)_{52}$ best captures the seasonal pattern in flu cases. They then build a mechanistic SEIRS model using the POMP framework, adding a sine function to model changing transmission over time to reflect seasonality. Even after tuning the SEIRS model and improving it through local and global parameter searches, they conclude that SARIMA model gives a better log-likelihood.
+
+Our model differs from theirs for several reasons. First, they analyze a much shorter time period—only 4 years, while we analyze a 9-year span, which doubles the size of the dataset. Second, our datasets are different: they use data from Oklahoma, while we use data from the Great Lakes Region. More importantly, they look at a very regular flu period, where seasonality is stable and there are no effects from COVID-19 suppression or the flu’s return after that. In contrast, our focus is on modeling this more complex setting using the SEIRS approach, covering pre-pandemic, during-pandemic, and post-pandemic flu activity. To handle this, we include extra information like vaccination data, COVID-19 suppression policies, and antigenic drift as covariates, which makes our analysis quite different from theirs.
+
+# References
+
+1.  [National, Regional, and State Level Outpatient Illness and Viral Surveillance](http://gis.cdc.gov/grasp/fluview/fluportaldashboard.html)\
+2.  [U.S. Influenza Surveillance: Purpose and Methods](https://www.cdc.gov/fluview/overview/index.html)\
+3.  [decompose() function in R](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/decompose)\
+4.  [stl() function in R](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/stl)\
+5.  [Immunity Debt for Seasonal Influenza After the COVID-19 Pandemic](https://pubmed.ncbi.nlm.nih.gov/40186616/)\
+6.  [spec.pgram() function in R](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/spec.pgram)\
+7.  [Winter 2025, Midterm Project 9: House Prices in Seattle](https://ionides.github.io/531w25/midterm_project/project09/blinded.html)\
+8.  [Winter 2022, Final Project 20: Flu Cases Study](https://ionides.github.io/531w22/final_project/project20/blinded.html)\
+9.  [Winter 2024, Final Project 5: Modeling Flu Cases in Oklahoma](https://ionides.github.io/531w24/final_project/project05/blinded.html)\
+10. [Winter 2024, Final Project 16: Modeling Influenza Cases in the Netherlands](https://ionides.github.io/531w24/final_project/project16/blinded.html)\
+11. [CDC: How Flu Spreads](https://www.cdc.gov/flu/spread/index.html)\
+12. [CDC: Chapter 12 - Influenza](https://www.cdc.gov/pinkbook/hcp/table-of-contents/chapter-12-influenza.html)\
+13. [Basic reproduction number](https://en.wikipedia.org/wiki/Basic_reproduction_number)\
+14. [Estimates of the reproduction number for influenza (Biggerstaff et al.)](https://bmcinfectdis.biomedcentral.com/articles/10.1186/1471-2334-14-480)\
+15. [Determining Existing Human Population Immunity (Cheung et al.)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9045452/)\
+16. [CDC: How Flu Viruses Can Change: 'Drift' and 'Shift'](https://www.cdc.gov/flu/php/viruses/change.html)\
+17. [CDC: Understanding Influenza Viruses](https://www.cdc.gov/flu/php/viruses/index.html)\
+18. [Integrating Influenza Antigenic Dynamics (eLife Table 2)](https://elifesciences.org/articles/01914)\
+19. [ChatGPT](https://chatgpt.com)\
+20. [CDC Museum COVID-19 Timeline](https://www.cdc.gov/museum/timeline/covid19.html)\
+21. [CDC: Flu Season Overview](https://www.cdc.gov/flu/about/season.html#:~:text=In%20the%20United%20States%2C%20flu%20season%20usually%20occurs%20in%20the,varies%20from%20season%20to%20season.)\
+22. [CDC: FluVaxView Interactive](https://www.cdc.gov/fluvaxview/interactive/index.html)\
+23. [CDC Seasonal Flu Vaccine Effectiveness Studies](https://www.cdc.gov/flu-vaccines-work/php/effectiveness-studies/index.html)\
+24. [Asymptomatic Influenza Infections: Meta-Analysis](https://pmc.ncbi.nlm.nih.gov/articles/PMC4586318/)\
+25. [CDC: About Estimated Flu Burden](https://www.cdc.gov/flu-burden/php/about/index.html)\
+26. [Winter 2025 Stats 531: Lecture Note 12](https://ionides.github.io/531w25/12/index.html)\
+27. [Winter 2025 Stats 531: Lecture Note 13](https://ionides.github.io/531w25/13/index.html)\
+28. [Winter 2025 Stats 531: Lecture Note 14](https://ionides.github.io/531w25/14/index.html)\
+29. [Winter 2025 Stats 531: Lecture Note 15](https://ionides.github.io/531w25/15/index.html)\
+30. [Winter 2025 Stats 531: Lecture Note 16](https://ionides.github.io/531w25/16/index.html)
+
+In writing, we used GenAI help. To correct the grammar mistakes in our writing, we used ChatGPT$^{[19]}$ with the prompt: "Correct the English of this sentence without adding any content or your opinions."
+
+# Appendix
+
+In this chapter, we provide the results we did not want to share in the main body, but of which we believe useful to the reader.
+
+## Local Search of Basic SEIRS Model:
+
+```{r}
+seirs_mifs_local1 <- readRDS("./gl/seirs_local_search1.rds")
+seirs_mifs_local2 <- readRDS("./gl/seirs_local_search2.rds")
+
+df1 <- seirs_mifs_local1 |> traces() |> melt()
+
+if (".L1" %in% names(df1)) names(df1)[names(df1) == ".L1"] <- "chain"
+if ("L1" %in% names(df1)) names(df1)[names(df1) == "L1"] <- "chain"
+
+df2 <- seirs_mifs_local2 |> traces() |> melt()
+
+if (".L1" %in% names(df2)) names(df2)[names(df2) == ".L1"] <- "chain"
+if ("L1" %in% names(df2)) names(df2)[names(df2) == "L1"] <- "chain"
+
+df1 |>
+  ggplot(aes(x=iteration,y=value,group=chain,color=factor(chain)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+
+df2 |>
+  ggplot(aes(x=iteration,y=value,group=chain,color=factor(chain)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+
+seirs_local_result1 <- readRDS("./gl/seirs_local_loglik1.rds")
+seirs_local_result2 <- readRDS("./gl/seirs_local_loglik2.rds")
+
+seirs_local_result1 |> filter(is.finite(loglik), loglik >= max(loglik)) -> params1
+
+params1
+
+flu_seirs |>
+  simulate(
+    params=c(Beta=params1$Beta, mu_EI=params1$mu_EI, mu_IR=params1$mu_IR, mu_RS=params1$mu_RS, rho=params1$rho, eta=params1$eta, k=params1$k, N=params1$N),
+    nsim=1,format="data.frame",include.data=TRUE
+  ) -> sims1
+
+sims1 |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+
+seirs_local_result2 |> filter(is.finite(loglik), loglik >= max(loglik)) -> params2
+
+params2
+
+flu_seirs |>
+  simulate(
+    params=c(Beta=params2$Beta, mu_EI=params2$mu_EI, mu_IR=params2$mu_IR, mu_RS=params2$mu_RS, rho=params2$rho, eta=params2$eta, k=params2$k, N=params2$N),
+    nsim=1,format="data.frame",include.data=TRUE
+  ) -> sims2
+
+sims2 |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+## Local Search of the Complete SEIRS Model
+
+```{r}
+bvgcseirs_mifs_local <- readRDS("./gl/bvgcseirs_local_search3.rds")
+bvgcseirs_mifs_local |>
+  traces() |>
+  reshape2::melt() |>
+  ggplot(aes(x=iteration,y=value,group=L1,color=factor(L1)))+
+  geom_line()+
+  guides(color="none")+
+  facet_wrap(~name,scales="free_y")
+```
+
+```{r}
+bvgcseirs_local_result <- readRDS("./gl/bvgcseirs_local_loglik3.rds") 
+
+summary(bvgcseirs_local_result$loglik)
+
+bvgcseirs_local_result |> filter(is.finite(loglik), loglik >= max(loglik)) -> params
+
+params
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=params$Beta0, Beta1=params$Beta1, phase=params$phase, mu_EI=params$mu_EI, mu_IR=params$mu_IR, mu_RS=params$mu_RS, rho=params$rho, eta=params$eta, alpha=params$alpha, gamma=params$gamma, sigma_mut=params$sigma_mut, A = params$A, r1 = params$r1, r2 = params$r2, k=params$k, N=params$N),
+    nsim=5,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+## Global Searches of the Complete SEIRS Model
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search1.rds")
+
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 500) -> global_loglik
+
+pairs(~loglik+Beta0+Beta1+phase+eta+rho+alpha+gamma+mu_IR+mu_RS+A, data=global_loglik, pch=16, cex=0.5)
+
+seirs_global_search |> 
+  pivot_longer(-c(loglik, loglik.se)) |> 
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~name, scales = "free_x") +
+  labs(title = "Parameter Exploration Coverage")
+
+```
+
+```{r}
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=5,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+```{r}
+seirs_global_search = readRDS("./gl/bvgcseirs_global_search2.rds")
+
+seirs_global_search |> filter(
+  is.finite(loglik), 
+  loglik > max(loglik, na.rm=TRUE) - 500) -> global_loglik
+
+pairs(~loglik+Beta0+Beta1+phase+eta+rho+alpha+gamma+mu_EI+mu_IR+mu_RS+A, data=global_loglik, pch=16, cex=0.5)
+```
+
+```{r}
+seirs_global_search |> filter(is.finite(loglik), loglik >= max(loglik)) -> global_params
+
+global_params
+
+summary(seirs_global_search$loglik)
+
+flu_seirs_bvgc |>
+  simulate(
+    params=c(Beta0=global_params$Beta0, Beta1=global_params$Beta1, phase=global_params$phase, mu_EI=global_params$mu_EI, mu_IR=global_params$mu_IR, mu_RS=global_params$mu_RS, rho=global_params$rho, eta=global_params$eta, alpha=global_params$alpha, gamma=global_params$gamma, sigma_mut=global_params$sigma_mut, A = global_params$A, r1 = global_params$r1, r2 = global_params$r2, k=global_params$k, N=global_params$N),
+    nsim=10,format="data.frame",include.data=TRUE
+  ) -> sims
+
+sims |>
+  ggplot(aes(x=time,y=reports,group=.id,color=.id=="data"))+
+  geom_line()+
+  guides(color="none")
+```
+
+$\gamma$ is too large, we check if our $\sigma_{mut}$ is reasonable, and it turns out a reasonable value of $\sigma_{mut}$ will be 0.07-0.14. Our $\sigma_{mut}$ is at least 10 times too small. We double check our $\mu_{EI}$:
+
+Flexible $\mu_{EI}$ leads to unbelievable results. We discard this trial although it looks better. Pair plots also suggest $\mu_{EI}$ should indeed be fixed.
+
+## Justification of Biological Plausibility
+
+### Basic Reproduction Number
+
+We compute the basic reproduction number $\mathcal{R}_0$, assuming no seasonality or antigenic drift:
+
+$$
+\mathcal{R}_0 = \frac{\beta_0}{\mu_{IR}} = \frac{0.8425}{0.8756} \approx 0.962
+$$
+
+This value is slightly less than 1, which implies the infection would not persist under constant transmission. However, this ignores seasonal forcing and antigenic variation.
+
+### Peak Reproduction Number Due to Seasonality
+
+Including seasonal amplification:
+
+$$
+\beta_{\text{max}} = \beta_0 (1 + \beta_1) = 0.8425 \times 1.1176 \approx 0.941
+$$ $$
+\mathcal{R}_{\text{peak}} = \frac{\beta_{\text{max}}}{\mu_{IR}} = \frac{0.941}{0.8756} \approx 1.074
+$$
+
+This supports sustained transmission during the peak of influenza season.
+
+### Waning Immunity and Drift Effect
+
+Baseline immunity duration:
+
+$$
+\text{Duration}_{\text{baseline}} = \frac{1}{\mu_{RS}} = \frac{1}{0.00569} \approx 176 \text{ weeks}
+$$
+
+With antigenic drift distance $d = 1$, the waning rate becomes:
+
+$$
+\mu_{RS}(t) = \mu_{RS} \cdot (1 + \gamma \cdot d) = 0.00569 \cdot (1 + 2.359) \approx 0.0192
+$$ $$
+\text{Duration}_{\text{drift}} = \frac{1}{0.0192} \approx 52 \text{ weeks}
+$$
+
+This means immunity lasts around 1 year in high-drift seasons, consistent with reinfection observations.
+
+### Antigenic Drift and Transmission Amplification
+
+The parameter $\alpha$ controls transmission amplification due to drift:
+
+$$
+\beta_t = \beta_{\text{seasonal}} \cdot \exp(\alpha \cdot d)
+$$ $$
+\exp(0.4213) \approx 1.524
+$$
+
+So drift can increase transmission by about 52% in typical antigenic change years.
