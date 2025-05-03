@@ -12,7 +12,7 @@
 <meta name="author" content="DATASCI/STATS 531, Winter 2025" />
 
 
-<title>Final projects</title>
+<title>Review comments on Final Project 12</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,149 +349,56 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Final projects</h1>
+<h1 class="title toc-ignore">Review comments on Final Project 12</h1>
 <h4 class="author">DATASCI/STATS 531, Winter 2025</h4>
 
 </div>
 
 
-<hr />
+<div id="major-points-relevant-to-the-strength-or-correctness-or-scope-of-the-conclusions" class="section level3">
+<h3>Major points (relevant to the strength or correctness or scope of
+the conclusions)</h3>
 <ul>
-<li><p>Projects are posted anonymously below. Source code and data are
-available from <a href="https://github.com/ionides/531w25/tree/main/final_project">https://github.com/ionides/531w25/tree/main/final_project</a>.</p></li>
-<li><p>After the course is over and the class grades are assigned, you
-may choose to request to have your name attached to the
-project.</p></li>
+<li><p>In Sec. 2.2. the ADF test is not appropriate to examine
+non-stationary variance.</p></li>
+<li><p>ARMA is described as modeling “key autocorrelation patterns” but
+the sample ACF and the AIC table show that the key here is that there
+are no evident autocorrelation patterns.</p></li>
+<li><p>The likelihood values are quite close. We saw in class (Quiz 2,
+Q12-02) that quantities called log-likelihood for GARCH software are
+sometimes not exactly the log-likelihood. It would be worth saying how
+you know the GARCH likelihood is actually a likelihood not a conditional
+likelihood of some kind.</p></li>
+<li><p>The advantage of the POMP framework is that it easily allows you
+to use crativity to improve the model. For example, it is easy to stick
+a t-distribution into the measurement model. There is a missed
+opportunity to use that creativity for the return distribution, which is
+very simple to code and various other groups did it for similar
+situations.</p></li>
+<li><p>This group did attempt some novelty, taking advantage of the
+flexibility of the POMP framework to test out a switching model.
+However, that does not help much, and they note that modeling longer
+tails might be more important.</p></li>
 </ul>
-<hr />
-<table>
-<colgroup>
-<col width="35%" />
-<col width="35%" />
-<col width="28%" />
-</colgroup>
-<tbody>
-<tr class="odd">
-<td align="left">1. <a href="project01/blinded.html">Influenza in the
-Great Lakes region</a></td>
-<td align="left"><a href="project01/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">2. <a href="project02/blinded.html">Momentum in
-baseball</a></td>
-<td align="left"><a href="project02/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">3. <a href="project03/blinded.html">Flu Cases in
-Michigan</a></td>
-<td align="left"><a href="project03/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">4. <a href="project04/blinded.html">Kerala
-pandemic</a></td>
-<td align="left"><a href="project04/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">5. <a href="project05/blinded.html">Malaria in
-Florida</a></td>
-<td align="left"><a href="project05/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">6. <a href="project06/blinded.html">Hungarian
-chickenpox</a></td>
-<td align="left"><a href="project06/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">7. <a href="project07/blinded.html">Dengue
-fever</a></td>
-<td align="left"><a href="project07/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">8. <a href="project08/blinded.html">Netflix
-returns</a></td>
-<td align="left"><a href="project08/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">9. <a href="project09/blinded.html">NBA team
-strength</a></td>
-<td align="left"><a href="project09/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">10. <a href="project10/blinded.pdf">Heart rate
-variability</a></td>
-<td align="left"><a href="project10/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">11. <a href="project11/blinded.html">Apple stock
-price</a></td>
-<td align="left"><a href="project11/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">12. <a href="project12/blinded.html">Daily gold
-prices</a></td>
-<td align="left"><a href="project12/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">13. <a href="project13/blinded.html">Kepler light
-curves</a></td>
-<td align="left"><a href="project13/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">14. <a href="project14/blinded.html">Influenza in Nova
-Scotia</a></td>
-<td align="left"><a href="project14/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">15. <a href="project15/blinded.html">Bitcoin</a></td>
-<td align="left"><a href="project15/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">16. <a href="project16/blinded.html">Whooping
-cough</a></td>
-<td align="left"><a href="project16/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">17. <a href="project17/blinded.html">New York gasoline
-price</a></td>
-<td align="left"><a href="project17/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<hr />
+</div>
+<div id="minor-points-strengths-or-weaknesses-or-errors-or-potential-improvements" class="section level3">
+<h3>Minor points (strengths or weaknesses or errors or potential
+improvements)</h3>
+<ul>
+<li><p>“The ACF of squared residuals does not show significant spikes
+after lag1”. Various uninformative plots of ARMA residuals are shown,
+but this potentially informative one is not.</p></li>
+<li><p>“This log-likelihood [of the stochastic volatility (SV) model] is
+notably higher than our ARIMA and GARCH benchmarks” : this is true
+except for the t-distributed GARCH model. That suggests including a
+t-distribution in the SV model.</p></li>
+<li><p>The GARCH AIC values in Table 3 are not quite mathematically
+consistent. This should be noted, and the consequences of imperfect
+maximiation should be discussed.</p></li>
+<li><p>The Table 3 lowest AIC value is referenced as -5046.13 in the
+text, but that number does not appear in the table.</p></li>
+</ul>
+</div>
 
 
 

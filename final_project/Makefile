@@ -1,6 +1,6 @@
 default: html-docs
 
-html-docs: final_project_info.html final_review.html
+html-docs: final_project_info.html final_review.html index.html
 
 %.html: %.Rmd
 	Rscript --vanilla -e "rmarkdown::render(\"$*.Rmd\",output_format=\"html_document\")"
