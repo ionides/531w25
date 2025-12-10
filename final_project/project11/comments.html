@@ -12,7 +12,7 @@
 <meta name="author" content="DATASCI/STATS 531, Winter 2025" />
 
 
-<title>Final projects</title>
+<title>Review comments on Final Project 11</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,149 +349,74 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Final projects</h1>
+<h1 class="title toc-ignore">Review comments on Final Project 11</h1>
 <h4 class="author">DATASCI/STATS 531, Winter 2025</h4>
 
 </div>
 
 
-<hr />
+<div id="major-points-relevant-to-the-strength-or-correctness-or-scope-of-the-conclusions" class="section level3">
+<h3>Major points (relevant to the strength or correctness or scope of
+the conclusions)</h3>
 <ul>
-<li><p>Projects are posted anonymously below. Source code and data are
-available from <a href="https://github.com/ionides/531w25/tree/main/final_project">https://github.com/ionides/531w25/tree/main/final_project</a>.</p></li>
-<li><p>After the course is over and the class grades are assigned, you
-may choose to request to have your name attached to the
-project.</p></li>
+<li><p>Reviewers reported successful reproduction of the results from
+the code and data provided.</p></li>
+<li><p>Are the GARCH quantitites called “likelihood” actually
+likelihoods or just somethihg similar? See Quiz 2, Q12-02.</p></li>
+<li><p>“despite having the lowest log-likelihood, sGARCH-norm achieves
+the lowest AIC due to its simpler structure” : this doesn’t look right,
+because 30 units of log likelihood would require an additional 30
+parameters if it is not to have a higher AIC.</p></li>
+<li><p>The t distribution can be used for stochastic volatility models
+just as readily as for GARCH models. It is good for non-mechanistic and
+mechanistic models to challenge each other for new ideas. But, the
+insights from them can and should be included in the mechanistic
+models.</p></li>
+<li><p>The conclusion, “ARMA modeling is crucial for capturing
+autocorrelation structures in financial time series” is not clearly
+supported. Essentially no autocorrelation is found, and then the
+analysis moves on to GARCH models which assume the autocorrelation is
+zero.</p></li>
+<li><p>Most of this project could have been done as a midterm project.
+There are many past midterm and final projects doing similar things, so
+the analysis is quite routine. The stochastic volatility part is not
+well developed: an existing model is used, and weaknesses are not
+fixed.</p></li>
+<li><p>Although the author acknowledges the poor convergence in the
+local search, they have decided to use 1000 particles with 50
+iterations. Maybe it’s worth trying more particles and more iterations.
+(something like 5000 particles and 100 iterations) This way, they may be
+able to see if it’s the problem with particle filtering or if there is
+model misspecification.</p></li>
 </ul>
-<hr />
-<table>
-<colgroup>
-<col width="35%" />
-<col width="35%" />
-<col width="28%" />
-</colgroup>
-<tbody>
-<tr class="odd">
-<td align="left">1. <a href="project01/blinded.html">Influenza in the
-Great Lakes region</a></td>
-<td align="left"><a href="project01/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">2. <a href="project02/blinded.html">Momentum in
-baseball</a></td>
-<td align="left"><a href="project02/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">3. <a href="project03/blinded.html">Flu Cases in
-Michigan</a></td>
-<td align="left"><a href="project03/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">4. <a href="project04/blinded.html">Kerala
-pandemic</a></td>
-<td align="left"><a href="project04/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">5. <a href="project05/blinded.html">Malaria in
-Florida</a></td>
-<td align="left"><a href="project05/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">6. <a href="project06/blinded.html">Hungarian
-chickenpox</a></td>
-<td align="left"><a href="project06/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">7. <a href="project07/blinded.html">Dengue
-fever</a></td>
-<td align="left"><a href="project07/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">8. <a href="project08/blinded.html">Netflix
-returns</a></td>
-<td align="left"><a href="project08/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">9. <a href="project09/blinded.html">NBA team
-strength</a></td>
-<td align="left"><a href="project09/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">10. <a href="project10/blinded.pdf">Heart rate
-variability</a></td>
-<td align="left"><a href="project10/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">11. <a href="project11/blinded.html">Apple stock
-price</a></td>
-<td align="left"><a href="project11/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">12. <a href="project12/blinded.html">Daily gold
-prices</a></td>
-<td align="left"><a href="project12/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">13. <a href="project13/blinded.html">Kepler light
-curves</a></td>
-<td align="left"><a href="project13/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">14. <a href="project14/blinded.html">Influenza in Nova
-Scotia</a></td>
-<td align="left"><a href="project14/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">15. <a href="project15/blinded.html">Bitcoin</a></td>
-<td align="left"><a href="project15/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="even">
-<td align="left">16. <a href="project16/blinded.html">Whooping
-cough</a></td>
-<td align="left"><a href="project16/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td align="left">17. <a href="project17/blinded.html">New York gasoline
-price</a></td>
-<td align="left"><a href="project17/comments.html">Review
-comments</a></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<hr />
+</div>
+<div id="minor-points-strengths-or-weaknesses-or-errors-or-potential-improvements" class="section level3">
+<h3>Minor points (strengths or weaknesses or errors or potential
+improvements)</h3>
+<ul>
+<li><p>Fig 3.1 has a caption: “density of gold prices”. Also, a
+histogram of marginal values of a time series is usually not a good
+idea. When the time series has a trend, it is an especially poor
+choice.</p></li>
+<li><p>The sample ACF of index prices is uninformative. This plot
+estimates autocorrelation for a stationary time series, but the time
+plot (and common knowledge of investments) suggests that it is close to
+a random walk, which is non-stationary.</p></li>
+<li><p>The reason given for choosing ARMA(1,1) is parsimony, but (1,0)
+and (0,1) have better AIC and more parsimony.</p></li>
+<li><p>Quite a long time is spent on ARMA considering that it gets
+discarded in favor of better models.</p></li>
+<li><p>From a referee with some relevant domain knowledge: Firstly, the
+team decided to use the close price rather than the adjusted close
+price. This is fine if there were no stock splits for the duration of
+their chosen time (January 2020 onward). However, on August 28, 2020, a
+stock split occurred. This would cause the raw close price not
+accurately to reflect market fluctuations. The report wrote, “A major
+shift occurred in 2020, marked by a rapid surge in prices and increased
+volatility.” This is likely due to the use of the raw closing price as
+affected by the stock split.</p></li>
+</ul>
+</div>
 
 
 
