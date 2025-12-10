@@ -36,7 +36,7 @@ set.seed(48)
 knitr::opts_chunk$set(cache = FALSE)
 
 q_setup <- function(n){
-  q_dirs <- list.files(pattern=paste0("^Q",n))
+  q_dirs <- list.files(pattern=paste0("^Q",n,"-"))
   cat_file <- paste0("tmp",n,".Rmd")
   #
   # first add lines so each question knows its directory
