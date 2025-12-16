@@ -1,0 +1,23 @@
+---
+title: "Modeling and Analysis of Time Series Data \\newline Chapter 1: Introduction"
+author: "Edward Ionides"
+subtitle: "STATS 531, Winter 2026"
+format:
+  beamer:
+    cite-method: natbib
+    biblio-style: apalike
+    header-includes: |
+      \setbeamertemplate{footline}[page number]
+
+bibliography: bib531.bib
+
+---
+
+# Slides go here
+
+A reference example: \citet{box70}
+
+
+# References
+
+

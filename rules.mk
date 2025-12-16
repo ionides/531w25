@@ -42,3 +42,6 @@ fresh: clean
 	$(RM) *.bbl
 	$(RM) -r tmp
 
+%.pdf: %.qmd
+	quarto render "$*.qmd" --to beamer
+
