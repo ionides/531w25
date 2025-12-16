@@ -28,4 +28,6 @@
 local
 cache
 figure
+.venv
+*_files
 

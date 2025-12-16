@@ -1,7 +1,9 @@
 ---
-title: "Modeling and Analysis of Time Series Data \\newline Chapter 1: Introduction"
+# Template for py.qmd files - Python version of presentations
+# Update chapter number and topic below
+title: "Modeling and Analysis of Time Series Data \\newline Chapter X: [TOPIC]"
 author: "Edward Ionides"
-subtitle: "STATS 531, Winter 2026"
+subtitle: "STATS 531, Winter 2025"
 format:
   beamer:
     cite-method: natbib
@@ -9,13 +11,22 @@ format:
     header-includes: |
       \setbeamertemplate{footline}[page number]
 
-bibliography: bib531.bib
+bibliography: ../bib531.bib
 
 ---
 
 # Slides go here
 
-A reference example: \citet{box70}
+A reference example: \citet{box70}  # Use \citet for in-text, \citep for parenthetical
+
+
+# Example Python code
+
+```{python}
+# Python code goes here
+import numpy as np
+import matplotlib.pyplot as plt
+```
 
 
 # References

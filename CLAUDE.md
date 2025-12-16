@@ -7,4 +7,4 @@ new lecture material is in qmd format
 the subdirectories 01, 02 through 18 each contain a presentation.
 
 the current project is to add a new file, py.qmd, to each presentation in order to provide a Python translation that compiles using the command
-$ quarto render "$*.qmd" --to beamer
+$ quarto render py.qmd --to beamer
