@@ -6,8 +6,7 @@ author: "Edward Ionides"
 subtitle: "STATS 531, Winter 2025"
 format:
   beamer:
-    cite-method: natbib
-    biblio-style: apalike
+    cite-method: biblatex
     header-includes: |
       \setbeamertemplate{footline}[page number]
 
@@ -17,16 +16,32 @@ bibliography: ../bib531.bib
 
 # Slides go here
 
-A reference example: \citet{box70}  # Use \citet for in-text, \citep for parenthetical
+Reference examples:
+
+- In-text citation: \textcite{box70} showed that...
+- Parenthetical citation: This result was established earlier \parencite{box70}.
 
 
 # Example Python code
 
 ```{python}
-# Python code goes here
+#| echo: true
+# Common imports for time series analysis
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.graphics.tsaplots import plot_acf
+
+# Example: Read tab-separated CSV with comment lines
+# data = pd.read_csv("filename.csv", sep='\t', comment='#')
 ```
+
+# Notes on Python translations
+
+- **Statsmodels ARIMA**: Fitted parameters in `model.params['const']`, standard errors in `model.bse['const']`
+- **Inline Python**: Use `` `{python} expression` `` for inline code in text
+- **Plotting**: Set `#| fig-width` and `#| fig-height` in code chunks for figure sizing
 
 
 # References
