@@ -22,19 +22,15 @@ from statsmodels.graphics.tsaplots import plot_acf
 from statsmodels.tsa.arima_process import ArmaProcess
 ```
 
-# Concepts of stationarity
+## Concepts of stationarity
 
-## Definition: Weak and strong stationarity
-
-- A time series model which is both mean stationary and covariance stationary is **weakly stationary** or **second order stationary**.
-
-- A time series model for which all joint distributions are invariant to shifts in time is **strongly stationary** or **strictly stationary**.
+**Definition:** A time series model which is both mean stationary and covariance stationary is **weakly stationary** or **second order stationary**. A time series model for which all joint distributions are invariant to shifts in time is **strongly stationary** or **strictly stationary**.
 
 - Formally, this means that for any collection of times $(t_1, t_2,\dots,t_K)$, the joint distribution of observations at these times should be the same as the joint distribution at $(t_1+\tau, t_2+\tau,\dots,t_K+\tau)$ for any $\tau$.
 
 - For equally spaced observations, this becomes: for any collection of timepoints $n_1,\dots,n_K$, and for any lag $h$, the joint density function of $(Y_{n_1},Y_{n_2},\dots, Y_{n_K})$ is the same as the joint density function of $(Y_{n_1+h},Y_{n_2+h},\dots, Y_{n_K+h})$.
 
-## Strict stationarity notation
+----
 
 - In our general notation for densities, this strict stationarity requirement can be written as
 \begin{eqnarray}&&f_{Y_{n_1},Y_{n_2},\dots, Y_{n_K}}(y_1,y_2,\dots,y_K)\\
@@ -42,6 +38,8 @@ from statsmodels.tsa.arima_process import ArmaProcess
 \end{eqnarray}
 
 - Strict stationarity implies weak stationarity (check this).
+
+\
 
 **Question.** How could we assess whether a weak stationary model is appropriate for a time series dataset?
 
@@ -53,7 +51,11 @@ from statsmodels.tsa.arima_process import ArmaProcess
 
 **Question.** Is it usual for time series to be well modeled as stationary (either weakly or strictly)?
 
+\
+
 **Question.** If data often do not show stationary behavior, why do many fundamental models have stationarity?
+
+\
 
 ## Example time series
 
@@ -82,11 +84,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-# White noise
+\
 
-## White noise definition
+## White noise
 
-A time series model $\epsilon_{1:N}$ which is weakly stationary with
+**Definition:** A time series model $\epsilon_{1:N}$ which is weakly stationary with
 \begin{eqnarray} \nonumber
 \mathrm{E}[\epsilon_n]&=& 0
 \\
@@ -97,9 +99,9 @@ A time series model $\epsilon_{1:N}$ which is weakly stationary with
 \end{eqnarray}
 is said to be **white noise** with variance $\sigma^2$.
 
-- The "noise" is because there's no pattern, just random variation. If you listened to a realization of white noise as an audio file, you would hear a static sound.
+- "Noise" is because there's no pattern, just random variation. If you listened to a realization of white noise as an audio file, you would hear a static sound.
 
-- The "white" is because all frequencies are equally represented. This will become clear when we do frequency domain analysis of time series.
+- "White" is because all frequencies are equally represented. This will become clear when we do frequency domain analysis of time series.
 
 - Signal processing---sending and receiving signals on noisy channels---was a motivation for early time series analysis.
 
@@ -136,7 +138,9 @@ Let $\epsilon_n = \sin(2\pi n U)$, with a single draw $U\sim\mathrm{Uniform}[0,1
 
 **Question.** Show that $\epsilon_{1:N}$ is weakly stationary, and is white noise!
 
-## Sinusoidal white noise visualization
+\
+
+----
 
 **Question.** Show that $\epsilon_{1:N}$ is NOT strictly stationary.
 
@@ -169,11 +173,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-# Building models using white noise
+\
 
-## Using white noise to build time series models
+## Building time series models using white noise
 
-Reminder: Why do we even need time series models?
+Reminder: Why do we need time series models?
 
 - All statistical tests (i.e., whenever we use data to answer a question) rely on having a model for the data. The model is sometimes called the **assumptions** for the test.
 
@@ -206,33 +210,29 @@ where $\{\epsilon_n\}$ is a white noise process.
 
 - Assuming the initialization has mean zero, M1 implies that $\mathrm{E}[Y_n]=0$ for all $n$. For additional generality, we could add a constant mean $\mu$.
 
-- Let's investigate a particular Gaussian AR(1) process, as an exercise.
-
-[M2] $\quad\quad \quad Y_n = 0.6 Y_{n-1}+ \epsilon_n$,
-
+- Let's investigate a particular Gaussian AR(1) process, as an exercise:\
+[M2] $\quad\quad \quad Y_n = 0.6 Y_{n-1}+ \epsilon_n$,\
 where $\epsilon_n\sim \mathrm{iid}\, N[0,1]$. We will initialize with $Y_1\sim N[0,1.56]$.
 
 ## Simulating an autoregressive model
 
-Looking at simulated sample paths is a good way to get some intuition about a random process model.
-We will do this for the AR(1) model M2.
-One approach is to use the ARIMA simulation functionality in statsmodels.
+Looking at simulated sample paths is a good way to get intuition about a random process model.
+First, we do this for the AR(1) model M2 using the ARIMA simulation functionality in statsmodels.
 
 ```{python}
 #| echo: true
 #| eval: false
-np.random.seed(123456789)
+np.random.seed(11235)
 # Simulate AR(1) with phi=0.6
 arparams = np.array([0.6])
 ar = np.r_[1, -arparams]
 ma = np.array([1])
 ar1_process = ArmaProcess(ar, ma)
-ar1 = ar1_process.generate_sample(nsample=100, scale=1.0)
+ar1 = ar1_process.generate_sample(nsample=100,
+    scale=1.0)
 plt.figure(figsize=(10, 4))
-plt.plot(ar1)
-plt.ylabel('ar1')
-plt.tight_layout()
-plt.show()
+plt.plot(ar1); plt.ylabel('ar1')
+plt.tight_layout(); plt.show()
 ```
 
 ## AR(1) simulation plot
@@ -241,7 +241,7 @@ plt.show()
 #| echo: false
 #| fig-width: 10
 #| fig-height: 4
-np.random.seed(123456789)
+np.random.seed(11235)
 arparams = np.array([0.6])
 ar = np.r_[1, -arparams]
 ma = np.array([1])
@@ -273,7 +273,7 @@ We can also simulate model M2 directly by writing the model equation:
 ```{python}
 #| echo: true
 #| eval: false
-np.random.seed(123456789)
+np.random.seed(11235)
 N = 100
 X = np.zeros(N)
 X[0] = np.random.normal(0, np.sqrt(1.56))
@@ -292,7 +292,7 @@ plt.show()
 #| echo: false
 #| fig-width: 10
 #| fig-height: 4
-np.random.seed(123456789)
+np.random.seed(11235)
 N = 100
 X = np.zeros(N)
 X[0] = np.random.normal(0, np.sqrt(1.56))
@@ -311,14 +311,16 @@ Note: The simulations may differ slightly from R's arima.sim due to different in
 
 **Question.** What are the advantages and disadvantages of using library simulation functions over the direct simulation method?
 
+\
+
 **Question.** Compute the autocovariance function for model M2.
+
+\
 
 ## The MA(q) moving average model
 
-- The order $q$ moving average model, abbreviated to MA(q), is
-
-[M3] $\quad\quad \quad Y_n =  \epsilon_n +\theta_1 \epsilon_{n-1} +\dots+\theta_q\epsilon_{n-q}$,
-
+- The order $q$ moving average model, abbreviated to MA(q), is\
+[M3] $\quad\quad \quad Y_n =  \epsilon_n +\theta_1 \epsilon_{n-1} +\dots+\theta_q\epsilon_{n-q}$,\
 where $\{\epsilon_n\}$ is a white noise process.
 
 - To fully specify $Y_{1:N}$ we must specify the joint distribution of $\epsilon_{1-q:N}$.
@@ -327,10 +329,8 @@ where $\{\epsilon_n\}$ is a white noise process.
 
 - In M3, we've defined a zero mean process. We could add a mean $\mu$.
 
-- Let's investigate a particular Gaussian MA(2) process, as an exercise.
-
-[M4] $\quad\quad \quad Y_n = \epsilon_n + 1.5\epsilon_{n-1}+\epsilon_{n-2}$,
-
+- Let's investigate a particular Gaussian MA(2) process, as an exercise.\
+[M4] $\quad\quad \quad Y_n = \epsilon_n + 1.5\epsilon_{n-1}+\epsilon_{n-2}$,\
 where $\epsilon_n\sim \mathrm{iid} \,  N[0,1]$.
 
 ## Simulating a moving average model
@@ -341,7 +341,8 @@ We simulate M4 using similar methods as for the autoregressive model.
 #| echo: true
 #| eval: false
 N = 100
-np.random.seed(123456789)
+#np.random.seed(11235)
+np.random.seed(1)
 # Using statsmodels
 maparams = np.array([1.5, 1])
 ar = np.array([1])
@@ -350,11 +351,11 @@ ma_process = ArmaProcess(ar, ma)
 X1 = ma_process.generate_sample(nsample=N, scale=1.0)
 
 # Direct simulation
-np.random.seed(123456789)
+np.random.seed(11235)
 epsilon = np.random.randn(N+2)
 X2 = np.zeros(N)
 for n in range(N):
-    X2[n] = epsilon[n+2] + 1.5*epsilon[n+1] + epsilon[n]
+    X2[n] = epsilon[n+2]+1.5*epsilon[n+1]+epsilon[n]
 ```
 
 ## MA simulation plots
@@ -364,18 +365,18 @@ for n in range(N):
 #| fig-width: 10
 #| fig-height: 4
 N = 100
-np.random.seed(123456789)
+np.random.seed(11235)
 maparams = np.array([1.5, 1])
 ar = np.array([1])
 ma = np.r_[1, maparams]
 ma_process = ArmaProcess(ar, ma)
 X1 = ma_process.generate_sample(nsample=N, scale=1.0)
 
-np.random.seed(123456789)
+np.random.seed(11235)
 epsilon = np.random.randn(N+2)
 X2 = np.zeros(N)
 for n in range(N):
-    X2[n] = epsilon[n+2] + 1.5*epsilon[n+1] + epsilon[n]
+    X2[n]=epsilon[n+2]+1.5*epsilon[n+1]+epsilon[n]
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 ax1.plot(X1)
@@ -386,70 +387,57 @@ plt.tight_layout()
 plt.show()
 ```
 
+**Question:** Why are these not quite equal? Note that
+
+
+
 ## Comparing simulations
+
+- The two methods look similar, with a lag shift. We can check this is true:
 
 ```{python}
 #| echo: true
-print(f"X1 and X2 close: {np.allclose(X1, X2)}")
+test_equal=np.allclose(X1[-(N-2):],X2[:N-2])
+print(f"X1 and X2 close: {test_equal}")
 ```
 
-Do you agree that the spurious evidence for a trend that we saw for the AR(1) model is still somewhat present for the MA(2) simulation? Let's see if we can also see it in the underlying white noise process:
+- Is the spurious evidence for a trend that we saw for the AR(1) model  still present for the MA(2) simulation? Let's see if we can also see it in the underlying white noise process:
 
 ## White noise visualization
 
 ```{python}
 #| echo: true
-#| eval: false
-N = 100
-np.random.seed(123456789)
-epsilon = np.random.randn(N)
-plt.figure(figsize=(10, 4))
-plt.plot(epsilon)
-plt.ylabel('epsilon')
-plt.tight_layout()
-plt.show()
-```
-
-## White noise plot
-
-```{python}
-#| echo: false
 #| fig-width: 10
 #| fig-height: 4
 N = 100
-np.random.seed(123456789)
+np.random.seed(11235)
 epsilon = np.random.randn(N)
 plt.figure(figsize=(10, 4))
-plt.plot(epsilon)
-plt.ylabel('epsilon')
-plt.tight_layout()
-plt.show()
+plt.plot(epsilon); plt.ylabel('epsilon')
+plt.tight_layout(); plt.show()
 ```
 
-To me, the trend-like behavior is not visually apparent in the white noise that "drives" the AR and MA models.
 
 ## The random walk model
 
-- The **random walk** model is
-
-[M5] $\quad\quad\quad Y_n = Y_{n-1} + \epsilon_n$,
-
+The **random walk** model is\
+[M5] $\quad\quad\quad Y_n = Y_{n-1} + \epsilon_n$,\
 where $\{\epsilon_n\}$ is white noise. Unless otherwise specified, we usually initialize with $Y_0=0$.
 
-- If $\{\epsilon_n\}$ is Gaussian white noise, then we have a Gaussian random walk.
+If $\{\epsilon_n\}$ is Gaussian white noise, we have a **Gaussian random walk**.
 
-- The random walk model is a special case of AR(1) with $\phi_1=1$.
+The random walk model is a special case of AR(1) with $\phi_1=1$.
 
-- The stochastic difference equation in M5 has an exact solution,
+The stochastic difference equation in M5 has an exact solution,
 $$ Y_n = \sum_{k=1}^n\epsilon_k.$$
 
-- We can also call $Y_{0:N}$ an **integrated white noise process**. We think of summation as a discrete version of integration.
+We can also call $Y_{0:N}$ an **integrated white noise process**. We think of summation as a discrete version of integration.
 
-- If data $y_{1:N}$ are modeled as a random walk, the value of $Y_0$ is usually an unknown. Rather than introducing an unknown parameter to our model, we may initialize our model at time $t_1$ with $Y_1=y_1$.
+If data $y_{1:N}$ are modeled as a random walk, the value of $Y_0$ is usually an unknown. Rather than introducing an unknown parameter to our model, we may initialize our model at time $t_1$ with $Y_1=y_1$.
 
-## First differences
+----
 
-- The **first difference** time series $z_{2:N}$ is defined by
+**Definition:** The **first difference** time series $z_{2:N}$ is defined by
 \begin{equation}
 z_n= \Delta y_n = y_{n}-y_{n-1}
 \end{equation}
@@ -458,9 +446,9 @@ z_n= \Delta y_n = y_{n}-y_{n-1}
 
 - A random walk model for $y_{1:N}$ is essentially equivalent to a white noise model for $z_{2:N}= \Delta y_{2:N}$, apart from the issue of initialization.
 
-## The random walk with drift
+----
 
-- The **random walk with drift** model is given by the difference equation
+**Definition:** The **random walk with drift** model is given by the difference equation
 
 [M6] $\quad\quad\quad Y_n = Y_{n-1} + \mu + \epsilon_n$,
 
@@ -470,8 +458,6 @@ $$ Y_n = Y_0 + n\mu + \sum_{k=1}^n\epsilon_k.$$
 - Here, $\mu$ is the mean of the **increments** rather than the random walk process itself.
 
 - As for the random walk without drift, we must define $Y_0$ to initialize the model and complete the model specification. Unless otherwise specified, we usually initialize with $Y_0=0$.
-
-# Modeling financial returns using white noise
 
 ## Modeling financial markets as a random walk
 
@@ -519,8 +505,10 @@ To train our intuition, we compare the data with simulations from a fitted model
 mu = np.mean(np.diff(np.log(sp500)))
 sigma = np.std(np.diff(np.log(sp500)))
 N = len(sp500)
-X1 = np.log(sp500[0]) + np.cumsum(np.r_[0, np.random.normal(mu, sigma, N-1)])
-X2 = np.log(sp500[0]) + np.cumsum(np.r_[0, np.random.normal(mu, sigma, N-1)])
+X1 = (np.log(sp500[0]) +
+    np.cumsum(np.r_[0, np.random.normal(mu, sigma, N-1)]))
+X2 = (np.log(sp500[0]) +
+    np.cumsum(np.r_[0, np.random.normal(mu, sigma, N-1)]))
 ```
 
 ## Random walk simulations
@@ -628,10 +616,11 @@ plt.show()
 - Chapter 1 of \textcite{shumway17} provides a complementary introduction to time series analysis.
 - If you are relatively new to Python, there are many comprehensive introductions available online.
 
-# References and Acknowledgements
-
 ## Acknowledgments
 
 - Compiled on \today{} using Python.
 - Licensed under the [Creative Commons Attribution-NonCommercial license](http://creativecommons.org/licenses/by-nc/4.0/). Please share and remix non-commercially, mentioning its origin.
 - We acknowledge [previous versions of this course](https://ionides.github.io/531w25/acknowledge.html).
+
+# References
+
